@@ -5,6 +5,7 @@ model calls. The evidence stages run as the real commands; the seat answers
 are canned fixtures; the challenge result is written by this test in the
 bridge's exact result shape."""
 
+import html
 import json
 import os
 import shutil
@@ -242,9 +243,13 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return pack_path, record["pack_sha256"], suff_path
 
-    def drive_canned(self, kind, run_id, capture_name):
-        """One whole canned run. Returns (verdict, page)."""
-        work = os.path.join(self.base, kind)
+    def drive_canned(self, kind, run_id, capture_name,
+                     canned_mutate=None):
+        """One whole canned run. Returns (verdict, page). `canned_mutate`
+        is called as (name, payload) on each canned answer before it is
+        written and on the canned challenge document (name "challenge"),
+        so one rehearsal can be driven into a named shape."""
+        work = os.path.join(self.base, run_id)
         os.makedirs(work)
         capture_path = os.path.join(
             ROOT, "council", "tests", "fixtures", "evidence",
@@ -268,6 +273,8 @@ class TestKindRehearsals(unittest.TestCase):
             progressed = False
             for item in status["pending"]:
                 payload = self.kind_fixture(kind, item["seat"] + ".json")
+                if canned_mutate:
+                    canned_mutate(item["seat"], payload)
                 with open(os.path.join(run_dir, item["answer"]), "w",
                           encoding="utf-8") as handle:
                     json.dump(payload, handle)
@@ -280,6 +287,8 @@ class TestKindRehearsals(unittest.TestCase):
                     result_path):
                 request = canonical.read_json(request_path)
                 doc = self.kind_fixture(kind, "challenge-findings.json")
+                if canned_mutate:
+                    canned_mutate("challenge", doc)
                 doc["run_id_echo"] = request["run_id"]
                 doc["nonce_echo"] = request["nonce"]
                 doc["casefile_sha256_echo"] = request["casefile_sha256"]
@@ -489,6 +498,37 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertIn("earns buy", reason)
         self.assertFalse(os.path.exists(os.path.join(run_dir,
                                                      "verdict.json")))
+
+    def test_a_divergent_endorsement_is_named_on_the_page(self):
+        """Owner ruling AB16(5), the whole chain: the challenger endorses
+        a ceiling of monitor, the chairman publishes sell, and the note
+        naming both ratings reaches the RENDERED PAGE - in the loud band
+        at the top, where the reader cannot miss it. The live Bitcoin run
+        that earned this change published exactly this pair and said
+        nothing. Nothing is gated: the chairman's sell still publishes."""
+
+        def mutate(name, payload):
+            if name == "chair_resolve":
+                payload["final_verdict"]["rating"] = "sell"
+            elif name == "challenge":
+                payload["endorsement"] = {
+                    "highest_rating_supported": "monitor"}
+
+        verdict, page = self.drive_canned(
+            "basket", "rehearsal-divergent-endorsement", "basket-pass.json",
+            canned_mutate=mutate)
+        self.assertEqual(verdict["rating"], "sell")
+        self.assertEqual(verdict["challenge"]["endorsement"],
+                         {"highest_rating_supported": "monitor"})
+        notes = [w for w in verdict["warnings"]
+                 if w.startswith("Rating against the outside auditor")]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("published sell", notes[0])
+        self.assertIn("monitor", notes[0])
+        # The band escapes what it prints, so the page is checked against
+        # the escaped note - the reader's own text, not the raw string.
+        self.assertIn('<div class="card alarm"><span class="shout">%s</span>'
+                      "</div>" % html.escape(notes[0], quote=True), page)
 
     def test_an_empty_theme_is_refused_with_the_shopping_list(self):
         work = os.path.join(self.base, "empty-theme")

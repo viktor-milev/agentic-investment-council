@@ -1393,6 +1393,103 @@ class TestChangeAppendixAndRaises(EngineTest):
         self.assertEqual(verdict["warnings"], [])
 
 
+class TestEndorsementVisibility(EngineTest):
+    """Owner ruling AB16(5): when the published rating differs from the
+    challenger's endorsed ceiling in ANY direction - not only on a raise -
+    the verdict names both ratings. The note is NEUTRAL NAMING and never a
+    judgment (architect ruling at handshake): published strictly below a
+    ranked ceiling sits within the endorsement's own upper bound, so a note
+    claiming divergence would be false there while a naming note is true in
+    every case. Transparency only: nothing is gated, blocked or degraded."""
+
+    def resolve_with_rating(self, rating):
+        payload = copy.deepcopy(fixture_answer("chair_resolve"))
+        payload["final_verdict"]["rating"] = rating
+        return payload
+
+    def endorse(self, ceiling):
+        def mutate(doc):
+            doc["findings"]["endorsement"] = {
+                "highest_rating_supported": ceiling}
+        return mutate
+
+    def notes(self, verdict):
+        return [w for w in verdict["warnings"]
+                if w.startswith("Rating against the outside auditor")]
+
+    def test_the_live_shape_names_both_ratings(self):
+        """The run that earned this change: the challenger's ceiling was
+        monitor, the council published sell, and the page said nothing.
+        A sell is not a raise, so the raise check never fired."""
+        run = self.harness(run_id="ceiling-monitor-published-sell")
+        run.queue("chair_resolve", self.resolve_with_rating("sell"))
+        run.drive(challenge_mutate=self.endorse("monitor"))
+        verdict = run.verdict()
+        self.assertEqual(verdict["rating"], "sell")
+        self.assertEqual(verdict["challenge"]["endorsement"],
+                         {"highest_rating_supported": "monitor"})
+        self.assertEqual(len(self.notes(verdict)), 1)
+        note = self.notes(verdict)[0]
+        self.assertIn("published sell", note)
+        self.assertIn("monitor", note)
+        # Transparency only: the rating that publishes is the chairman's.
+        self.assertFalse(any("did not see this rating" in w
+                             for w in verdict["warnings"]))
+
+    def test_an_unendorsed_raise_prints_both_lines(self):
+        """The existing raise warning is untouched; the note stands beside
+        it, adding the one thing the raise warning never said - the
+        ceiling's own word."""
+        run = self.harness(run_id="raise-above-ranked-ceiling")
+        run.queue("chair_resolve", self.resolve_with_rating("strong_buy"))
+        run.drive(challenge_mutate=self.endorse("hold"))
+        verdict = run.verdict()
+        rating_rows = [row for row
+                       in verdict["challenge"]["change_appendix"]
+                       if row["field"] == "rating"]
+        self.assertEqual(rating_rows[0]["label"], "unendorsed_raise")
+        self.assertEqual(verdict["warnings"][0],
+                         "The outside auditor did not see this rating: the "
+                         "chairman raised it to strong buy after the "
+                         "challenge round, without a challenger "
+                         "endorsement.")
+        self.assertEqual(len(self.notes(verdict)), 1)
+        self.assertIn("published strong buy", self.notes(verdict)[0])
+        self.assertIn("hold", self.notes(verdict)[0])
+
+    def test_published_below_a_ranked_ceiling_is_named_neutrally(self):
+        """A rating below the ceiling is WITHIN what the auditor endorsed.
+        It is still named - and named without a word of judgment."""
+        run = self.harness(run_id="below-ranked-ceiling")
+        run.drive(challenge_mutate=self.endorse("strong_buy"))
+        verdict = run.verdict()
+        self.assertEqual(verdict["rating"], "buy")
+        self.assertEqual(len(self.notes(verdict)), 1)
+        note = self.notes(verdict)[0]
+        self.assertIn("published buy", note)
+        self.assertIn("strong buy", note)
+        for judgment in ("did not see", "without", "diverge", "conflict",
+                         "contradict", "unendorsed", "disagree"):
+            self.assertNotIn(judgment, note)
+
+    def test_published_equal_to_the_ceiling_is_silent(self):
+        """The net must not widen into noise: agreement says nothing."""
+        run = self.harness(run_id="equal-to-ceiling")
+        run.drive(challenge_mutate=self.endorse("buy"))
+        verdict = run.verdict()
+        self.assertEqual(verdict["rating"], "buy")
+        self.assertEqual(verdict["warnings"], [])
+
+    def test_no_endorsement_prints_no_note(self):
+        """Nothing to compare: the challenger endorsed no ceiling."""
+        run = self.harness(run_id="no-endorsement")
+        run.queue("chair_resolve", self.resolve_with_rating("sell"))
+        run.drive()
+        verdict = run.verdict()
+        self.assertIsNone(verdict["challenge"]["endorsement"])
+        self.assertEqual(verdict["warnings"], [])
+
+
 class TestProvenance(EngineTest):
     def test_usage_sidecars_fold_into_provenance_and_missing_stay_null(self):
         run = self.harness(run_id="usage-run")

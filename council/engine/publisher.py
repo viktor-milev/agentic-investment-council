@@ -4,7 +4,10 @@ Publication is transparency, not a gate (REBUILD-SPEC section 7). The final
 document is diffed field by field against the challenged draft and every
 change is listed in the change appendix; a rating raised past the challenged
 draft without a challenger endorsement publishes WITH a prominent warning,
-never silently. When the outside audit did not run, the draft publishes
+never silently; and whenever the published rating differs from the
+challenger's endorsed ceiling in EITHER direction, a note names both
+ratings (owner ruling AB16(5)). When the outside audit did not run, the
+draft publishes
 degraded: capped at hold when it said buy or strong buy, with a loud warning
 that nothing was challenged.
 
@@ -116,6 +119,34 @@ def build_change_appendix(challenged, final, endorsement):
         rows.append({"field": name, "before": _render(before),
                      "after": _render(after), "label": label})
     return rows, warnings
+
+
+def endorsement_note(published_rating, endorsement):
+    """The note that names the published rating and the challenger's
+    endorsed ceiling together (owner ruling AB16(5)).
+
+    It fires whenever the two words differ, in EITHER direction - the
+    raise check above catches only ratings pushed past the ceiling, so
+    a council that published sell under a ceiling of monitor said
+    nothing at all on the page. No ordering is invented here: monitor
+    is a watch-state and not a rank, and a plain difference needs no
+    rank to be true.
+
+    The wording NAMES and never judges. A rating below a ranked ceiling
+    sits inside what the auditor endorsed, so a note calling that a
+    divergence would be false; naming both ratings is true in every
+    case. Transparency only - nothing here gates, blocks or degrades
+    what publishes.
+
+    Returns a one-element list, or an empty one when the two agree or
+    the challenger endorsed no ceiling."""
+    ceiling = (endorsement or {}).get("highest_rating_supported")
+    if ceiling is None or ceiling == published_rating:
+        return []
+    return ["Rating against the outside auditor's ceiling: the council "
+            "published %s; the highest rating the auditor said the record "
+            "supports was %s."
+            % (_rating_words(published_rating), _rating_words(ceiling))]
 
 
 def degrade_scenario_rating(published, earned, publishing):
@@ -364,6 +395,8 @@ def assemble_and_publish(run_dir):
             "hold publishes on a failed audit; this document was not "
             "challenged by the cross-model auditor."
             % (challenge["failure_reason"] or challenge["status"]))
+    warnings.extend(endorsement_note(final["rating"],
+                                     challenge["endorsement"]))
     provenance = _provenance(run_dir, events, invocation,
                              challenge["challenger_tokens"],
                              challenge["model_requested"])
