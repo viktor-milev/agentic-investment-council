@@ -1,0 +1,24 @@
+{
+  "authored_verdict": false,
+  "casefile_sha256_echo": "879c9eef9af549d7231df0428bb5e59b2bc4e92b02f63078d8afdc89cac507e5",
+  "endorsement": {
+    "highest_rating_supported": "hold"
+  },
+  "findings": [
+    {
+      "detail": "The draft states the asked price of 104 without naming the quote date or source; the mispricing read leans on it.",
+      "id": "F1",
+      "kind": "unsupported_claim",
+      "title": "The 104 anchor is asserted, not shown"
+    },
+    {
+      "detail": "None of the five advisors compared the earnings yield to the stated risk-free rate, so the fair call is unanchored.",
+      "id": "F2",
+      "kind": "blind_spot",
+      "title": "No test against the risk-free alternative"
+    }
+  ],
+  "nonce_echo": "fx-nonce-WRONG",
+  "run_id_echo": "fx-run-1",
+  "summary": "The draft's hold is defensible but rests on an unsourced price anchor and skips the risk-free comparison."
+}

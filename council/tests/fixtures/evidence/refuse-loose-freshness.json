@@ -1,0 +1,362 @@
+{
+ "capture_version": "1.2.0",
+ "captured_at": "2026-08-30T21:30Z",
+ "gaps": [
+  {
+   "fact_class": "short_interest_shares",
+   "reason": "INVENTED FIXTURE - this listing publishes no dated short-interest series, so the fact class is absent by design",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "how crowded the short side is cannot be measured; the market-structure read leans on volume and the 52-week range alone"
+  }
+ ],
+ "market_state": {
+  "disclosure": {
+   "price_age": "INVENTED FIXTURE - captured on a Sunday evening; the exchange is shut and the last trade is Friday 2026-08-28's close, two days before the capture.",
+   "reason": "INVENTED FIXTURE - the exchange was shut on the capture day; see the price-age note beside this."
+  },
+  "state": "closed"
+ },
+ "question_verbatim": "One defect only: the price freshness rule is declared at 30 days against the ruled 3. (INVENTED FIXTURE)",
+ "subject": {
+  "currency": "USD",
+  "kind": "single_stock",
+  "asset_class": "equity",
+  "listing": "NYSE (INVENTED)",
+  "name": "Example Manufacturing Co",
+  "ticker": "EXMP"
+ },
+ "sufficiency": {
+  "requirements": [
+   {
+    "answered_by": [
+     "net_income_q",
+     "net_income_prior_year_q"
+    ],
+    "description": "Is Example Manufacturing earning more than a year ago? Net income this quarter against the same quarter last year. (INVENTED FIXTURE)",
+    "id": "profit_growth",
+    "kind": "canonical_test",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "free_cash_flow_q",
+     "free_cash_flow_prior_year_q"
+    ],
+    "description": "How much cash is generated after capital spending, this year against last. (INVENTED FIXTURE)",
+    "id": "free_cash_flow",
+    "kind": "canonical_test",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "pe_ratio_current",
+     "pe_ratio_5y_average"
+    ],
+    "description": "Is today's rating expensive or cheap against the company's own five-year record? (INVENTED FIXTURE)",
+    "id": "rating_vs_history_or_peers",
+    "kind": "canonical_test",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "fcf_yield_ratio",
+     "risk_free_rate_1m_tbill"
+    ],
+    "description": "Does the free-cash-flow yield beat the one-month Treasury bill? (INVENTED FIXTURE)",
+    "id": "yield_vs_risk_free",
+    "kind": "canonical_test",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "order_backlog_note"
+    ],
+    "description": "The stated thesis turns on the order backlog still growing. (INVENTED FIXTURE)",
+    "id": "thesis_backlog",
+    "kind": "thesis_specific",
+    "status": "answered"
+   }
+  ]
+ },
+ "tier1": [
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "price_last",
+   "source": "INVENTED FIXTURE - broker price snapshot, Friday close",
+   "unit": "USD",
+   "value": "123.45"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "range_52w_low",
+   "source": "INVENTED FIXTURE - broker one-year price history",
+   "unit": "USD",
+   "value": "80.10"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "range_52w_high",
+   "source": "INVENTED FIXTURE - broker one-year price history",
+   "unit": "USD",
+   "value": "150.20"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "market_cap",
+   "source": "INVENTED FIXTURE - market-data page dated at the sitting",
+   "unit": "USD_m",
+   "value": "50000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "latest_required_report_period",
+   "source": "INVENTED FIXTURE - Example Manufacturing investor-relations filings page",
+   "unit": "period",
+   "value": "Q2 FY2026, quarter ended 2026-06-30, filed 2026-07-15"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "revenue_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q, 2026-07-15",
+   "unit": "USD_m",
+   "value": "1500.0"
+  },
+  {
+   "as_of": "2025-06-28",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "revenue_prior_year_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing prior-year 10-Q, 2025-06-28 (kept on a long rule to prove the freshness arithmetic)",
+   "unit": "USD_m",
+   "value": "1400.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "net_income_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q, 2026-07-15",
+   "unit": "USD_m",
+   "value": "225.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "net_income_prior_year_q",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q, dated by the filing that republishes it (DIAG-1)",
+   "unit": "USD_m",
+   "value": "200.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "operating_cash_flow_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q cash-flow statement, 2026-07-15",
+   "unit": "USD_m",
+   "value": "1234.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "operating_cash_flow_prior_year_q",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
+   "unit": "USD_m",
+   "value": "1100.25"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "capital_expenditure_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q cash-flow statement, 2026-07-15",
+   "unit": "USD_m",
+   "value": "234.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "capital_expenditure_prior_year_q",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
+   "unit": "USD_m",
+   "value": "220.25"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "operating_cash_flow_q",
+      "label": "operating cash flow, quarter",
+      "value": "1234.5"
+     },
+     {
+      "fact_id": "capital_expenditure_q",
+      "label": "capital spending, quarter",
+      "value": "234.5"
+     }
+    ],
+    "operation": "subtract"
+   },
+   "freshness_rule_days": 120,
+   "id": "free_cash_flow_q",
+   "source": "INVENTED FIXTURE - derived inside the pack from the two 10-Q cash-flow facts",
+   "unit": "USD_m",
+   "value": "1000.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "operating_cash_flow_prior_year_q",
+      "label": "operating cash flow, prior-year quarter",
+      "value": "1100.25"
+     },
+     {
+      "fact_id": "capital_expenditure_prior_year_q",
+      "label": "capital spending, prior-year quarter",
+      "value": "220.25"
+     }
+    ],
+    "operation": "subtract"
+   },
+   "freshness_rule_days": 120,
+   "id": "free_cash_flow_prior_year_q",
+   "source": "INVENTED FIXTURE - derived inside the pack from the two prior-year cash-flow facts",
+   "unit": "USD_m",
+   "value": "880.00"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "cash_and_investments_mrq_end",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q balance sheet, 2026-07-15",
+   "unit": "USD_m",
+   "value": "800.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "total_debt_mrq_end",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q balance sheet, 2026-07-15",
+   "unit": "USD_m",
+   "value": "600.0"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "pe_ratio_current",
+   "source": "INVENTED FIXTURE - market-data page dated at the sitting",
+   "unit": "x",
+   "value": "18.4"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "pe_ratio_5y_average",
+   "source": "INVENTED FIXTURE - market-data page, five-year record",
+   "unit": "x",
+   "value": "22.1"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "free_cash_flow_q",
+      "label": "free cash flow, quarter",
+      "value": "1000.0"
+     },
+     {
+      "fact_id": "market_cap",
+      "label": "market value",
+      "value": "50000"
+     }
+    ],
+    "operation": "divide"
+   },
+   "freshness_rule_days": 30,
+   "id": "fcf_yield_ratio",
+   "source": "INVENTED FIXTURE - derived inside the pack: quarterly free cash flow against the market value",
+   "unit": "ratio",
+   "value": "0.02"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 200,
+   "id": "guidance_revenue_fy",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q2 FY2026 press release, 2026-07-15",
+   "unit": "USD_m",
+   "value": "6100"
+  },
+  {
+   "as_of": "2026-08-30",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "next_results_date_checked",
+   "source": "INVENTED FIXTURE - Example Manufacturing investor-relations events page, checked at the sitting",
+   "unit": "date",
+   "value": "2026-10-22"
+  },
+  {
+   "as_of": "2026-08-30",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "events_calendar_check",
+   "source": "INVENTED FIXTURE - Example Manufacturing investor-relations events page and dated news, checked at the sitting",
+   "unit": "check",
+   "value": "checked 2026-08-30: nothing scheduled before the 2026-10-22 results date"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 7,
+   "id": "risk_free_rate_1m_tbill",
+   "source": "INVENTED FIXTURE - Federal Reserve H.15 release, one-month Treasury bill",
+   "unit": "%",
+   "value": "4.35"
+  }
+ ],
+ "tier2": [
+  {
+   "as_of": "2026-07-15",
+   "figures": [
+    "2300",
+    "2100"
+   ],
+   "id": "order_backlog_note",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q2 FY2026 press release, 2026-07-15",
+   "text": "INVENTED FIXTURE - The order backlog reached 2300 million dollars at the end of the quarter, up from 2100 a year earlier, management wrote in the results release."
+  },
+  {
+   "as_of": "2026-07-15",
+   "figures": [
+    "6100"
+   ],
+   "id": "management_outlook_note",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q2 FY2026 press release, 2026-07-15",
+   "text": "INVENTED FIXTURE - Management guided full-year revenue to about 6100 million dollars and said component costs are easing."
+  }
+ ]
+}

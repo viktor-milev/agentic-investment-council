@@ -1,0 +1,3 @@
+# Fixture bytes are hashed by the suite; a checkout that
+# rewrote line endings would break the binding chain.
+* -text

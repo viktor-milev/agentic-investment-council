@@ -1,0 +1,41 @@
+{
+  "capture_version": "1.2.0",
+  "subject": {
+    "kind": "single_stock",
+    "asset_class": "equity",
+    "name": "Example Manufacturing Co",
+    "ticker": "EXMP",
+    "listing": "NYSE (INVENTED)",
+    "currency": "USD"
+  },
+  "question_verbatim": "One defect only: a market-shut capture with no disclosure of the price's age. (INVENTED FIXTURE)",
+  "captured_at": "2026-08-30T21:30Z",
+  "market_state": {
+    "state": "closed",
+    "disclosure": null
+  },
+  "tier1": [
+    {
+      "id": "price_last",
+      "value": "123.45",
+      "unit": "USD",
+      "as_of": "2026-08-28",
+      "source": "INVENTED FIXTURE - broker price snapshot, Friday close",
+      "freshness_rule_days": 3,
+      "derived": null
+    }
+  ],
+  "tier2": [],
+  "gaps": [],
+  "sufficiency": {
+    "requirements": [
+      {
+        "id": "price_read",
+        "description": "What does the asset cost today? (INVENTED FIXTURE)",
+        "kind": "thesis_specific",
+        "status": "answered",
+        "answered_by": ["price_last"]
+      }
+    ]
+  }
+}

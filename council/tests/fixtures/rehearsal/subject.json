@@ -1,0 +1,8 @@
+{
+ "currency": "USD",
+ "kind": "single_stock",
+ "asset_class": "equity",
+ "listing": "NYSE (INVENTED)",
+ "name": "Example Manufacturing Co",
+ "ticker": "EXMP"
+}

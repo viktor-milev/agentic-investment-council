@@ -1,0 +1,1 @@
+{"failure_reason":"the codex call exceeded its 1800-second budget (canned fixture)","findings":null,"raw_output":"response.json","returncode":1,"status":"timeout","usage_tokens":null}

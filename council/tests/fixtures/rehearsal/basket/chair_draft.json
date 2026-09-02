@@ -1,0 +1,117 @@
+{
+ "draft_verdict": {
+  "constituent_notes": [
+   {
+    "constituent": "ACHP",
+    "load_bearing_metric": "data-centre revenue",
+    "role_in_thesis": "INVENTED FIXTURE - the compute half of the pair; the thesis leans on data-centre demand.",
+    "tripwire": "INVENTED FIXTURE - a down quarter in data-centre revenue."
+   },
+   {
+    "constituent": "BGRD",
+    "load_bearing_metric": "order backlog",
+    "role_in_thesis": "INVENTED FIXTURE - the grid half of the pair; transmission gear orders.",
+    "tripwire": null
+   }
+  ],
+  "conviction_rationale": "INVENTED FIXTURE - the pair earns a buy on this record: the blended rating sits a tenth under its own five-year average, and both named legs answered their essential metrics.",
+  "evidence_dependencies": [
+   "price_last__achp",
+   "pair_pe_blended_current",
+   "pair_pe_blended_5y_average",
+   "order_backlog__bgrd"
+  ],
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "Alpha Chips last price",
+    "pack_fact_id": "price_last__achp",
+    "unit": "USD",
+    "value": "231.40"
+   },
+   {
+    "as_of": "2026-08-28",
+    "name": "Beta Grid last price",
+    "pack_fact_id": "price_last__bgrd",
+    "unit": "USD",
+    "value": "88.15"
+   }
+  ],
+  "mispricing": {
+   "arithmetic": "INVENTED FIXTURE - 27.5 times blended earnings today against the pair's own five-year average of 31.2, roughly a tenth under it.",
+   "magnitude": "roughly a tenth under the pair's own five-year rating",
+   "read": "cheap"
+  },
+  "rating": "buy",
+  "sizing_inputs": [
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no realized volatility series; the gap is stated here.",
+    "id": "realized_volatility",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no liquidity series; the gap is stated here.",
+    "id": "liquidity",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no event dates series; the gap is stated here.",
+    "id": "event_dates",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no drawdown shape series; the gap is stated here.",
+    "id": "drawdown_shape",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   }
+  ],
+  "tripwires": {
+   "falsifiers": [
+    {
+     "constituent": "BGRD",
+     "date": "2026-10-15",
+     "figure_name": "order_backlog__bgrd",
+     "source": "Beta Grid results release (INVENTED)",
+     "statement": "INVENTED FIXTURE - if Beta Grid's order backlog prints below 9800 USD millions, the grid leg of the pair thesis is wrong."
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "level": "24.00",
+     "meaning": "INVENTED FIXTURE - a blended rating under 24.00 says the growth leg is wrong, not cheap.",
+     "unit": "x"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "constituent": "ACHP",
+     "date": null,
+     "detail": "INVENTED FIXTURE - reopen if Alpha Chips closes at or under 200.00 USD.",
+     "kind": "price",
+     "level": "200.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2026-10-15",
+     "detail": "INVENTED FIXTURE - reopen on the two third-quarter results, whatever the prices do.",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  }
+ },
+ "synthesis_markdown": "## The chairman's synthesis\n\nINVENTED FIXTURE - one idea, two named legs, one rating: buy, scored at the named tripwires."
+}

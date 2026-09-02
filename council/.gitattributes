@@ -1,0 +1,6 @@
+# council/runs/** are run artifacts whose exact bytes are hashed and published
+# (the frozen pack, the case file sent to the challenger, the verdict). The
+# same rule and the same reason as the repository root's `runs/** -text`: a
+# checkout that rewrote line endings would make every published hash fail to
+# reproduce. Stored verbatim.
+runs/** -text

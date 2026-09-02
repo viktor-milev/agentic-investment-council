@@ -1,0 +1,273 @@
+{
+  "floors_version": "1.1.0",
+  "authority": "Evidence floors per docs/REBUILD-SPEC.md Appendix A, carrying OWNER-RULINGS W1/W2 (generic core), W4 (Apple), W5+W8.1 (Galaxy), W6/W8.3 (Bitcoin) and the AB2 mandate additions, plus the etf/basket/theme classes per docs/THEMES-BASKETS-SPEC.md section 4 (the W2.5 vehicle floor; AB12 thematic vehicles; basket tests at the thesis level). Floors are minimums for these subjects, never the ceiling: the evidence stage still derives what THIS question needs. Version 1.1.0 adds the ANCHORLESS registry per docs/ANCHORLESS-SPEC.md sections 2-4 (owner rulings AB13.4 and AB15): the gold and commodity subject SHAPES, the asset_classes anchor sets that decide sufficiency for an asset without earnings, and the anchorless_rating constants that fix the rating bar and its bands in data.",
+  "entry_kinds": {
+    "id": "the exact fact id must be present in tier1",
+    "one_of": "at least one of the listed fact ids must be present in tier1",
+    "prefix": "at least one tier1 fact id starting with the prefix must be present",
+    "pairs": "where the first id of a pair is present in tier1, the second must be too",
+    "parallel_prefixes": "every listed prefix must be present in tier1 AND the suffixes after the prefixes must be the SAME SET across all of them - a repeated structure (one row per cycle, one row per venue) is complete or it is not there; an optional min_members says how many members the structure needs before it is a structure at all",
+    "requires_arithmetic": "the fact IS built from other facts in the pack, so it must declare its arithmetic and the gate recomputes it - a claimed difference is asserted, not shown. The companion `arithmetic` names the operation and the operand fact ids IN ORDER, because a capture that adds where the anchor subtracts would otherwise have its own wrong sum faithfully verified",
+    "levels": "required = missing refuses; conditional = missing refuses unless a gap is declared with the stated reason; advisory = recorded, never refuses"
+  },
+  "classes": {
+    "single_stock": {
+      "canonical_tests": "required",
+      "floors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 3, "likely_source": "the broker's price snapshot; a public quote page when the broker cannot serve it", "why": "W1: what the asset costs at the sitting; 3-day exchange-hours freshness ruled"},
+        {"kind": "id", "id": "range_52w_low", "level": "required", "likely_source": "the broker's one-year price history", "why": "W1 correction: the 52-week range is a must-have"},
+        {"kind": "id", "id": "range_52w_high", "level": "required", "likely_source": "the broker's one-year price history", "why": "W1 correction: the 52-week range is a must-have"},
+        {"kind": "id", "id": "market_cap", "level": "required", "likely_source": "a market-data page dated at the sitting", "why": "W2.1: the current whole-business market value"},
+        {"kind": "id", "id": "latest_required_report_period", "level": "required", "likely_source": "the company's investor-relations filings page", "why": "W2.1: proof the latest required report is in hand"},
+        {"kind": "one_of", "ids": ["revenue_q", "net_income_q", "operating_cash_flow_q"], "level": "required", "likely_source": "the latest quarterly or annual report", "why": "W2.1: at least one earnings-power measure chosen for the business (default set: revenue, net income)"},
+        {"kind": "one_of", "ids": ["cash_and_investments_mrq_end", "total_debt_mrq_end"], "level": "required", "likely_source": "the latest report's balance sheet", "why": "W2.1: at least one financial-resilience measure chosen for the business (default set: cash, total debt)"},
+        {"kind": "id", "id": "capital_expenditure_q", "level": "required", "likely_source": "the cash-flow statement of the latest report", "why": "AB2/DIAG: free cash flow cannot be struck without it"},
+        {"kind": "pairs", "pairs": [["revenue_q", "revenue_prior_year_q"], ["net_income_q", "net_income_prior_year_q"], ["operating_cash_flow_q", "operating_cash_flow_prior_year_q"], ["capital_expenditure_q", "capital_expenditure_prior_year_q"]], "level": "required", "likely_source": "the comparative column of the same filing (dated by the filing that republishes it, DIAG-1)", "why": "AB2: growth is unmeasurable without the prior-year comparatives"},
+        {"kind": "id", "id": "short_interest_shares", "level": "conditional", "condition": "US-listed names where the dated exchange series exists; declare the gap absent-by-design where no such series is published", "likely_source": "the exchange's short-interest series via a dated market-data page", "why": "W2.2"},
+        {"kind": "id", "id": "next_results_date_checked", "level": "required", "likely_source": "the company's investor-relations events page, checked at the sitting", "why": "W2.3: a confirmed date or a verified 'none announced' - only an unchecked calendar is a failure"},
+        {"kind": "id", "id": "events_calendar_check", "level": "required", "likely_source": "the company's investor-relations events page and dated news at the sitting", "why": "AB2: the dated events calendar, or a verified 'none scheduled'"},
+        {"kind": "prefix", "prefix": "guidance_", "level": "conditional", "condition": "where management has published guidance; declare the gap where none is published", "likely_source": "the latest results call transcript or press release", "why": "AB2: the company's own outlook"},
+        {"kind": "prefix", "prefix": "risk_free_rate", "level": "required", "likely_source": "the Federal Reserve H.15 release (or the question's own convention)", "why": "AB2/DIAG-3: the yield test needs the rate the question names; default one-month US Treasury bill"}
+      ]
+    },
+    "bitcoin": {
+      "canonical_tests": "absent_by_design_allowed",
+      "canonical_tests_note": "W6/W2.8: the equity fact families are declared absent-by-design for Bitcoin; the four valuation tests that rest on them are declared as gaps with that reason, and the thesis-specific requirements do the sufficiency work.",
+      "floors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 1, "likely_source": "coingecko.com or coinmarketcap.com (the owner named both, W6.1); record which one answered", "why": "W6.1: aggregator price, 1-day freshness ruled"},
+        {"kind": "id", "id": "supply_circulating", "level": "required", "likely_source": "Coin Metrics free public data", "why": "W6.2"},
+        {"kind": "id", "id": "etf_net_flows_daily", "level": "required", "likely_source": "Farside Investors' daily US spot-ETF flow table", "why": "W6.3: the closest thing Bitcoin has to knowing who is actually buying"},
+        {"kind": "id", "id": "halving_next", "level": "required", "likely_source": "the protocol schedule via a dated public source", "why": "W8.3: the calendar date stays the load-bearing fact"},
+        {"kind": "id", "id": "halving_next_block", "level": "advisory", "likely_source": "the protocol schedule (fixed block height)", "why": "W8.3: the fixed block height beside the drifting date, advisory context"},
+        {"kind": "id", "id": "futures_basis_annualised", "level": "advisory", "likely_source": "CME published daily settlements", "why": "W6.4: advisory until one sitting produces the number cleanly; then it returns to the owner"}
+      ]
+    },
+    "etf": {
+      "canonical_tests": "absent_by_design_allowed",
+      "canonical_tests_note": "W2.5/AB12: the four equity tests may be declared absent by design for a collective investment vehicle; the vehicle floor below and the pack's own checklist do the sufficiency work.",
+      "floors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 3, "likely_source": "the broker's price snapshot; the fund's own quote page when the broker cannot serve it", "why": "W2.5: what the fund costs at the sitting; 3-day freshness ruled"},
+        {"kind": "id", "id": "nav_per_share", "level": "required", "likely_source": "the fund's own daily NAV disclosure", "why": "W2.5: the fund's own daily statement of what one share is worth"},
+        {"kind": "id", "id": "premium_discount", "level": "required", "likely_source": "the fund's daily premium/discount disclosure, or derived from price and NAV where the arithmetic lands exactly", "why": "W2.5: whether the market price stands above or below the fund's own stated value"},
+        {"kind": "id", "id": "holding_largest_name", "level": "required", "likely_source": "the fund's published holdings disclosure", "why": "W2.5: the holdings picture opens with the top holdings by name - at minimum the largest single holding, named; aggregate figures alone are not a picture"},
+        {"kind": "id", "id": "holding_largest_share", "level": "required", "likely_source": "the fund's published holdings disclosure", "why": "W2.5: the largest holding's share of the fund - a name without its share is not a picture"},
+        {"kind": "id", "id": "holding_top10_share", "level": "required", "likely_source": "the fund's published holdings disclosure", "why": "W2.5: the concentration reading - the top ten holdings' combined share of the fund"},
+        {"kind": "id", "id": "expense_ratio", "level": "required", "likely_source": "the fund's prospectus or its own fund page", "why": "W2.5: what the fund charges to be owned"},
+        {"kind": "id", "id": "bid_ask_spread_30d_median", "level": "required", "likely_source": "the fund's regulator-required daily disclosure page", "why": "W2.5: the regulator-required 30-day median spread - what trading the fund actually costs"},
+        {"kind": "prefix", "prefix": "leverage_", "level": "conditional", "condition": "where the fund is leveraged or inverse; declare the gap absent-by-design where it is neither", "likely_source": "the fund's prospectus leverage and reset terms", "why": "W2.5: a leveraged or inverse fund's reset terms are load-bearing"},
+        {"kind": "id", "id": "fund_flows", "level": "advisory", "likely_source": "a dated flow source tested for that fund family", "why": "W2.5: advisory unless a tested dated source exists for that fund family; the Bitcoin-ETF carve-out lives in the bitcoin class"}
+      ]
+    },
+    "basket": {
+      "canonical_tests": "required",
+      "canonical_tests_note": "THEMES-BASKETS-SPEC section 4: the four tests are answered at the THESIS level - one idea, one battery - where the question is a priced one.",
+      "floors": [],
+      "floors_note": "The per-constituent essential core (each named constituent's last price, market value and load-bearing metrics) is enforced by the sufficiency code, not by id-keyed entries here."
+    },
+    "theme": {
+      "canonical_tests": "absent_by_design_allowed",
+      "canonical_tests_note": "THEMES-BASKETS-SPEC section 4: the four equity tests may be declared absent by design for a theme - gaps still declared with reasons; the falsifier and expression checks in the sufficiency code do the work.",
+      "floors": [],
+      "floors_note": "The per-constituent essential core (each named constituent's last price, market value and load-bearing metrics) is enforced by the sufficiency code, not by id-keyed entries here."
+    },
+    "gold": {
+      "canonical_tests": "absent_by_design_allowed",
+      "canonical_tests_note": "ANCHORLESS-SPEC section 4 (owner ruling AB13.4): gold has no earnings, no cash flow and no shares, so the four equity tests are declared absent by design with that reason. The anchor set under asset_classes.gold does the sufficiency work.",
+      "floors": [],
+      "floors_note": "The shape carries no id-keyed floors of its own: gold's ruled minimums are its ASSET-CLASS anchors (asset_classes.gold plus asset_classes.common_anchorless), which the sufficiency gate applies on top of these."
+    },
+    "commodity": {
+      "canonical_tests": "absent_by_design_allowed",
+      "canonical_tests_note": "ANCHORLESS-SPEC section 4 (owner ruling AB13.4): a standalone commodity has no earnings, no cash flow and no shares, so the four equity tests are declared absent by design with that reason. The commodity template under asset_classes.commodity, plus the named PRODUCT's own conditional items, do the sufficiency work.",
+      "floors": [],
+      "floors_note": "The shape carries no id-keyed floors of its own: the ruled minimums are the commodity TEMPLATE (asset_classes.commodity plus asset_classes.common_anchorless) and the product entry named by subject.product (owner ruling W2.7, the product-conditional rule)."
+    }
+  },
+  "asset_classes": {
+    "authority": "ANCHORLESS-SPEC sections 2 and 4 (owner rulings AB13.4 and AB15): the asset class decides the sufficiency anchor set and the rating basis, and nothing else. The class lists below are the owner's own confirmed lists, including the PBoC enhancement he added to gold's central-bank anchor. Later classes are ADDITIONS to this data, never code.",
+    "common_anchorless": {
+      "note": "Applied to EVERY anchorless class on top of its own list: the anchors the commissioned brief calls class-generic (the dated event calendar and five-year realized volatility; the price with its freshness rule sits in each class's own list, because the ruled ceiling differs by class) plus the cash rate, because ANCHORLESS-SPEC section 3 makes cash and the five-year volatility the two inputs of the rating bar itself. A pack that cannot answer the bar cannot earn a rating, which is the failure this unit exists to fix.",
+      "anchors": [
+        {"kind": "id", "id": "realized_volatility_5y", "level": "required", "likely_source": "a published five-year realized volatility, or one computed from a five-year daily price history from the same source that priced the subject; if you compute it, declare the arithmetic and the gate recomputes it", "why": "ANCHORLESS-SPEC section 3 (AB13.2): the rating bar is CASH plus a premium scaled to the asset's OWN realized volatility over the PAST FIVE YEARS - the owner's long-horizon amendment, never last month's window. Without this figure no rating can be earned and the sitting could only ever say hold"},
+        {"kind": "prefix", "prefix": "risk_free_rate", "level": "required", "likely_source": "the Federal Reserve H.15 release, or whatever risk-free convention the question itself names", "why": "ANCHORLESS-SPEC section 3: the bar STARTS at cash. The expected result of the ladder is judged against it, and an expected result negative against cash is a sell - so the cash rate is an input to the rating itself, not context"},
+        {"kind": "prefix", "prefix": "calendar_", "level": "required", "likely_source": "the published central-bank meeting calendar, the asset's own protocol or contract schedule, and the named legislative or policy dates in play - one dated fact each, every id beginning calendar_", "why": "ANCHORLESS-SPEC section 4: the dated event calendar. The Bitcoin cold read found a rating written with no calendar on the page; ruling AB13.5 also requires every tripwire to be actionable INSIDE the horizon, and a trigger without a date is not"}
+      ]
+    },
+    "equity": {
+      "basis": "anchored",
+      "note": "The four canonical tests, ids unchanged (ANCHORLESS-SPEC section 4). Equity subjects' rating basis is untouched by this unit: the anchor basis stands, and a chairman may add a scenario ladder as supporting context but never as the rating basis.",
+      "anchors": []
+    },
+    "crypto": {
+      "basis": "anchorless",
+      "note": "ANCHORLESS-SPEC 4.A, confirmed by the owner at freeze (AB15) and grounded in the commissioned on-chain brief of 2026-09-01, every source verified by live request. The brief's ranking governs: require the arithmetic over the whole chain, require the best of the coin-age measures, demote the wallet-identity guesswork.",
+      "anchors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 1, "likely_source": "coingecko.com or coinmarketcap.com (the owner named both, W6.1); record which one answered", "why": "ANCHORLESS-SPEC 4.A.1 (W6.1): the aggregator price on the ruled 1-day freshness"},
+        {"kind": "id", "id": "supply_circulating", "level": "required", "likely_source": "Coin Metrics Community API (free, no key, daily bars), metric SplyCur", "why": "ANCHORLESS-SPEC 4.A.2: circulating supply from a dated source - the denominator under every value figure"},
+        {"kind": "id", "id": "etf_net_flows_daily", "level": "required", "likely_source": "Farside Investors' daily US spot-ETF flow table (the primary source, W6.3)", "why": "ANCHORLESS-SPEC 4.A.3: daily US spot-ETF flows from a PRIMARY source - the closest thing this asset has to knowing who is actually buying"},
+        {"kind": "id", "id": "etf_net_flows_cumulative", "level": "required", "likely_source": "the published running total, or the daily table cumulated - if you cumulate it yourself, declare the arithmetic", "why": "ANCHORLESS-SPEC 4.A.3: the CUMULATIVE series beside the day. One day's flow is noise; the running total is how much the Western buyer has actually taken on"},
+        {"kind": "one_of", "ids": ["futures_basis_annualised", "funding_rate"], "level": "required", "likely_source": "the perpetual funding rate from the venue that sets it, or the annualised futures basis from the CME's published settlements", "why": "ANCHORLESS-SPEC 4.A.4: derivatives positioning - what leveraged money pays to be long, dated"},
+        {"kind": "id", "id": "open_interest", "level": "required", "likely_source": "the venue's own published open-interest series, dated", "why": "ANCHORLESS-SPEC 4.A.4: open interest beside the basis or funding rate - the size of the borrowed conviction that can reverse"},
+        {"kind": "id", "id": "realized_price", "level": "required", "likely_source": "Coin Metrics Community API (free, no key, daily bars) (market value divided by CapMVRVCur recovers it exactly), or checkonchain's free daily series - take the last NON-EMPTY value, the date axis runs past the data", "why": "ANCHORLESS-SPEC 4.A.5(a): the market's average purchase price - the deep downside rung, and the one figure that is arithmetic over the whole chain rather than a guess about who owns what"},
+        {"kind": "id", "id": "realized_price_change_30d", "level": "required", "likely_source": "the same series, 30 days apart - declare the arithmetic", "why": "ANCHORLESS-SPEC 4.A.5(a): its 30-day change - whether real capital is arriving through ALL channels, not only the fund flows"},
+        {"kind": "id", "id": "mvrv_z_score", "level": "required", "likely_source": "bitcoin-data.com/v1/mvrv-zscore/last (dated JSON, keyless today) cross-checked against Coin Metrics Community API (free, no key, daily bars) CapMVRVCur", "why": "ANCHORLESS-SPEC 4.A.5(b): where the market sits in its own cycle, READ AS DIRECTION AND RATE OF CHANGE against its own history - never against a fixed threshold, because every cycle's peak has been lower than the last"},
+        {"kind": "id", "id": "sth_cost_basis", "level": "required", "likely_source": "checkonchain's free daily series; bitcoin-data.com/v1/sth-realized-price/last as a keyless cross-check", "why": "ANCHORLESS-SPEC 4.A.5(c): what recent buyers paid - the rung where the weakest owner goes underwater and selling has historically accelerated"},
+        {"kind": "id", "id": "lth_cost_basis", "level": "required", "likely_source": "checkonchain's free daily series; bitcoin-data.com/v1/lth-realized-price/last as a keyless cross-check", "why": "ANCHORLESS-SPEC 4.A.5(c): what patient owners paid - the deeper rung of the downside ladder"},
+        {"kind": "id", "id": "lth_supply", "level": "required", "likely_source": "checkonchain's free supply-split daily series", "why": "ANCHORLESS-SPEC 4.A.5(d): how many coins have sat untouched - the only required figure that answers who is SUPPLYING the market"},
+        {"kind": "id", "id": "lth_supply_change_30d", "level": "required", "likely_source": "the same series, 30 days apart - declare the arithmetic", "why": "ANCHORLESS-SPEC 4.A.5(d): its 30-day net change - distribution against accumulation, read in months and always beside the fund flows"},
+        {"kind": "id", "id": "hash_rate_7d_avg", "level": "required", "likely_source": "mempool.space or blockchain.com free keyless JSON, or Coin Metrics Community API (free, no key, daily bars) HashRate - the SEVEN-DAY average, never the daily estimate, which swings by tens of exahashes in a day", "why": "ANCHORLESS-SPEC 4.A.5(e): the one on-chain family custody cannot distort - electricity and silicon, not wallet labels - and the source of forced miner supply"},
+        {"kind": "id", "id": "difficulty", "level": "required", "likely_source": "mempool.space or blockchain.com free keyless JSON", "why": "ANCHORLESS-SPEC 4.A.5(e): what the network has made itself cost, beside the hash rate"},
+        {"kind": "parallel_prefixes", "prefixes": ["cycle_peak_", "cycle_trough_", "cycle_drawdown_", "cycle_recovery_months_"], "level": "required", "min_members": 2, "likely_source": "the asset's own dated price history: for EACH prior cycle, one fact per family sharing the same suffix - for example cycle_peak_2021, cycle_trough_2022, cycle_drawdown_2022, cycle_recovery_months_2022", "why": "ANCHORLESS-SPEC 4.A.6: cycle history WITH DURATIONS. The Bitcoin cold read called the trough-to-recovery TIME 'the single most decision-relevant gap' - a peak and a trough without the months it took to come back tells an investor how far, never how long. All four families must cover the SAME cycles, or the durations are answered for some cycles and silently missing for others"},
+        {"kind": "id", "id": "halving_next", "level": "required", "likely_source": "the protocol schedule via a dated public source", "why": "ANCHORLESS-SPEC 4.A.9 (W8.3): the halving DATE stays the load-bearing fact"},
+        {"kind": "id", "id": "halving_next_block", "level": "required", "likely_source": "the protocol schedule (the fixed block height)", "why": "ANCHORLESS-SPEC 4.A.9 (W8.3): the fixed block height rides beside the drifting date; the anchorless list requires both"},
+        {"kind": "prefix", "prefix": "exchange_balance", "level": "advisory", "likely_source": "Coin Metrics Community API (free, no key, daily bars)", "why": "ANCHORLESS-SPEC 4.A advisory: gathered when available, never refuses a sitting - whether a custodian counts as an exchange is a provider's editorial choice, and providers disagree by hundreds of thousands of coins"},
+        {"kind": "id", "id": "sth_sopr", "level": "advisory", "likely_source": "checkonchain free series", "why": "ANCHORLESS-SPEC 4.A advisory: the short-horizon capitulation read"},
+        {"kind": "id", "id": "dormancy", "level": "advisory", "likely_source": "checkonchain free series", "why": "ANCHORLESS-SPEC 4.A advisory: coin-days-destroyed and dormancy - the same age-reset defect as the owner-age split, without its clarity"},
+        {"kind": "prefix", "prefix": "hodl_wave", "level": "advisory", "likely_source": "checkonchain free series", "why": "ANCHORLESS-SPEC 4.A advisory"},
+        {"kind": "id", "id": "miner_reserves", "level": "advisory", "likely_source": "checkonchain or Coin Metrics Community API (free, no key, daily bars)", "why": "ANCHORLESS-SPEC 4.A advisory: muddied by loan collateral and hosting arrangements - colour, not a gate"},
+        {"kind": "id", "id": "puell_multiple", "level": "advisory", "likely_source": "checkonchain free series", "why": "ANCHORLESS-SPEC 4.A advisory"},
+        {"kind": "id", "id": "hashprice", "level": "advisory", "likely_source": "a public mining-economics page, dated", "why": "ANCHORLESS-SPEC 4.A advisory: miner revenue per unit of work"},
+        {"kind": "id", "id": "supply_in_profit_pct", "level": "advisory", "likely_source": "checkonchain free series", "why": "ANCHORLESS-SPEC 4.A advisory"}
+      ],
+      "reading_rule": "Every cohort figure here is read BESIDE the fund flows. Roughly 1.3 million coins now sit inside exchange-traded funds, custodied overwhelmingly by one firm, and a coin moving into fund custody resets its age to day one. In a heavy-creation period the coin-age split and the cost bases partly measure custody plumbing rather than investor behaviour - and the record says so rather than silently trusting them.",
+      "omitted": {
+        "nupl": "Net unrealised profit/loss is exactly one minus the reciprocal of MVRV - a rearrangement of a metric already required. Requiring both would let one fact vote twice.",
+        "whale_and_address_cohorts": "An address is not a person. Fund custody compresses millions of owners into a handful of very large addresses, so 'whales are accumulating' now frequently means 'a fund had a creation'. The most corrupted family after the ETFs arrived, and the most likely to produce a confident wrong answer.",
+        "thermocap_stock_to_flow_pi_cycle": "No mechanism. Thermocap divides by a quantity that only ever grows, so it is never actionable at a decision horizon; stock-to-flow was falsified in public; Pi-cycle and rainbow charts are curve-fits to three prior cycles.",
+        "active_addresses_and_nvt": "Both assume on-chain transaction activity proxies economic activity. Most trading is now off-chain or inside fund wrappers, so it no longer does."
+      },
+      "seat_emphasis": {
+        "advisor_bear": "the on-chain valuation floor: the realized price, the two cost bases of recent and patient owners, and what actually breaks on the way down to each of them.",
+        "advisor_bull": "the macro and the dated calendar: the risk-free rate, the policy and protocol dates in play, and what the calendar could deliver inside the horizon.",
+        "advisor_base_rate": "the cycle history WITH ITS DURATIONS: prior peaks, troughs, depths and the months each recovery took - how far, and how long.",
+        "advisor_market_structure": "the flows and the positioning: spot-ETF flows and their cumulative series, the basis or funding rate, open interest, and the patient-owner supply change read beside the flows.",
+        "advisor_risk": "the asset's own risk: realized volatility over five years, the drawdown shape the cycle history records, the hash rate and difficulty as the production system's health, and forced miner supply."
+      }
+    },
+    "gold": {
+      "basis": "anchorless",
+      "note": "ANCHORLESS-SPEC 4.B, confirmed by the owner at freeze with his PBoC enhancement (AB15), grounded in the commissioned gold/commodity brief of 2026-09-01. Gold is a MONETARY asset, not a commodity: essentially every ounce ever mined still exists and annual mine supply is about 1.5 per cent of that stock, so nothing on the supply side moves the price. The anchors answer one question - who is buying, why, and what would make them stop.",
+      "anchors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 3, "likely_source": "the London bullion benchmark price as free JSON", "why": "ANCHORLESS-SPEC section 4: the price with its freshness rule - the class-generic anchor every anchorless subject carries"},
+        {"kind": "id", "id": "tips_yield_5y", "level": "required", "likely_source": "the Federal Reserve's FRED, free CSV, no key, next business day", "why": "ANCHORLESS-SPEC 4.B.1: the five-year inflation-protected government bond yield - what the safe alternative pays. The textbook relationship has broken down since 2022, which is the argument for KEEPING the anchor: the ladder must say whether the bull case needs yields to fall, and if not, name the buyer paying up regardless"},
+        {"kind": "id", "id": "tips_yield_10y", "level": "required", "likely_source": "the Federal Reserve's FRED, free CSV, no key, next business day", "why": "ANCHORLESS-SPEC 4.B.1: the ten-year inflation-protected yield beside the five-year"},
+        {"kind": "id", "id": "central_bank_net_purchases_q", "level": "required", "likely_source": "the World Gold Council's free file, drawn from IMF statistics - the dashboard runs two to five months behind, so stamp the as-of date it actually carries", "why": "ANCHORLESS-SPEC 4.B.2: official-sector buying, the LATEST PUBLISHED QUARTER with its as-of date stamped. The buyer who does not care about price, and the most important driver of this market since 2022. A slow series by nature: its freshness rule is written for a slow series and the staleness is RENDERED beside it, never hidden"},
+        {"kind": "id", "id": "pboc_official_purchases", "level": "required", "likely_source": "the People's Bank of China's own reported reserve figures, dated", "why": "ANCHORLESS-SPEC 4.B.2, the owner's enhancement (ruling AB15): the PBoC IN ISOLATION - its OFFICIAL reported purchases. The one central bank with a special appetite for gold must never disappear into an average"},
+        {"kind": "id", "id": "pboc_market_estimate_purchases", "level": "required", "likely_source": "a dated market estimate of the PBoC's true buying from a named analyst house or research publication", "why": "ANCHORLESS-SPEC 4.B.2 (AB15): the dated MARKET ESTIMATE of the PBoC's true buying, carried beside the official figure"},
+        {"kind": "id", "id": "pboc_estimate_minus_official", "level": "required", "requires_arithmetic": true, "arithmetic": {"operation": "subtract", "operands": ["pboc_market_estimate_purchases", "pboc_official_purchases"]}, "likely_source": "the difference of the two facts above - declare the arithmetic so the gate recomputes it", "why": "ANCHORLESS-SPEC 4.B.2 (AB15): the DIVERGENCE made visible. The owner ruled that the gap between what the PBoC reports and what the market estimates it actually buys is itself information the council must see - so it is a fact on the page, not an invitation to subtract"},
+        {"kind": "id", "id": "gold_etf_holdings", "level": "required", "likely_source": "the World Gold Council's monthly primary file, free and open to anyone (the fund sponsor's own daily file returned a web page, not data)", "why": "ANCHORLESS-SPEC 4.B.3: gold fund holdings - what the Western investor owns"},
+        {"kind": "id", "id": "gold_etf_flows_monthly", "level": "required", "likely_source": "the same World Gold Council monthly file", "why": "ANCHORLESS-SPEC 4.B.3: the monthly flow - is private money joining the move or selling into it?"},
+        {"kind": "id", "id": "cftc_gold_net_long_specs", "level": "required", "likely_source": "the US CFTC weekly report, free JSON, as-of Tuesday and published Friday", "why": "ANCHORLESS-SPEC 4.B.4: speculative futures positioning - how crowded the trade is, and how much of the recent move is borrowed conviction that can reverse in a week"},
+        {"kind": "id", "id": "broad_dollar_index", "level": "required", "likely_source": "FRED's BROAD dollar index, free and daily - never the popular index, which is over half euro and misleads", "why": "ANCHORLESS-SPEC 4.B.5: the currency the price is quoted in - how much of the move is gold rising and how much is the denominator falling"},
+        {"kind": "id", "id": "gold_price_inflation_adjusted", "level": "required", "likely_source": "the benchmark price deflated by FRED consumer prices - declare the arithmetic", "why": "ANCHORLESS-SPEC 4.B.6: gold's only valuation check - today's price in the money of its own history"},
+        {"kind": "id", "id": "gold_price_inflation_adjusted_prior_peak", "level": "required", "likely_source": "the same deflated series at its prior extreme, with the date it fell on", "why": "ANCHORLESS-SPEC 4.B.6: the historical mark the adjusted price is judged against. A valuation check with nothing to compare against is not a check - and with only about three independent episodes to compare, this disciplines the debate rather than settling it"},
+        {"kind": "id", "id": "jewellery_investment_split", "level": "advisory", "likely_source": "the World Gold Council's quarterly demand file (lagged)", "why": "ANCHORLESS-SPEC 4.B advisory"},
+        {"kind": "id", "id": "physical_market_stress", "level": "advisory", "likely_source": "London-New York price dislocations, dated", "why": "ANCHORLESS-SPEC 4.B advisory: physical-market stress signals"},
+        {"kind": "id", "id": "mining_aisc", "level": "advisory", "likely_source": "World Gold Council / Metals Focus quarterly free summary", "why": "ANCHORLESS-SPEC 4.B advisory, and ONLY when miners are the subject - as a floor under gold it is a fiction, since costs run near 39 per cent of the price"}
+      ],
+      "reading_rule": "Official-sector buying is a SLOW series: it is published quarterly and runs two to five months behind. Its as-of date is rendered beside it at every sitting, so its age is read rather than assumed - a stale figure honestly dated is evidence; a stale figure read as current is not.",
+      "omitted": {
+        "mining_cost_floor": "Miners' all-in costs run near 39 per cent of the gold price. A floor 60 per cent below the market is not a floor - it is a statement about mining profits. It becomes relevant only when a MINING COMPANY is the subject, which is a different asset class.",
+        "lease_and_forward_rates": "No free public benchmark exists: the London forward rate was discontinued in January 2015 and rates are now private dealer quotes.",
+        "ratio_of_anchor_metrics": "Gold-to-equities and gold-to-inflation are quotients of figures the council already holds. Never anchor on the division of two anchors - it creates a way for a sitting to be refused over arithmetic."
+      },
+      "seat_emphasis": {
+        "advisor_bear": "the valuation check: the inflation-adjusted price against its own long history, and what has ended prior episodes at comparable levels.",
+        "advisor_bull": "the official-sector bid: central-bank buying with its as-of date, the PBoC's reported figure beside the market's estimate of its true buying, and whether the bull case needs real yields to fall or can name the buyer paying up regardless.",
+        "advisor_base_rate": "the outside view on real yields: what the five- and ten-year inflation-protected yields pay, what the textbook relationship says should follow, and how often it has actually proved true.",
+        "advisor_market_structure": "who is setting the price now: fund holdings and monthly flows, speculative futures positioning, and the broad dollar as the denominator under the whole move.",
+        "advisor_risk": "the asset's own risk: five-year realized volatility, the crowding in speculative positioning, and how much of the move would unwind if the fast money left."
+      }
+    },
+    "commodity": {
+      "basis": "anchorless",
+      "note": "ANCHORLESS-SPEC 4.C, the TEMPLATE for any standalone commodity, confirmed by the owner at freeze (AB15). A commodity is dug up, consumed and stored, so it genuinely runs short and long, and the market says so through inventories and the shape of the forward curve. It cannot be owned without cost or contract, so the council analyses it through the instrument it would actually buy (the owner's ruled product-conditional rule, W2.7).",
+      "anchors": [
+        {"kind": "id", "id": "price_last", "level": "required", "max_freshness_days": 3, "likely_source": "the executable contract price from the venue itself where it is free, or a dated mirror with a stated confidence note", "why": "ANCHORLESS-SPEC 4.C.1: the EXECUTABLE contract price - the price the trade could actually be done at, not an index"},
+        {"kind": "id", "id": "contract_venue", "level": "required", "likely_source": "the exchange the quoted contract trades on, named as a fact", "why": "ANCHORLESS-SPEC 4.C.1: the VENUE named. The tariff-era lesson is that a council anchoring on 'the price' without naming where it trades can build an entire case on a price it could not transact at"},
+        {"kind": "id", "id": "contract_month", "level": "required", "likely_source": "the delivery month of the quoted contract, named as a fact", "why": "ANCHORLESS-SPEC 4.C.1: the CONTRACT MONTH named - a commodity has no single price, only a price for a date"},
+        {"kind": "id", "id": "cross_venue_price", "level": "conditional", "condition": "products quoted on more than one benchmark venue; declare the gap absent-by-design where only one benchmark exists", "likely_source": "the second venue's own published price for comparable material, dated", "why": "ANCHORLESS-SPEC 4.C.2: the same product at a second benchmark. Where more than one exists, one price is not the price"},
+        {"kind": "id", "id": "cross_venue_gap", "level": "conditional", "requires_arithmetic": true, "arithmetic": {"operation": "subtract", "operands": ["cross_venue_price", "price_last"]}, "condition": "products quoted on more than one benchmark venue; declare the gap absent-by-design where only one benchmark exists", "likely_source": "the difference of the two venue prices - declare the arithmetic", "why": "ANCHORLESS-SPEC 4.C.2: how much of this price is the material and how much is policy. During the tariff episode the same metal traded at materially different prices in two places"},
+        {"kind": "id", "id": "carry_annualised", "level": "required", "likely_source": "read OFF THE CURVE - the near and far contract prices, annualised over the intended holding period; declare both operands so the gate recomputes it", "why": "ANCHORLESS-SPEC 4.C.3: the carry over the intended holding period, read off the curve. Storage and financing are OBSERVED in the curve, never computed beside it - the market has already done that arithmetic"},
+        {"kind": "prefix", "prefix": "exchange_inventory_", "level": "conditional", "condition": "products with an exchange stocks series; a product with no exchange stocks declares the reasoned gap (the ruled product-conditional item, W2.7)", "likely_source": "each venue's own published warehouse stocks, dated, one fact per venue with the venue in the id", "why": "ANCHORLESS-SPEC 4.C.4: exchange inventories SPLIT BY VENUE. During the tariff scramble total world inventory barely moved while each venue's number swung violently - a council reading one venue would have called relocation a shortage"},
+        {"kind": "id", "id": "tradable_horizon_months", "level": "required", "likely_source": "the last contract month with genuine liquidity on the named venue, stated in months", "why": "ANCHORLESS-SPEC 4.C.5: the tradable horizon. A three-year intent in a one-year-liquid contract makes the carry a forecast rather than an observation, and the record must say so"},
+        {"kind": "id", "id": "open_interest", "level": "required", "likely_source": "the CFTC file or the venue's own series, dated", "why": "ANCHORLESS-SPEC 4.C.5: the roll requirement's evidence - how deep the contract actually is at the horizon the thesis needs"},
+        {"kind": "id", "id": "physical_premium", "level": "advisory", "likely_source": "subscription physical-premium services where purchased", "why": "ANCHORLESS-SPEC 4.C advisory: the fastest honest read on tightness, and the one paid source worth buying"},
+        {"kind": "id", "id": "marginal_cost_incentive_price", "level": "advisory", "likely_source": "the USGS annual commodity summary as the free fallback; the paid cost curves otherwise", "why": "ANCHORLESS-SPEC 4.C advisory: promote to required only for horizons beyond five years, or where the case rests on supply responding"},
+        {"kind": "id", "id": "spec_positioning", "level": "advisory", "likely_source": "the CFTC weekly file for the venue that reports it", "why": "ANCHORLESS-SPEC 4.C advisory: demoted for commodities because the reporting venue may be the distorted one - a partial view of a fractured market"}
+      ],
+      "capture_fragility": "RECORDED, not solved: the only free London metals price and inventory feed is a scraped third-party mirror with no service guarantee - a single point of failure sitting under a required anchor. A sitting that must use it carries a stated confidence note on those facts, per the primary-or-discounted rule. A fallback path is REGISTERED, not built (ANCHORLESS-SPEC section 4.C).",
+      "omitted": {
+        "demand_narratives": "Grid spending, property and vehicle demand are the fashionable items and exactly what to leave out. In a storable commodity, demand reveals itself in inventories and in the curve, both already required; requiring the story on top double-counts it and gives a sitting a plumbing reason to fail while adding no measurement the price has not already made.",
+        "separate_storage_cost_inputs": "The forward curve already prices storage and financing. Requiring separate inputs is arithmetic the market has done for us, and would be wrong more often than the curve."
+      },
+      "seat_emphasis": {
+        "advisor_bear": "the loose case: inventories venue by venue, what the curve says about surplus, and what the price would be without the policy component in it.",
+        "advisor_bull": "the tight case: the carry read off the curve, the inventory trend, and the dated calendar events that could tighten the market inside the horizon.",
+        "advisor_base_rate": "the outside view: what has happened to comparable products at comparable inventory levels and comparable curve shapes.",
+        "advisor_market_structure": "the venue structure: the executable price with its venue and month, the cross-venue gap and how much of it is policy rather than material, and open interest at the horizon.",
+        "advisor_risk": "the asset's own risk: five-year realized volatility, the tradable horizon against the thesis's own horizon, and the roll requirement the trade would carry."
+      },
+      "products": {
+        "copper": {
+          "note": "The first registry entry (ANCHORLESS-SPEC section 8: further products return to the owner when charged). Copper's conditional item is the three-venue inventory split, and the relocation trap it guards against.",
+          "anchors": [
+            {"kind": "id", "id": "exchange_inventory_lme", "level": "required", "likely_source": "the London venue's published warehouse stocks, dated - free only through a scraped mirror today, so carry the confidence note", "why": "ANCHORLESS-SPEC 4.C.4 for copper: the London stock, one of the three that must be read together"},
+            {"kind": "id", "id": "exchange_inventory_comex", "level": "required", "likely_source": "the New York venue's published warehouse stocks, dated", "why": "ANCHORLESS-SPEC 4.C.4 for copper: the New York stock. During the tariff scramble metal moved from London warehouses to New York ones while total inventory barely changed"},
+            {"kind": "id", "id": "exchange_inventory_shfe", "level": "required", "likely_source": "the Shanghai venue's published warehouse stocks, dated", "why": "ANCHORLESS-SPEC 4.C.4 for copper: the Shanghai stock - without it the split is two thirds of a picture"}
+          ]
+        }
+      }
+    }
+  },
+  "anchorless_rating": {
+    "bar_inputs": {
+      "note": "The three frozen facts the chairman's ladder is allowed to name. They are the class anchors themselves, named here in ONE place so the engine binds the ladder to the facts it claims rather than to any figure carried in the same unit: a funding rate is a percentage too, and a bar built on it instead of the bill rate rates a losing ladder hold (audit finding ANCHORLESS-B r1-4).",
+      "reference_price": "price_last",
+      "volatility": "realized_volatility_5y",
+      "cash_prefix": "risk_free_rate"
+    },
+    "authority": "ANCHORLESS-SPEC section 3 (owner rulings AB13.1-.3). The scaling rule and the band arithmetic are the builder's to fix IN DATA; every constant here is stated in the verdict and printed on the page, and the machine - never a seat - computes the arithmetic from them.",
+    "reading": "The bar is CASH plus a premium scaled to the asset's own five-year realized volatility. Read it as a required reward for risk: bar_volatility_multiple is the minimum extra return per unit of the asset's own volatility that the council demands before it will call anything a buy. The bands above it are measured in the same volatility units, so one scaling step means the same thing everywhere.",
+    "bar_volatility_multiple": "0.35",
+    "bar_scaling_step": "0.10",
+    "buy_excess_multiple": "0.10",
+    "strong_buy_excess_multiple": "0.50",
+    "bands": [
+      "sell: the expected annualised result is below cash - the asset is expected to lose against a Treasury bill",
+      "hold: the expected annualised result clears cash but does not clear the bar decisively - it beats cash without paying for the risk taken",
+      "buy: the expected annualised result clears the bar by at least buy_excess_multiple times the asset's own five-year volatility",
+      "strong_buy: it clears the bar by at least strong_buy_excess_multiple times that volatility",
+      "monitor: the chairman judged the ladder too uncertain to aggregate, and said why - a watch-state, never a fifth opinion"
+    ],
+    "sensitivity": "ALWAYS printed (AB13.2): the probability at which the rating flips to the next rating down, and the bar recomputed one scaling step above and one below."
+  },
+  "names": {
+    "AAPL": {
+      "class": "single_stock",
+      "floors": [
+        {"kind": "id", "id": "operating_cash_flow_q", "level": "required", "likely_source": "the condensed cash-flow statement of the latest 10-Q (a single quarter is the difference of two cumulative statements)", "why": "W4.1: cash generation AND reported profit, both"},
+        {"kind": "id", "id": "net_income_q", "level": "required", "likely_source": "the latest 10-Q income statement", "why": "W4.1"},
+        {"kind": "id", "id": "cash_and_investments_mrq_end", "level": "required", "likely_source": "the latest 10-Q balance sheet", "why": "W4.2: two separate facts, never a netted figure"},
+        {"kind": "id", "id": "total_debt_mrq_end", "level": "required", "likely_source": "the latest 10-Q balance sheet", "why": "W4.2"},
+        {"kind": "id", "id": "buyback_spend_q", "level": "required", "likely_source": "the latest 10-Q cash-flow statement or the company's own stated figure", "why": "W4.3: the pace of repurchase in the period"},
+        {"kind": "id", "id": "diluted_shares_q", "level": "required", "likely_source": "the latest 10-Q income statement", "why": "W4.3: the diluted-share trajectory (read with its prior-year comparative)"},
+        {"kind": "id", "id": "buyback_authorisation_remaining", "level": "required", "likely_source": "the latest 10-Q or the board's authorisation statement", "why": "W4.3: the money still authorised to spend"},
+        {"kind": "id", "id": "revenue_greater_china_q", "level": "required", "likely_source": "the segment note of the latest 10-Q", "why": "W4.4: the owner's ruled story fact - capped even when the thesis has nothing to do with China"}
+      ]
+    },
+    "GLXY": {
+      "class": "single_stock",
+      "floors": [
+        {"kind": "id", "id": "digital_assets_gross_mrq_end", "level": "required", "likely_source": "the digital-asset note of the latest report", "why": "W5.1: the mark-to-market-hybrid reading, gross side"},
+        {"kind": "id", "id": "digital_assets_borrowed_mrq_end", "level": "required", "likely_source": "the borrowings disclosures of the latest report", "why": "W5.2 operand: what is borrowed is not owned"},
+        {"kind": "id", "id": "digital_assets_collateral_held_mrq_end", "level": "required", "likely_source": "the collateral disclosures of the latest report", "why": "W5.2 operand: collateral merely controlled is not owned"},
+        {"kind": "id", "id": "digital_assets_net_exposure_mrq_end", "level": "required", "likely_source": "assembled from the three disclosures above, arithmetic written out", "why": "W5.2 as W8.1 ruled it: what Galaxy ECONOMICALLY OWNS - coins pledged away stay in; a capped run is the correct failure if this cannot be assembled"},
+        {"kind": "id", "id": "liquidity_unencumbered_mrq_end", "level": "required", "likely_source": "the liquidity and collateral disclosures, arithmetic written out", "why": "W5.3: money actually free to meet a margin call"},
+        {"kind": "id", "id": "equity_free_of_collateral_mrq_end", "level": "required", "likely_source": "the equity and collateral disclosures, arithmetic written out", "why": "W5.3"},
+        {"kind": "id", "id": "aum_mrq_end", "level": "required", "likely_source": "the asset-management segment disclosure", "why": "W5.4: both operating segments are must-haves"},
+        {"kind": "id", "id": "datacentre_capacity_contracted_mw", "level": "required", "likely_source": "the data-centre segment disclosure or contracted-capacity statement", "why": "W5.4"}
+      ]
+    }
+  }
+}

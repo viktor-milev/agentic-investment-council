@@ -1,0 +1,338 @@
+{
+ "atlas_envelope": {
+  "constituents": [
+   {
+    "currency": "USD",
+    "listing": "NYSE (INVENTED)",
+    "name": "Grid Storage Alpha (INVENTED)",
+    "ticker": "GSTA"
+   },
+   {
+    "currency": "USD",
+    "listing": "NASDAQ (INVENTED)",
+    "name": "Grid Storage Beta (INVENTED)",
+    "ticker": "GSTB"
+   }
+  ],
+  "for_atlas_note": null,
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "Grid Storage Alpha last price",
+    "pack_fact_id": "price_last__gsta",
+    "unit": "USD",
+    "value": "45.30"
+   }
+  ],
+  "pack_hash": "d4cb2c981f9ae7417adbbdb75bda0eae3409f24967233896e1fe984c587dc70d",
+  "rating": "monitor",
+  "sizing_inputs": [
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no realized volatility series; the gap is stated here.",
+    "id": "realized_volatility",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no liquidity series; the gap is stated here.",
+    "id": "liquidity",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no event dates series; the gap is stated here.",
+    "id": "event_dates",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no drawdown shape series; the gap is stated here.",
+    "id": "drawdown_shape",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   }
+  ],
+  "subject_kind": "theme",
+  "thesis_proportions": null,
+  "tripwires": {
+   "falsifiers": [
+    {
+     "constituent": "GSTA",
+     "date": "2026-11-01",
+     "figure_name": "gsta_deployment_backlog",
+     "source": "INVENTED FIXTURE - Grid Storage Alpha results release",
+     "statement": "If Grid Storage Alpha's deployment backlog prints below 3.2 GW, the expression is weaker than the theme. (INVENTED)"
+    },
+    {
+     "date": "2026-11-15",
+     "figure_name": "storage_installs_q",
+     "metric_identity_assumed": "Quarterly utility-scale storage installations in gigawatts, as the tracker defines them, both periods. (INVENTED)",
+     "prior_period_as_of": "2025-08-15",
+     "prior_period_unit": "GW",
+     "prior_period_value": "9.1",
+     "source": "INVENTED FIXTURE - industry deployment tracker, quarterly release",
+     "statement": "If quarterly storage installations print at or below the prior year, the theme is wrong. (INVENTED)",
+     "theme_falsifier_id": "storage_install_growth"
+    },
+    {
+     "date": "2026-12-31",
+     "figure_name": "storage_credit_note",
+     "metric_identity_assumed": "The credit's statutory status against current law. (INVENTED)",
+     "prior_period_as_of": null,
+     "prior_period_unit": null,
+     "prior_period_value": null,
+     "source": "INVENTED FIXTURE - dated policy tracker page",
+     "statement": "If the storage investment credit is repealed, the theme is wrong. (INVENTED)",
+     "theme_falsifier_id": "storage_credit_repeal"
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "constituent": "GSTB",
+     "level": "10.00",
+     "meaning": "A Grid Storage Beta close under 10.00 breaks the expression's weakest leg. (INVENTED)",
+     "unit": "USD"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "date": null,
+     "detail": "Reopen if Grid Storage Alpha closes at or under 40.00 USD. (INVENTED)",
+     "kind": "price",
+     "level": "40.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2026-11-15",
+     "detail": "Reopen on the next quarterly deployment tracker release. (INVENTED)",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  },
+  "vehicle": null,
+  "verdict_hash": null
+ },
+ "challenge": {
+  "change_appendix": [],
+  "dispositions": [],
+  "endorsement": null,
+  "failure_reason": null,
+  "findings": [],
+  "model_requested": "gpt-5.6-sol",
+  "status": "success",
+  "summary": null
+ },
+ "constituent_notes": [
+  {
+   "constituent": "GSTA",
+   "load_bearing_metric": "deployment backlog",
+   "role_in_thesis": "The deployment leg of the named universe. (INVENTED)",
+   "tripwire": null
+  },
+  {
+   "constituent": "GSTB",
+   "load_bearing_metric": "storage revenue",
+   "role_in_thesis": "The revenue leg of the named universe. (INVENTED)",
+   "tripwire": null
+  }
+ ],
+ "conviction_rationale": "INVENTED FIXTURE - a watch-state: the theme's falsifiers are named and scored, and the named universe answered its essential metrics, but nothing prices the theme itself.",
+ "evidence_dependencies": [
+  "storage_installs_q",
+  "storage_installs_prior_year_q",
+  "price_last__gsta"
+ ],
+ "frame": {
+  "classification": "an investment theme judged through a named universe",
+  "for_atlas": null,
+  "question_for_council": "Is the utility-scale storage theme attractive through its named universe? (INVENTED FIXTURE)"
+ },
+ "mispricing": {
+  "arithmetic": null,
+  "magnitude": null,
+  "read": "no_view"
+ },
+ "provenance": {
+  "challenger_model_requested": "gpt-5.6-sol",
+  "models_per_seat": {
+   "advisor_base_rate": "canned-fixture-model",
+   "advisor_bear": "canned-fixture-model",
+   "advisor_bull": "canned-fixture-model",
+   "advisor_market_structure": "canned-fixture-model",
+   "advisor_risk": "canned-fixture-model",
+   "chair_draft": "canned-fixture-model",
+   "chair_resolve": "canned-fixture-model",
+   "frame": "canned-fixture-model",
+   "reviewer": "canned-fixture-model"
+  },
+  "pack_hash": "d4cb2c981f9ae7417adbbdb75bda0eae3409f24967233896e1fe984c587dc70d",
+  "prompt_bytes_total": 250000,
+  "timestamps": {
+   "published": "2026-08-31T09:41Z",
+   "run_started": "2026-08-31T09:00Z"
+  },
+  "tokens": {
+   "challenger": 90000,
+   "per_seat": {
+    "advisor_base_rate": 21000,
+    "advisor_bear": 21000,
+    "advisor_bull": 21000,
+    "advisor_market_structure": 21000,
+    "advisor_risk": 21000,
+    "chair_draft": 21000,
+    "chair_resolve": 21000,
+    "frame": 21000,
+    "reviewer": 21000
+   },
+   "seats_total": 189000
+  }
+ },
+ "question_verbatim": "Is the utility-scale storage theme attractive through its named universe? (INVENTED FIXTURE)",
+ "rating": "monitor",
+ "run_id": "report-fixture-invented-theme",
+ "scenario_rating": null,
+ "schema_version": "1.2.0",
+ "sizing_inputs": [
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no realized volatility series; the gap is stated here.",
+   "id": "realized_volatility",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no liquidity series; the gap is stated here.",
+   "id": "liquidity",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no event dates series; the gap is stated here.",
+   "id": "event_dates",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no drawdown shape series; the gap is stated here.",
+   "id": "drawdown_shape",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  }
+ ],
+ "subject": {
+  "asset_class": "equity",
+  "constituents": [
+   {
+    "currency": "USD",
+    "listing": "NYSE (INVENTED)",
+    "name": "Grid Storage Alpha (INVENTED)",
+    "ticker": "GSTA"
+   },
+   {
+    "currency": "USD",
+    "listing": "NASDAQ (INVENTED)",
+    "name": "Grid Storage Beta (INVENTED)",
+    "ticker": "GSTB"
+   }
+  ],
+  "currency": "USD",
+  "kind": "theme",
+  "listing": null,
+  "name": "Utility-Scale Storage (INVENTED THEME)",
+  "theme": {
+   "falsifiers": [
+    {
+     "description": "Quarterly storage installations stop growing against the prior year. (INVENTED FIXTURE)",
+     "fact_id": "storage_installs_q",
+     "id": "storage_install_growth",
+     "kind": "level",
+     "prior_fact_id": "storage_installs_prior_year_q"
+    },
+    {
+     "description": "The storage investment credit is repealed. (INVENTED FIXTURE)",
+     "fact_id": "storage_credit_note",
+     "id": "storage_credit_repeal",
+     "kind": "event",
+     "prior_fact_id": null
+    }
+   ],
+   "thesis": "Utility-scale storage deployments compound for a decade as grids absorb renewable generation. (INVENTED FIXTURE)"
+  },
+  "ticker": null
+ },
+ "tripwires": {
+  "falsifiers": [
+   {
+    "constituent": "GSTA",
+    "date": "2026-11-01",
+    "figure_name": "gsta_deployment_backlog",
+    "source": "INVENTED FIXTURE - Grid Storage Alpha results release",
+    "statement": "If Grid Storage Alpha's deployment backlog prints below 3.2 GW, the expression is weaker than the theme. (INVENTED)"
+   },
+   {
+    "date": "2026-11-15",
+    "figure_name": "storage_installs_q",
+    "metric_identity_assumed": "Quarterly utility-scale storage installations in gigawatts, as the tracker defines them, both periods. (INVENTED)",
+    "prior_period_as_of": "2025-08-15",
+    "prior_period_unit": "GW",
+    "prior_period_value": "9.1",
+    "source": "INVENTED FIXTURE - industry deployment tracker, quarterly release",
+    "statement": "If quarterly storage installations print at or below the prior year, the theme is wrong. (INVENTED)",
+    "theme_falsifier_id": "storage_install_growth"
+   },
+   {
+    "date": "2026-12-31",
+    "figure_name": "storage_credit_note",
+    "metric_identity_assumed": "The credit's statutory status against current law. (INVENTED)",
+    "prior_period_as_of": null,
+    "prior_period_unit": null,
+    "prior_period_value": null,
+    "source": "INVENTED FIXTURE - dated policy tracker page",
+    "statement": "If the storage investment credit is repealed, the theme is wrong. (INVENTED)",
+    "theme_falsifier_id": "storage_credit_repeal"
+   }
+  ],
+  "invalidation_levels": [
+   {
+    "constituent": "GSTB",
+    "level": "10.00",
+    "meaning": "A Grid Storage Beta close under 10.00 breaks the expression's weakest leg. (INVENTED)",
+    "unit": "USD"
+   }
+  ],
+  "reopening_triggers": [
+   {
+    "date": null,
+    "detail": "Reopen if Grid Storage Alpha closes at or under 40.00 USD. (INVENTED)",
+    "kind": "price",
+    "level": "40.00",
+    "unit": "USD"
+   },
+   {
+    "date": "2026-11-15",
+    "detail": "Reopen on the next quarterly deployment tracker release. (INVENTED)",
+    "kind": "event",
+    "level": null,
+    "unit": null
+   }
+  ]
+ },
+ "warnings": []
+}

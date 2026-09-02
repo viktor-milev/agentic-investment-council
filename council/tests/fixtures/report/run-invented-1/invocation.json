@@ -1,0 +1,16 @@
+{
+  "run_id": "report-fixture-invented-1",
+  "subject": {
+    "kind": "single_stock",
+    "asset_class": "equity",
+    "name": "Specimen Works",
+    "ticker": "SPWK",
+    "listing": "INVENTED-X",
+    "currency": "USD"
+  },
+  "question_verbatim": "Is Specimen Works still cheap at this price, or has the market caught up with the growth story? Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
+  "pack_sha256": "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+  "created_at": "2026-08-30T09:12Z",
+  "schema_version": "1.0.0",
+  "note": "INVENTED fixture for the report suite. Every value on this run is invented and every source says so."
+}

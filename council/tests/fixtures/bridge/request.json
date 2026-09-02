@@ -1,0 +1,9 @@
+{
+  "casefile_sha256": "879c9eef9af549d7231df0428bb5e59b2bc4e92b02f63078d8afdc89cac507e5",
+  "effort": "high",
+  "model": "gpt-5.6-sol",
+  "nonce": "fx-nonce-1",
+  "run_id": "fx-run-1",
+  "schema_path": "SET-BY-TEST",
+  "timeout_s": 120
+}

@@ -1,0 +1,145 @@
+{
+  "dispositions": [
+    {
+      "finding_id": "F1",
+      "disposition": "addressed",
+      "response": "Right that the rationale leaned on the annualized quarter as if it were a full-year record. The conviction rationale now states plainly that the run-rate is one quarter taken four times and that the 2026-10-20 print is the test of it."
+    },
+    {
+      "finding_id": "F2",
+      "disposition": "overruled",
+      "response": "The unpriced free-cash-flow gap is real, but it is why the rating is buy and not strong_buy, and the gap is named in the rationale, carried in the pack's declared gaps, and scoreable when the figure publishes. Withholding a view until it publishes would waste a priced, falsifiable record."
+    }
+  ],
+  "final_verdict": {
+    "rating": "buy",
+    "conviction_rationale": "The record shows profit growing faster than revenue, a self-funding balance sheet with 150000000 of net cash, and a dated, falsifiable outlook. The run-rate behind the value arithmetic is one reported quarter taken four times - the 2026-10-20 results are the test of it, and the tripwires are set there. Not strong_buy: one quarter of growth and a declared free-cash-flow gap cap conviction; not hold: the earnings yield clears the risk-free rate with room and the thesis is scoreable within two months.",
+    "mispricing": {
+      "read": "cheap",
+      "magnitude": "roughly a tenth below a defensible value",
+      "arithmetic": "roughly 110 per share of defensible value against the 100.00 asked: twelve times an annualized earnings run-rate of about 9.20 per share, taking the reported quarter's 120000000 of net income four times over the invented share count"
+    },
+    "tripwires": {
+      "invalidation_levels": [
+        {
+          "level": "88.00",
+          "unit": "USD",
+          "meaning": "A close below this level would mean the market has repriced the growth away; the cheap reading is invalid below it."
+        }
+      ],
+      "reopening_triggers": [
+        {
+          "kind": "price",
+          "detail": "Reopen the question if the shares trade down to 80.00 dollars.",
+          "level": "80.00",
+          "unit": "USD",
+          "date": null
+        },
+        {
+          "kind": "event",
+          "detail": "Reopen the question when the third-quarter results publish.",
+          "level": null,
+          "unit": null,
+          "date": "2026-10-20"
+        }
+      ],
+      "falsifiers": [
+        {
+          "statement": "If the third-quarter results statement prints revenue below 900000000 dollars, the compounding-demand thesis is wrong.",
+          "figure_name": "quarterly revenue",
+          "source": "the company's third-quarter results statement (invented)",
+          "date": "2026-10-20"
+        }
+      ]
+    },
+    "sizing_inputs": [
+      {
+        "id": "realized_volatility",
+        "detail": "Ninety-day realized volatility, annualized.",
+        "value": "34",
+        "unit": "percent annualized",
+        "as_of": "2026-08-28",
+        "pack_fact_ids": [
+          "realized_vol_90d"
+        ]
+      },
+      {
+        "id": "liquidity",
+        "detail": "Average daily traded value; an exit of size takes days on this tape.",
+        "value": "18000000",
+        "unit": "USD per day",
+        "as_of": "2026-08-28",
+        "pack_fact_ids": [
+          "avg_daily_dollar_volume"
+        ]
+      },
+      {
+        "id": "event_dates",
+        "detail": "Third-quarter results, the one scheduled gap event on the record.",
+        "value": "2026-10-20",
+        "unit": "date",
+        "as_of": "2026-08-25",
+        "pack_fact_ids": [
+          "next_results_date_checked"
+        ]
+      },
+      {
+        "id": "drawdown_shape",
+        "detail": "Demonstrated worst fall over five years; the price has fallen by more than a third before and can again.",
+        "value": "38",
+        "unit": "percent",
+        "as_of": "2026-08-28",
+        "pack_fact_ids": [
+          "max_drawdown_5y"
+        ]
+      }
+    ],
+    "evidence_dependencies": [
+      "price_last",
+      "revenue_q",
+      "revenue_prior_year_q",
+      "net_income_q",
+      "net_income_prior_year_q",
+      "net_cash",
+      "guidance_note"
+    ],
+    "key_numbers": [
+      {
+        "name": "last price",
+        "value": "100.00",
+        "unit": "USD",
+        "as_of": "2026-08-28",
+        "pack_fact_id": "price_last"
+      },
+      {
+        "name": "market value",
+        "value": "5200000000",
+        "unit": "USD",
+        "as_of": "2026-08-28",
+        "pack_fact_id": "market_cap"
+      },
+      {
+        "name": "quarterly revenue",
+        "value": "900000000",
+        "unit": "USD",
+        "as_of": "2026-07-25",
+        "pack_fact_id": "revenue_q"
+      },
+      {
+        "name": "net cash",
+        "value": "150000000",
+        "unit": "USD",
+        "as_of": "2026-07-25",
+        "pack_fact_id": "net_cash"
+      },
+      {
+        "name": "one-month risk-free rate",
+        "value": "4.10",
+        "unit": "percent",
+        "as_of": "2026-08-29",
+        "pack_fact_id": "risk_free_rate_1m"
+      }
+    ]
+  },
+  "final_markdown": "The challenge sharpened the document without moving the rating. The auditor's first finding was right: the value arithmetic rests on one quarter taken four times, and the rationale now says so in as many words, with the 2026-10-20 print as its test. Its second finding - that the free-cash-flow gap should block a view - is overruled on the record: the gap is declared, named in the rationale, and priced into the distance between buy and strong_buy. The tripwires stand: invalid below 88.00, reopen at 80.00 or on the results date, and the revenue falsifier scores the thesis against a published figure."
+}

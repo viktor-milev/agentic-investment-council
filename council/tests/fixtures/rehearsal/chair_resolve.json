@@ -1,0 +1,131 @@
+{
+ "dispositions": [
+  {
+   "disposition": "addressed",
+   "finding_id": "F1",
+   "response": "The final wording says 'one quarter, not yet a trend' in the conviction rationale itself; the rating stands on the price arithmetic, which needs no trend."
+  },
+  {
+   "disposition": "addressed",
+   "finding_id": "F2",
+   "response": "Sized in the final rationale from the passage's own figures: the two cancellations are roughly 4 percent of guided revenue - material to watch, not thesis-breaking."
+  }
+ ],
+ "final_markdown": "## The chairman's final word\n\nBoth findings were fair and both are now in the text: the growth claim is labeled as one quarter, and the cancellations are sized at roughly 4 percent of guided revenue. Neither changes the arithmetic that carries the rating: a sixth below the company's own average rating, and cash yield 3.7 points over the bill. Buy at 123.45; wrong below 80; scored on 2026-10-22.",
+ "final_verdict": {
+  "conviction_rationale": "The record supports paying today's price: profit grew 12 percent against the same quarter a year earlier (one quarter, not yet a trend - the outside auditor is right to insist on the distinction), the derived quarterly free cash flow of 1,000.0 million dollars is shown with its arithmetic, and the current rating of 18.4 times profit sits below the company's own five-year average of 22.1. The two backlog cancellations equal roughly 4 percent of guided revenue on the passage's own figures - real, not thesis-breaking. The declared gaps (no crowding series, no volatility series) weaken sizing, not the case.",
+  "evidence_dependencies": [
+   "price_last",
+   "pe_ratio_current",
+   "pe_ratio_5y_average",
+   "net_income_q",
+   "net_income_prior_year_q",
+   "free_cash_flow_q",
+   "fcf_yield_ratio",
+   "risk_free_rate_1m_tbill",
+   "guidance_revenue_fy"
+  ],
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "last price (two days stale, market shut at capture, disclosed)",
+    "pack_fact_id": "price_last",
+    "unit": "USD",
+    "value": "123.45"
+   },
+   {
+    "as_of": "2026-07-15",
+    "name": "quarterly free cash flow, derived in the record",
+    "pack_fact_id": "free_cash_flow_q",
+    "unit": "USD_m",
+    "value": "1000.0"
+   },
+   {
+    "as_of": "2026-08-28",
+    "name": "rating today vs own five-year average",
+    "pack_fact_id": "pe_ratio_current",
+    "unit": "x",
+    "value": "18.4"
+   }
+  ],
+  "mispricing": {
+   "arithmetic": "18.4 times profit today against the company's own five-year average of 22.1: on unchanged profits, the average rating implies roughly 148 dollars against the 123.45 asked. The cash check agrees: the pack's derived free-cash-flow yield reading of 0.02 per quarter is about 8 percent a year, roughly 3.7 points above the 4.35 percent one-month bill.",
+   "magnitude": "roughly a sixth below the company's own five-year rating",
+   "read": "cheap"
+  },
+  "rating": "buy",
+  "sizing_inputs": [
+   {
+    "as_of": null,
+    "detail": "No volatility series exists in this record (declared gap); the sizing engine must compute it from its own price history.",
+    "id": "realized_volatility",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "No dated trading-volume series exists in this record (declared gap); the sizing engine must read depth from its own market data.",
+    "id": "liquidity",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": "2026-08-30",
+    "detail": "The one scheduled price-moving event: third-quarter results on 2026-10-22, verified against the company's own calendar; nothing else scheduled before it.",
+    "id": "event_dates",
+    "pack_fact_ids": [
+     "next_results_date_checked",
+     "events_calendar_check"
+    ],
+    "unit": "date",
+    "value": "2026-10-22"
+   },
+   {
+    "as_of": "2026-08-28",
+    "detail": "The year's range ran 150.20 down to 80.10 - a 47 percent peak-to-trough swing, with the floor tested twice; expect deep drawdowns without news.",
+    "id": "drawdown_shape",
+    "pack_fact_ids": [
+     "range_52w_low",
+     "range_52w_high"
+    ],
+    "unit": "%",
+    "value": "47"
+   }
+  ],
+  "tripwires": {
+   "falsifiers": [
+    {
+     "date": "2026-10-22",
+     "figure_name": "full-year revenue guidance (guidance_revenue_fy)",
+     "source": "Example Manufacturing third-quarter results release (INVENTED FIXTURE)",
+     "statement": "If full-year revenue is guided DOWN from 6,100 million dollars at the third-quarter results, the compounding-demand case fails and this rating is wrong."
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "level": "79.00",
+     "meaning": "a close below the twice-tested yearly floor of 80.10 says the recovery thesis is wrong, not early",
+     "unit": "USD"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "date": null,
+     "detail": "the shares trade below 100.00 with no new filing - the rating argument doubles",
+     "kind": "price",
+     "level": "100.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2026-10-22",
+     "detail": "the third-quarter results on the checked date - the falsifier below is scored there",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  }
+ }
+}

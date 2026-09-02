@@ -1,0 +1,319 @@
+{
+ "atlas_envelope": {
+  "constituents": [
+   {
+    "currency": "USD",
+    "listing": "NYSE (INVENTED)",
+    "name": "Alpha Chips Inc (INVENTED)",
+    "ticker": "ACHP"
+   },
+   {
+    "currency": "USD",
+    "listing": "NASDAQ (INVENTED)",
+    "name": "Beta Grid Corp (INVENTED)",
+    "ticker": "BGRD"
+   }
+  ],
+  "for_atlas_note": null,
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "Alpha Chips last price",
+    "pack_fact_id": "price_last__achp",
+    "unit": "USD",
+    "value": "231.40"
+   },
+   {
+    "as_of": "2026-08-28",
+    "name": "Beta Grid last price",
+    "pack_fact_id": "price_last__bgrd",
+    "unit": "USD",
+    "value": "88.15"
+   }
+  ],
+  "pack_hash": "98b0d64f8c2f33d17192ac3086c68affbaad4b4af15d87644c425b81eb725ca5",
+  "rating": "buy",
+  "sizing_inputs": [
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no realized volatility series; the gap is stated here.",
+    "id": "realized_volatility",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no liquidity series; the gap is stated here.",
+    "id": "liquidity",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no event dates series; the gap is stated here.",
+    "id": "event_dates",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED - the pack carries no drawdown shape series; the gap is stated here.",
+    "id": "drawdown_shape",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "constituent": "ACHP",
+    "detail": "INVENTED - the average value changing hands daily in one leg of the pair; the pack carries no such series, so the gap is stated here.",
+    "id": "average_daily_value_traded__achp",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   }
+  ],
+  "subject_kind": "basket",
+  "thesis_proportions": [
+   {
+    "constituent": "ACHP",
+    "emphasis": "roughly two thirds of the idea"
+   },
+   {
+    "constituent": "BGRD",
+    "emphasis": "the remaining third"
+   }
+  ],
+  "tripwires": {
+   "falsifiers": [
+    {
+     "constituent": "BGRD",
+     "date": "2026-10-15",
+     "figure_name": "bgrd_order_backlog",
+     "source": "INVENTED FIXTURE - Beta Grid results release",
+     "statement": "If Beta Grid's order backlog prints below 9800 USD millions, the grid leg of the pair thesis is wrong. (INVENTED)"
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "level": "24.00",
+     "meaning": "A blended rating under 24.00 says the growth leg is wrong, not cheap. (INVENTED)",
+     "unit": "x"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "constituent": "ACHP",
+     "date": null,
+     "detail": "Reopen if Alpha Chips closes at or under 200.00 USD. (INVENTED)",
+     "kind": "price",
+     "level": "200.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2026-10-15",
+     "detail": "Reopen on the two third-quarter results, whatever the prices do. (INVENTED)",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  },
+  "vehicle": null,
+  "verdict_hash": null
+ },
+ "challenge": {
+  "change_appendix": [],
+  "dispositions": [],
+  "endorsement": null,
+  "failure_reason": null,
+  "findings": [],
+  "model_requested": "gpt-5.6-sol",
+  "status": "success",
+  "summary": null
+ },
+ "constituent_notes": [
+  {
+   "constituent": "ACHP",
+   "load_bearing_metric": "data-centre revenue",
+   "role_in_thesis": "The compute half of the pair - the thesis leans on data-centre demand. (INVENTED)",
+   "tripwire": "A down quarter in data-centre revenue. (INVENTED)"
+  },
+  {
+   "constituent": "BGRD",
+   "load_bearing_metric": "order backlog",
+   "role_in_thesis": "The grid half of the pair - transmission gear orders. (INVENTED)",
+   "tripwire": null
+  }
+ ],
+ "conviction_rationale": "INVENTED FIXTURE - the pair earns a buy on this record: the blended rating sits a tenth under its own five-year average and both named legs answered their essential metrics.",
+ "evidence_dependencies": [
+  "price_last__achp",
+  "pair_pe_blended_current",
+  "bgrd_order_backlog"
+ ],
+ "frame": {
+  "classification": "a priced thesis check on a basket of two names",
+  "for_atlas": null,
+  "question_for_council": "Is the AI infrastructure pair - Alpha Chips with Beta Grid - worth buying as one idea at today's prices? (INVENTED FIXTURE)"
+ },
+ "mispricing": {
+  "arithmetic": "27.5 times blended earnings today against the pair's own five-year average of 31.2 - roughly a tenth under it. (INVENTED)",
+  "magnitude": "roughly a tenth under the pair's own five-year rating",
+  "read": "cheap"
+ },
+ "provenance": {
+  "challenger_model_requested": "gpt-5.6-sol",
+  "models_per_seat": {
+   "advisor_base_rate": "canned-fixture-model",
+   "advisor_bear": "canned-fixture-model",
+   "advisor_bull": "canned-fixture-model",
+   "advisor_market_structure": "canned-fixture-model",
+   "advisor_risk": "canned-fixture-model",
+   "chair_draft": "canned-fixture-model",
+   "chair_resolve": "canned-fixture-model",
+   "frame": "canned-fixture-model",
+   "reviewer": "canned-fixture-model"
+  },
+  "pack_hash": "98b0d64f8c2f33d17192ac3086c68affbaad4b4af15d87644c425b81eb725ca5",
+  "prompt_bytes_total": 250000,
+  "timestamps": {
+   "published": "2026-08-31T09:41Z",
+   "run_started": "2026-08-31T09:00Z"
+  },
+  "tokens": {
+   "challenger": 90000,
+   "per_seat": {
+    "advisor_base_rate": 21000,
+    "advisor_bear": 21000,
+    "advisor_bull": 21000,
+    "advisor_market_structure": 21000,
+    "advisor_risk": 21000,
+    "chair_draft": 21000,
+    "chair_resolve": 21000,
+    "frame": 21000,
+    "reviewer": 21000
+   },
+   "seats_total": 189000
+  }
+ },
+ "question_verbatim": "Is the AI infrastructure pair - Alpha Chips with Beta Grid - worth buying as one idea at today's prices? (INVENTED FIXTURE)",
+ "rating": "buy",
+ "run_id": "report-fixture-invented-basket",
+ "scenario_rating": null,
+ "schema_version": "1.2.0",
+ "sizing_inputs": [
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no realized volatility series; the gap is stated here.",
+   "id": "realized_volatility",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no liquidity series; the gap is stated here.",
+   "id": "liquidity",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no event dates series; the gap is stated here.",
+   "id": "event_dates",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "detail": "INVENTED - the pack carries no drawdown shape series; the gap is stated here.",
+   "id": "drawdown_shape",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  },
+  {
+   "as_of": null,
+   "constituent": "ACHP",
+   "detail": "INVENTED - the average value changing hands daily in one leg of the pair; the pack carries no such series, so the gap is stated here.",
+   "id": "average_daily_value_traded__achp",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": null
+  }
+ ],
+ "subject": {
+  "asset_class": "equity",
+  "constituents": [
+   {
+    "currency": "USD",
+    "listing": "NYSE (INVENTED)",
+    "name": "Alpha Chips Inc (INVENTED)",
+    "ticker": "ACHP"
+   },
+   {
+    "currency": "USD",
+    "listing": "NASDAQ (INVENTED)",
+    "name": "Beta Grid Corp (INVENTED)",
+    "ticker": "BGRD"
+   }
+  ],
+  "currency": "USD",
+  "kind": "basket",
+  "listing": null,
+  "name": "AI Infrastructure Pair (INVENTED BASKET)",
+  "thesis_proportions": [
+   {
+    "constituent": "ACHP",
+    "emphasis": "roughly two thirds of the idea"
+   },
+   {
+    "constituent": "BGRD",
+    "emphasis": "the remaining third"
+   }
+  ],
+  "ticker": null
+ },
+ "tripwires": {
+  "falsifiers": [
+   {
+    "constituent": "BGRD",
+    "date": "2026-10-15",
+    "figure_name": "bgrd_order_backlog",
+    "source": "INVENTED FIXTURE - Beta Grid results release",
+    "statement": "If Beta Grid's order backlog prints below 9800 USD millions, the grid leg of the pair thesis is wrong. (INVENTED)"
+   }
+  ],
+  "invalidation_levels": [
+   {
+    "level": "24.00",
+    "meaning": "A blended rating under 24.00 says the growth leg is wrong, not cheap. (INVENTED)",
+    "unit": "x"
+   }
+  ],
+  "reopening_triggers": [
+   {
+    "constituent": "ACHP",
+    "date": null,
+    "detail": "Reopen if Alpha Chips closes at or under 200.00 USD. (INVENTED)",
+    "kind": "price",
+    "level": "200.00",
+    "unit": "USD"
+   },
+   {
+    "date": "2026-10-15",
+    "detail": "Reopen on the two third-quarter results, whatever the prices do. (INVENTED)",
+    "kind": "event",
+    "level": null,
+    "unit": null
+   }
+  ]
+ },
+ "warnings": []
+}

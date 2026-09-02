@@ -1,0 +1,21 @@
+{
+ "authored_verdict": false,
+ "endorsement": {
+  "highest_rating_supported": "buy"
+ },
+ "findings": [
+  {
+   "detail": "INVENTED FIXTURE - the draft leans on a single comparative period; say one period, or lower the conviction wording.",
+   "id": "F1",
+   "kind": "unearned_conviction",
+   "title": "One period of growth carries the claim"
+  },
+  {
+   "detail": "INVENTED FIXTURE - the draft states its gaps but never says what would close them.",
+   "id": "F2",
+   "kind": "blind_spot",
+   "title": "The stated gaps deserve one sentence each"
+  }
+ ],
+ "summary": "INVENTED FIXTURE - the watch-state is honest on this record; both findings ask for tighter wording, not a different answer."
+}

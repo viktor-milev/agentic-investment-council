@@ -1,0 +1,49 @@
+{
+  "run_id": "report-fixture-invented-theme",
+  "subject": {
+    "constituents": [
+      {
+        "currency": "USD",
+        "listing": "NYSE (INVENTED)",
+        "name": "Grid Storage Alpha (INVENTED)",
+        "ticker": "GSTA"
+      },
+      {
+        "currency": "USD",
+        "listing": "NASDAQ (INVENTED)",
+        "name": "Grid Storage Beta (INVENTED)",
+        "ticker": "GSTB"
+      }
+    ],
+    "currency": "USD",
+    "kind": "theme",
+    "asset_class": "equity",
+    "listing": null,
+    "name": "Utility-Scale Storage (INVENTED THEME)",
+    "theme": {
+      "falsifiers": [
+        {
+          "description": "Quarterly storage installations stop growing against the prior year. (INVENTED FIXTURE)",
+          "fact_id": "storage_installs_q",
+          "id": "storage_install_growth",
+          "kind": "level",
+          "prior_fact_id": "storage_installs_prior_year_q"
+        },
+        {
+          "description": "The storage investment credit is repealed. (INVENTED FIXTURE)",
+          "fact_id": "storage_credit_note",
+          "id": "storage_credit_repeal",
+          "kind": "event",
+          "prior_fact_id": null
+        }
+      ],
+      "thesis": "Utility-scale storage deployments compound for a decade as grids absorb renewable generation. (INVENTED FIXTURE)"
+    },
+    "ticker": null
+  },
+  "question_verbatim": "Is the utility-scale storage theme attractive through its named universe? (INVENTED FIXTURE)",
+  "pack_sha256": "d4cb2c981f9ae7417adbbdb75bda0eae3409f24967233896e1fe984c587dc70d",
+  "created_at": "2026-08-31T09:00Z",
+  "schema_version": "1.2.0",
+  "note": "INVENTED fixture for the report suite. Every value on this run is invented and every source says so."
+}

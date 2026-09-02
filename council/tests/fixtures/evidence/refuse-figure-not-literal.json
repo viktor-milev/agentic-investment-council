@@ -1,0 +1,49 @@
+{
+  "capture_version": "1.2.0",
+  "subject": {
+    "kind": "single_stock",
+    "asset_class": "equity",
+    "name": "Example Manufacturing Co",
+    "ticker": "EXMP",
+    "listing": "NYSE (INVENTED)",
+    "currency": "USD"
+  },
+  "question_verbatim": "One defect only: a tier2 passage claiming a figure its own text never states. (INVENTED FIXTURE)",
+  "captured_at": "2026-08-30T21:30Z",
+  "market_state": {
+    "state": "open",
+    "disclosure": null
+  },
+  "tier1": [
+    {
+      "id": "price_last",
+      "value": "123.45",
+      "unit": "USD",
+      "as_of": "2026-08-28",
+      "source": "INVENTED FIXTURE - broker price snapshot",
+      "freshness_rule_days": 3,
+      "derived": null
+    }
+  ],
+  "tier2": [
+    {
+      "id": "orders_note",
+      "text": "INVENTED FIXTURE - Management said orders grew strongly in the quarter.",
+      "source": "INVENTED FIXTURE - Example Manufacturing press release, 2026-07-15",
+      "as_of": "2026-07-15",
+      "figures": ["475.5"]
+    }
+  ],
+  "gaps": [],
+  "sufficiency": {
+    "requirements": [
+      {
+        "id": "orders_read",
+        "description": "Are orders growing? (INVENTED FIXTURE)",
+        "kind": "thesis_specific",
+        "status": "answered",
+        "answered_by": ["orders_note"]
+      }
+    ]
+  }
+}

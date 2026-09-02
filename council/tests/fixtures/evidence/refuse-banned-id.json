@@ -1,0 +1,50 @@
+{
+  "capture_version": "1.2.0",
+  "subject": {
+    "kind": "single_stock",
+    "asset_class": "equity",
+    "name": "Example Manufacturing Co",
+    "ticker": "EXMP",
+    "listing": "NYSE (INVENTED)",
+    "currency": "USD"
+  },
+  "question_verbatim": "One defect only: a fact id built from a word the council does not have. (INVENTED FIXTURE)",
+  "captured_at": "2026-08-30T21:30Z",
+  "market_state": {
+    "state": "open",
+    "disclosure": null
+  },
+  "tier1": [
+    {
+      "id": "price_last",
+      "value": "123.45",
+      "unit": "USD",
+      "as_of": "2026-08-28",
+      "source": "INVENTED FIXTURE - broker price snapshot",
+      "freshness_rule_days": 3,
+      "derived": null
+    },
+    {
+      "id": "portfolio_weight_pct",
+      "value": "4.2",
+      "unit": "%",
+      "as_of": "2026-08-28",
+      "source": "INVENTED FIXTURE - this id must be refused by the gate",
+      "freshness_rule_days": 30,
+      "derived": null
+    }
+  ],
+  "tier2": [],
+  "gaps": [],
+  "sufficiency": {
+    "requirements": [
+      {
+        "id": "price_read",
+        "description": "What does the asset cost today? (INVENTED FIXTURE)",
+        "kind": "thesis_specific",
+        "status": "answered",
+        "answered_by": ["price_last"]
+      }
+    ]
+  }
+}

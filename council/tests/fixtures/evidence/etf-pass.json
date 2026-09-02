@@ -1,0 +1,193 @@
+{
+ "capture_version": "1.2.0",
+ "captured_at": "2026-08-30T21:30Z",
+ "gaps": [
+  {
+   "fact_class": "leverage_",
+   "reason": "INVENTED FIXTURE - the fund is neither leveraged nor inverse, so reset terms do not exist for it",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "the leverage-reset read is empty by design; nothing about daily resets can bite this fund"
+  }
+ ],
+ "market_state": {
+  "disclosure": null,
+  "state": "open"
+ },
+ "question_verbatim": "Is the Example Thematic Robotics Fund attractive here? (INVENTED FIXTURE)",
+ "subject": {
+  "asset_class": "equity",
+  "currency": "USD",
+  "kind": "etf",
+  "listing": "NYSE (INVENTED)",
+  "name": "Example Thematic Robotics Fund (INVENTED)",
+  "theme": {
+   "falsifiers": [
+    {
+     "description": "Annual industrial robot shipments decline against the prior year. (INVENTED FIXTURE)",
+     "fact_id": "robot_shipments_yr",
+     "id": "robot_shipments_decline",
+     "kind": "level",
+     "prior_fact_id": "robot_shipments_prior_yr"
+    }
+   ],
+   "thesis": "Industrial robotics adoption re-rates the equipment makers this fund wraps. (INVENTED FIXTURE)"
+  },
+  "ticker": "EXTF"
+ },
+ "sufficiency": {
+  "requirements": [
+   {
+    "answered_by": [],
+    "description": "Is the subject earning more than a year ago? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - a collective investment vehicle has no single income statement of its own; the equity fact families are absent by design (W2.5)",
+    "id": "profit_growth",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "profit growth cannot anchor conviction; the vehicle floor and the theme facts carry the thesis instead"
+   },
+   {
+    "answered_by": [],
+    "description": "How much cash does the subject generate after unavoidable spending? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - a collective investment vehicle has no single income statement of its own; the equity fact families are absent by design (W2.5)",
+    "id": "free_cash_flow",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the cash-generation leg of the case is empty; the vehicle floor stands in for it"
+   },
+   {
+    "answered_by": [],
+    "description": "Is the price expensive or cheap against the subject's own history or peers? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the fund's rating question lives in its premium or discount to its own value, which the vehicle floor carries as a fact",
+    "id": "rating_vs_history_or_peers",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the rating read leans on the premium/discount fact alone"
+   },
+   {
+    "answered_by": [],
+    "description": "Does the earnings or cash yield beat the risk-free rate? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the fund itself reports no earnings yield; there is no yield to compare at the vehicle level",
+    "id": "yield_vs_risk_free",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the comparison against the risk-free rate is one-sided by design for this vehicle"
+   },
+   {
+    "answered_by": [
+     "robot_shipments_yr",
+     "robot_shipments_prior_yr"
+    ],
+    "description": "Are robot shipments still growing, per the owner's thesis? (INVENTED FIXTURE)",
+    "id": "theme_adoption",
+    "kind": "thesis_specific",
+    "status": "answered"
+   }
+  ]
+ },
+ "tier1": [
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "price_last",
+   "source": "INVENTED FIXTURE - broker price snapshot at the sitting",
+   "unit": "USD",
+   "value": "45.67"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "nav_per_share",
+   "source": "INVENTED FIXTURE - the fund's own daily NAV page",
+   "unit": "USD",
+   "value": "45.10"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "premium_discount",
+   "source": "INVENTED FIXTURE - the fund's daily premium/discount disclosure",
+   "unit": "%",
+   "value": "1.26"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "holding_top10_share",
+   "source": "INVENTED FIXTURE - the fund's published holdings page: the top ten holdings' combined share of the fund",
+   "unit": "%",
+   "value": "62.5"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "holding_largest_name",
+   "source": "INVENTED FIXTURE - the fund's published holdings page: the largest single holding, named",
+   "unit": "name",
+   "value": "Fanuc Corp (INVENTED)"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "holding_largest_share",
+   "source": "INVENTED FIXTURE - the fund's published holdings page: the largest single holding's share of the fund",
+   "unit": "%",
+   "value": "9.8"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "holding_count",
+   "source": "INVENTED FIXTURE - the fund's published holdings page: how many names the disclosure lists",
+   "unit": "count",
+   "value": "46"
+  },
+  {
+   "as_of": "2026-07-01",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "expense_ratio",
+   "source": "INVENTED FIXTURE - the fund's prospectus",
+   "unit": "%",
+   "value": "0.68"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 7,
+   "id": "bid_ask_spread_30d_median",
+   "source": "INVENTED FIXTURE - the fund's regulator-required daily disclosure page",
+   "unit": "%",
+   "value": "0.05"
+  },
+  {
+   "as_of": "2026-07-01",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "robot_shipments_yr",
+   "source": "INVENTED FIXTURE - industry federation annual shipment report",
+   "unit": "units",
+   "value": "542000"
+  },
+  {
+   "as_of": "2025-07-05",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "robot_shipments_prior_yr",
+   "source": "INVENTED FIXTURE - the prior year's own annual shipment report, dated at its release",
+   "unit": "units",
+   "value": "480000"
+  }
+ ],
+ "tier2": []
+}

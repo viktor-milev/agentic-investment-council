@@ -1,0 +1,292 @@
+{
+ "capture_version": "1.2.0",
+ "captured_at": "2026-08-30T21:30Z",
+ "gaps": [],
+ "market_state": {
+  "disclosure": null,
+  "state": "open"
+ },
+ "question_verbatim": "Is gold worth committing new capital to at today's price? (INVENTED FIXTURE)",
+ "subject": {
+  "asset_class": "gold",
+  "currency": "USD",
+  "kind": "gold",
+  "listing": null,
+  "name": "Gold (London bullion benchmark)",
+  "ticker": null
+ },
+ "sufficiency": {
+  "requirements": [
+   {
+    "answered_by": [],
+    "description": "Is the subject earning more than a year ago? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - bullion has no earnings and no filings; the equity fact families are absent by design for a monetary asset",
+    "id": "profit_growth",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "profit growth cannot anchor conviction; the asset class's own anchors carry the case"
+   },
+   {
+    "answered_by": [],
+    "description": "How much cash does the subject generate after unavoidable spending? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - there is no business inside the metal; no cash generation exists to measure",
+    "id": "free_cash_flow",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the cash-generation leg of the case is empty; the class anchors stand in for it"
+   },
+   {
+    "answered_by": [],
+    "description": "Is the price expensive or cheap against the subject's own history or peers? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - no earnings rating exists for bullion; the inflation-adjusted price against its own history is the only valuation check it has",
+    "id": "rating_vs_history_or_peers",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "price against its own history is the only rating-like read, and it is weaker than an earnings rating"
+   },
+   {
+    "answered_by": [],
+    "description": "Does the earnings or cash yield beat the risk-free rate? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the metal pays nothing; there is no yield to compare",
+    "id": "yield_vs_risk_free",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the comparison against the risk-free rate is one-sided by design; the cost of waiting in bills is the whole reading"
+   },
+   {
+    "answered_by": [
+     "central_bank_net_purchases_q",
+     "pboc_official_purchases",
+     "pboc_market_estimate_purchases",
+     "pboc_estimate_minus_official",
+     "gold_etf_flows_monthly",
+     "official_sector_note"
+    ],
+    "description": "Who is buying, and does the reported official figure agree with what the market estimates? (INVENTED FIXTURE)",
+    "id": "who_is_buying",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "tips_yield_5y",
+     "tips_yield_10y",
+     "broad_dollar_index"
+    ],
+    "description": "What the safe alternative pays, and how much of the move is the denominator. (INVENTED FIXTURE)",
+    "id": "what_would_stop_them",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "realized_volatility_5y",
+     "risk_free_rate_3m"
+    ],
+    "description": "The two inputs the rating bar is computed from. (INVENTED FIXTURE)",
+    "id": "rating_bar_inputs",
+    "kind": "thesis_specific",
+    "status": "answered"
+   }
+  ]
+ },
+ "tier1": [
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "price_last",
+   "source": "INVENTED FIXTURE - the London bullion benchmark, free JSON",
+   "unit": "USD per ounce",
+   "value": "4562.75"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "tips_yield_5y",
+   "source": "INVENTED FIXTURE - the central bank statistics service, free daily series",
+   "unit": "percent",
+   "value": "2.18"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "tips_yield_10y",
+   "source": "INVENTED FIXTURE - the central bank statistics service, free daily series",
+   "unit": "percent",
+   "value": "2.42"
+  },
+  {
+   "as_of": "2026-03-31",
+   "derived": null,
+   "freshness_rule_days": 220,
+   "id": "central_bank_net_purchases_q",
+   "source": "INVENTED FIXTURE - the gold council's free published file, latest published quarter; the series runs months behind by nature",
+   "unit": "tonnes",
+   "value": "244"
+  },
+  {
+   "as_of": "2026-07-31",
+   "derived": null,
+   "freshness_rule_days": 90,
+   "id": "pboc_official_purchases",
+   "source": "INVENTED FIXTURE - the central bank's own reported reserve figures",
+   "unit": "tonnes",
+   "value": "5.1"
+  },
+  {
+   "as_of": "2026-07-31",
+   "derived": null,
+   "freshness_rule_days": 90,
+   "id": "pboc_market_estimate_purchases",
+   "source": "INVENTED FIXTURE - a named analyst house's dated estimate of true buying",
+   "unit": "tonnes",
+   "value": "23.4"
+  },
+  {
+   "as_of": "2026-07-31",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "pboc_market_estimate_purchases",
+      "label": "market estimate of true buying",
+      "value": "23.4"
+     },
+     {
+      "fact_id": "pboc_official_purchases",
+      "label": "officially reported purchases",
+      "value": "5.1"
+     }
+    ],
+    "operation": "subtract"
+   },
+   "freshness_rule_days": 90,
+   "id": "pboc_estimate_minus_official",
+   "source": "INVENTED FIXTURE - the difference between the market estimate and the reported figure",
+   "unit": "tonnes",
+   "value": "18.3"
+  },
+  {
+   "as_of": "2026-07-31",
+   "derived": null,
+   "freshness_rule_days": 60,
+   "id": "gold_etf_holdings",
+   "source": "INVENTED FIXTURE - the gold council's free published file, monthly",
+   "unit": "tonnes",
+   "value": "3612.8"
+  },
+  {
+   "as_of": "2026-07-31",
+   "derived": null,
+   "freshness_rule_days": 60,
+   "id": "gold_etf_flows_monthly",
+   "source": "INVENTED FIXTURE - the gold council's free published file, monthly",
+   "unit": "tonnes",
+   "value": "41.2"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 12,
+   "id": "cftc_gold_net_long_specs",
+   "source": "INVENTED FIXTURE - the futures regulator's weekly report",
+   "unit": "contracts",
+   "value": "144747"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "broad_dollar_index",
+   "source": "INVENTED FIXTURE - the central bank statistics service, free daily series (the BROAD index, not the popular one)",
+   "unit": "index",
+   "value": "118.75"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "price_last",
+      "label": "benchmark price",
+      "value": "4562.75"
+     },
+     {
+      "label": "price deflator at base",
+      "value": "1"
+     }
+    ],
+    "operation": "divide"
+   },
+   "freshness_rule_days": 30,
+   "id": "gold_price_inflation_adjusted",
+   "source": "INVENTED FIXTURE - the benchmark price deflated by published consumer prices; the deflator is 1.00 at the current base",
+   "unit": "USD per ounce in 2026 money",
+   "value": "4562.75"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "gold_price_inflation_adjusted_prior_peak",
+   "source": "INVENTED FIXTURE - the same deflated series at its prior extreme, dated January 1980",
+   "unit": "USD per ounce in 2026 money",
+   "value": "3410.00"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "calendar_fomc_next",
+   "source": "INVENTED FIXTURE - the central bank's published meeting calendar",
+   "unit": "date",
+   "value": "2026-09-16"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 60,
+   "id": "calendar_cb_survey",
+   "source": "INVENTED FIXTURE - the gold council's published survey release date",
+   "unit": "date",
+   "value": "2026-10-14"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "realized_volatility_5y",
+   "source": "INVENTED FIXTURE - five years of daily benchmark closes, annualised",
+   "unit": "percent annualised",
+   "value": "16.4"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 7,
+   "id": "risk_free_rate_3m",
+   "source": "INVENTED FIXTURE - the central bank's published bill rate",
+   "unit": "percent",
+   "value": "3.68"
+  }
+ ],
+ "tier2": [
+  {
+   "as_of": "2026-08-04",
+   "figures": [
+    "244",
+    "5.1",
+    "23.4"
+   ],
+   "id": "official_sector_note",
+   "source": "INVENTED FIXTURE - the gold council's free published file and a named analyst house's note",
+   "text": "INVENTED FIXTURE - The official sector bought 244 tonnes in the latest published quarter, the gold council's file states, and the reported Chinese figure of 5.1 tonnes for July sits below a market estimate of 23.4 tonnes for the same month."
+  }
+ ]
+}

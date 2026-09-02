@@ -1,0 +1,1212 @@
+{
+  "$schema": "council-validator-subset",
+  "title": "Council verdict 1.2.0 - the published document (REBUILD-SPEC section 8)",
+  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope. No field for what the owner owns exists anywhere in this contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "subject",
+    "question_verbatim",
+    "frame",
+    "rating",
+    "conviction_rationale",
+    "mispricing",
+    "scenario_rating",
+    "tripwires",
+    "sizing_inputs",
+    "constituent_notes",
+    "evidence_dependencies",
+    "challenge",
+    "warnings",
+    "atlas_envelope",
+    "provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.2.0"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "[a-z0-9][a-z0-9-]*"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "asset_class",
+        "name",
+        "ticker",
+        "listing",
+        "currency"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "single_stock",
+            "etf",
+            "bitcoin",
+            "gold",
+            "commodity",
+            "theme",
+            "basket"
+          ]
+        },
+        "asset_class": {
+          "enum": [
+            "equity",
+            "crypto",
+            "gold",
+            "commodity"
+          ]
+        },
+        "product": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[a-z0-9][a-z0-9_]*"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ticker": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+        },
+        "listing": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "constituents": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "ticker",
+              "listing",
+              "currency"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ticker": {
+                "type": "string",
+                "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+              },
+              "listing": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "currency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "vehicle": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "ticker",
+            "listing",
+            "currency"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ticker": {
+              "type": "string",
+              "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+            },
+            "listing": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "currency": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "thesis_proportions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "constituent",
+              "emphasis"
+            ],
+            "properties": {
+              "constituent": {
+                "type": "string"
+              },
+              "emphasis": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "theme": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "thesis",
+            "falsifiers"
+          ],
+          "properties": {
+            "thesis": {
+              "type": "string",
+              "minLength": 1
+            },
+            "falsifiers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "kind",
+                  "description",
+                  "fact_id",
+                  "prior_fact_id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "[a-z0-9][a-z0-9_]*"
+                  },
+                  "kind": {
+                    "enum": [
+                      "level",
+                      "event",
+                      "date"
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "fact_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "[a-z0-9][a-z0-9_]*"
+                  },
+                  "prior_fact_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "question_verbatim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question_for_council",
+        "for_atlas",
+        "classification"
+      ],
+      "properties": {
+        "question_for_council": {
+          "type": "string",
+          "minLength": 1
+        },
+        "for_atlas": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "classification": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "rating": {
+      "enum": [
+        "strong_buy",
+        "buy",
+        "hold",
+        "sell",
+        "monitor"
+      ]
+    },
+    "conviction_rationale": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mispricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "read",
+        "magnitude",
+        "arithmetic"
+      ],
+      "properties": {
+        "read": {
+          "enum": [
+            "cheap",
+            "fair",
+            "rich",
+            "no_view"
+          ]
+        },
+        "magnitude": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "arithmetic": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        }
+      }
+    },
+    "scenario_rating": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "aggregated",
+        "basis",
+        "not_aggregated_reason",
+        "horizon_months",
+        "scenarios",
+        "seat_ladders"
+      ],
+      "properties": {
+        "aggregated": {
+          "type": "boolean"
+        },
+        "basis": {
+          "enum": [
+            "rating",
+            "context"
+          ]
+        },
+        "not_aggregated_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "horizon_months": {
+          "type": "string"
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "price_outcome",
+              "probability",
+              "rationale"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "price_outcome": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "probability": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              }
+            }
+          }
+        },
+        "reference_price_fact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference_price": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volatility_fact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volatility_pct": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cash_rate_fact_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cash_pct": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_price": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_total_pct": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expected_annualised_pct": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bar_pct": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "excess_over_bar_pp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rating": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "published_rating": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "constants": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "arithmetic": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sensitivity": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "seat_ladders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "seat",
+              "horizon_months",
+              "scenarios"
+            ],
+            "properties": {
+              "seat": {
+                "type": "string",
+                "minLength": 1
+              },
+              "horizon_months": {
+                "type": "string"
+              },
+              "scenarios": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "price_outcome",
+                    "probability",
+                    "rationale"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "price_outcome": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "probability": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "rationale": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tripwires": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "invalidation_levels",
+        "reopening_triggers",
+        "falsifiers"
+      ],
+      "properties": {
+        "invalidation_levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "level",
+              "unit",
+              "meaning"
+            ],
+            "properties": {
+              "level": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "unit": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "meaning": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "constituent": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "reopening_triggers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "price",
+                  "event"
+                ]
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "level": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "unit": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "date": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "constituent": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "falsifiers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "statement",
+              "figure_name",
+              "source",
+              "date"
+            ],
+            "properties": {
+              "statement": {
+                "type": "string",
+                "minLength": 1
+              },
+              "figure_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1
+              },
+              "date": {
+                "type": "string",
+                "minLength": 1
+              },
+              "constituent": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "theme_falsifier_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prior_period_value": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prior_period_unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "prior_period_as_of": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "metric_identity_assumed": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "sizing_inputs": {
+      "type": "array",
+      "minItems": 4,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "detail",
+          "value",
+          "unit",
+          "as_of",
+          "pack_fact_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "[a-z0-9][a-z0-9_]*"
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "as_of": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pack_fact_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "constituent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "constituent_notes": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "constituent",
+          "role_in_thesis",
+          "load_bearing_metric",
+          "tripwire"
+        ],
+        "properties": {
+          "constituent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "role_in_thesis": {
+            "type": "string",
+            "minLength": 1
+          },
+          "load_bearing_metric": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tripwire": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "evidence_dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "challenge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "model_requested",
+        "failure_reason",
+        "findings",
+        "dispositions",
+        "endorsement",
+        "summary",
+        "change_appendix"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "success",
+            "launch_failure",
+            "timeout",
+            "malformed_output",
+            "schema_failure",
+            "binding_failure",
+            "internal_failure"
+          ]
+        },
+        "model_requested": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failure_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "title",
+              "detail"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "unsupported_claim",
+                  "unearned_conviction",
+                  "under_rated_conviction",
+                  "blind_spot",
+                  "would_change_the_answer",
+                  "data_conflict",
+                  "other"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "dispositions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "finding_id",
+              "disposition",
+              "response"
+            ],
+            "properties": {
+              "finding_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "disposition": {
+                "enum": [
+                  "addressed",
+                  "adjudicated",
+                  "overruled"
+                ]
+              },
+              "response": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endorsement": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "highest_rating_supported"
+          ],
+          "properties": {
+            "highest_rating_supported": {
+              "enum": [
+                "strong_buy",
+                "buy",
+                "hold",
+                "sell",
+                "monitor"
+              ]
+            }
+          }
+        },
+        "change_appendix": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "field",
+              "before",
+              "after",
+              "label"
+            ],
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "before": {
+                "type": "string"
+              },
+              "after": {
+                "type": "string"
+              },
+              "label": {
+                "enum": [
+                  "change",
+                  "endorsed_raise",
+                  "unendorsed_raise",
+                  "degradation_cap"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "atlas_envelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rating",
+        "key_numbers",
+        "tripwires",
+        "sizing_inputs",
+        "subject_kind",
+        "constituents",
+        "vehicle",
+        "thesis_proportions",
+        "for_atlas_note",
+        "pack_hash",
+        "verdict_hash"
+      ],
+      "properties": {
+        "rating": {
+          "enum": [
+            "strong_buy",
+            "buy",
+            "hold",
+            "sell",
+            "monitor"
+          ]
+        },
+        "key_numbers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value",
+              "unit",
+              "as_of",
+              "pack_fact_id"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string",
+                "minLength": 1
+              },
+              "unit": {
+                "type": "string",
+                "minLength": 1
+              },
+              "as_of": {
+                "type": "string",
+                "minLength": 1
+              },
+              "pack_fact_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "tripwires": {
+          "type": "object"
+        },
+        "sizing_inputs": {
+          "type": "array"
+        },
+        "scenario_rating": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "subject_kind": {
+          "enum": [
+            "single_stock",
+            "etf",
+            "bitcoin",
+            "gold",
+            "commodity",
+            "theme",
+            "basket"
+          ]
+        },
+        "asset_class": {
+          "enum": [
+            "equity",
+            "crypto",
+            "gold",
+            "commodity"
+          ]
+        },
+        "product": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "constituents": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "vehicle": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "thesis_proportions": {
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "for_atlas_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pack_hash": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        },
+        "verdict_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pack_hash",
+        "models_per_seat",
+        "challenger_model_requested",
+        "timestamps",
+        "tokens",
+        "prompt_bytes_total"
+      ],
+      "properties": {
+        "pack_hash": {
+          "type": "string",
+          "pattern": "[0-9a-f]{64}"
+        },
+        "models_per_seat": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "challenger_model_requested": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "run_started",
+            "published"
+          ],
+          "properties": {
+            "run_started": {
+              "type": "string",
+              "minLength": 1
+            },
+            "published": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "per_seat",
+            "seats_total",
+            "challenger"
+          ],
+          "properties": {
+            "per_seat": {
+              "type": "object",
+              "additionalProperties": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "seats_total": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "challenger": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        },
+        "prompt_bytes_total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

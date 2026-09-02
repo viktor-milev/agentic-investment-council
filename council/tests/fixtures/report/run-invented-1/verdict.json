@@ -1,0 +1,290 @@
+{
+ "atlas_envelope": {
+  "constituents": null,
+  "for_atlas_note": "Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "last price",
+    "pack_fact_id": "last_price",
+    "unit": "USD",
+    "value": "88.40"
+   },
+   {
+    "as_of": "2026-08-28",
+    "name": "realized volatility, 90 days",
+    "pack_fact_id": "realized_vol_90d",
+    "unit": "%",
+    "value": "41.7"
+   }
+  ],
+  "pack_hash": "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+  "rating": "monitor",
+  "sizing_inputs": [
+   {
+    "as_of": "2026-08-28",
+    "detail": "Realized volatility over the last 90 days.",
+    "id": "realized_vol_90d",
+    "pack_fact_ids": [
+     "realized_vol_90d"
+    ],
+    "unit": "%",
+    "value": "41.7"
+   },
+   {
+    "as_of": "2026-08-28",
+    "detail": "Average daily turnover in the shares, three-month reading.",
+    "id": "avg_daily_turnover",
+    "pack_fact_ids": [
+     "avg_daily_turnover"
+    ],
+    "unit": "USD_m",
+    "value": "38.2"
+   },
+   {
+    "as_of": "2026-08-28",
+    "detail": "The deepest peak-to-trough fall in the last five years.",
+    "id": "deepest_drawdown_5y",
+    "pack_fact_ids": [],
+    "unit": "%",
+    "value": "-46"
+   },
+   {
+    "as_of": "2026-08-28",
+    "detail": "The next scheduled results date.",
+    "id": "next_results_date",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": "2026-11-05"
+   }
+  ],
+  "subject_kind": "single_stock",
+  "thesis_proportions": null,
+  "tripwires": {
+   "falsifiers": [
+    {
+     "date": "2027-02-04",
+     "figure_name": "full_year_revenue_2026",
+     "source": "invented: the company's 2026 full-year report",
+     "statement": "If 2026 full-year revenue prints under 900 USD millions, the growth leg of the thesis is wrong."
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "level": "84.50",
+     "meaning": "A close under 84.50 breaks the base the reopening case rests on.",
+     "unit": "USD"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "date": null,
+     "detail": "Reopen the case if the shares close at or under 72.00 USD.",
+     "kind": "price",
+     "level": "72.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2027-02-04",
+     "detail": "Reopen on the 2026 full-year results, whatever the price does before them.",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  },
+  "vehicle": null,
+  "verdict_hash": null
+ },
+ "challenge": {
+  "change_appendix": [
+   {
+    "after": "about a fifth above the subject's own five-year rating",
+    "before": "about a tenth above the subject's own five-year rating",
+    "field": "mispricing.magnitude",
+    "label": "change"
+   },
+   {
+    "after": "monitor",
+    "before": "hold",
+    "field": "rating",
+    "label": "unendorsed_raise"
+   }
+  ],
+  "dispositions": [
+   {
+    "disposition": "addressed",
+    "finding_id": "F1",
+    "response": "The final document adds the cash-flow rating beside the earnings multiple; the read is unchanged."
+   },
+   {
+    "disposition": "overruled",
+    "finding_id": "F2",
+    "response": "The reopening prices already sit under the five-year trough rating; a demand downturn is inside them."
+   }
+  ],
+  "endorsement": {
+   "highest_rating_supported": "hold"
+  },
+  "failure_reason": null,
+  "findings": [
+   {
+    "detail": "The draft prices the shares off the forward earnings multiple alone; the cash-flow rating gets no test of its own.",
+    "id": "F1",
+    "kind": "unsupported_claim",
+    "title": "The rich read leans on one multiple"
+   },
+   {
+    "detail": "The draft never says what a demand downturn would do to the reopening prices it names.",
+    "id": "F2",
+    "kind": "blind_spot",
+    "title": "No test of the demand cycle turning"
+   }
+  ],
+  "model_requested": "gpt-5.6-sol",
+  "status": "success",
+  "summary": "The rating is defensible on this record; the two findings ask for tighter wording, not a different answer. (INVENTED FIXTURE)"
+ },
+ "constituent_notes": null,
+ "conviction_rationale": "The evidence answers the four tests, but the price already carries the growth story. No view is worth paying for until one of the named triggers fires.",
+ "evidence_dependencies": [
+  "last_price",
+  "forward_earnings_multiple",
+  "revenue_fy2025",
+  "free_cash_flow_fy2025",
+  "risk_free_rate_10y"
+ ],
+ "frame": {
+  "classification": "a priced thesis check on a single stock",
+  "for_atlas": "Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
+  "question_for_council": "Is Specimen Works still cheap at this price, or has the market caught up with the growth story?"
+ },
+ "mispricing": {
+  "arithmetic": "Roughly 24.1 times forward earnings against a five-year average near 20 times; about a fifth above it.",
+  "magnitude": "about a fifth above the subject's own five-year rating",
+  "read": "rich"
+ },
+ "scenario_rating": null,
+ "provenance": {
+  "challenger_model_requested": "gpt-5.6-sol",
+  "models_per_seat": {
+   "advisor_base_rate": "claude-opus-4-6",
+   "advisor_bear": "claude-opus-4-6",
+   "advisor_bull": "claude-opus-4-6",
+   "advisor_market_structure": "claude-opus-4-6",
+   "advisor_risk": "claude-opus-4-6",
+   "chair_draft": "claude-opus-4-6",
+   "chair_resolve": "claude-opus-4-6",
+   "frame": "claude-opus-4-6",
+   "reviewer": "claude-opus-4-6"
+  },
+  "pack_hash": "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+  "prompt_bytes_total": 412345,
+  "timestamps": {
+   "published": "2026-08-30T10:26Z",
+   "run_started": "2026-08-30T09:12Z"
+  },
+  "tokens": {
+   "challenger": 96000,
+   "per_seat": {
+    "advisor_base_rate": 59000,
+    "advisor_bear": 64000,
+    "advisor_bull": 61000,
+    "advisor_market_structure": 60000,
+    "advisor_risk": 58000,
+    "chair_draft": 87000,
+    "chair_resolve": 54000,
+    "frame": 18000,
+    "reviewer": 92000
+   },
+   "seats_total": 553000
+  }
+ },
+ "question_verbatim": "Is Specimen Works still cheap at this price, or has the market caught up with the growth story? Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
+ "rating": "monitor",
+ "run_id": "report-fixture-invented-1",
+ "schema_version": "1.2.0",
+ "sizing_inputs": [
+  {
+   "as_of": "2026-08-28",
+   "detail": "Realized volatility over the last 90 days.",
+   "id": "realized_vol_90d",
+   "pack_fact_ids": [
+    "realized_vol_90d"
+   ],
+   "unit": "%",
+   "value": "41.7"
+  },
+  {
+   "as_of": "2026-08-28",
+   "detail": "Average daily turnover in the shares, three-month reading.",
+   "id": "avg_daily_turnover",
+   "pack_fact_ids": [
+    "avg_daily_turnover"
+   ],
+   "unit": "USD_m",
+   "value": "38.2"
+  },
+  {
+   "as_of": "2026-08-28",
+   "detail": "The deepest peak-to-trough fall in the last five years.",
+   "id": "deepest_drawdown_5y",
+   "pack_fact_ids": [],
+   "unit": "%",
+   "value": "-46"
+  },
+  {
+   "as_of": "2026-08-28",
+   "detail": "The next scheduled results date.",
+   "id": "next_results_date",
+   "pack_fact_ids": [],
+   "unit": null,
+   "value": "2026-11-05"
+  }
+ ],
+ "subject": {
+  "currency": "USD",
+  "kind": "single_stock",
+  "asset_class": "equity",
+  "listing": "INVENTED-X",
+  "name": "Specimen Works",
+  "ticker": "SPWK"
+ },
+ "tripwires": {
+  "falsifiers": [
+   {
+    "date": "2027-02-04",
+    "figure_name": "full_year_revenue_2026",
+    "source": "invented: the company's 2026 full-year report",
+    "statement": "If 2026 full-year revenue prints under 900 USD millions, the growth leg of the thesis is wrong."
+   }
+  ],
+  "invalidation_levels": [
+   {
+    "level": "84.50",
+    "meaning": "A close under 84.50 breaks the base the reopening case rests on.",
+    "unit": "USD"
+   }
+  ],
+  "reopening_triggers": [
+   {
+    "date": null,
+    "detail": "Reopen the case if the shares close at or under 72.00 USD.",
+    "kind": "price",
+    "level": "72.00",
+    "unit": "USD"
+   },
+   {
+    "date": "2027-02-04",
+    "detail": "Reopen on the 2026 full-year results, whatever the price does before them.",
+    "kind": "event",
+    "level": null,
+    "unit": null
+   }
+  ]
+ },
+ "warnings": [
+  "The rating moved after the outside audit. The outside auditor did not see this rating.",
+  "One frozen fact is older than its own freshness rule. The council reasoned over it knowingly."
+ ]
+}

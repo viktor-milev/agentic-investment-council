@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Challenger findings 1.0.0 - what the cross-model challenger returns",
+  "description": "The challenger audits the chairman's draft as an investment judgment - is the thesis judged right at this price. It is not a compliance auditor and it never authors a verdict: no field here can carry one, and the endorsement channel only names the highest rating it would support. The three echo fields bind the response to the exact case file sent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id_echo", "nonce_echo", "casefile_sha256_echo", "authored_verdict", "findings", "endorsement", "summary"],
+  "properties": {
+    "run_id_echo": {
+      "type": "string",
+      "description": "The run_id printed in the case file header, echoed back verbatim."
+    },
+    "nonce_echo": {
+      "type": "string",
+      "description": "The one-time token printed in the case file header, echoed back verbatim."
+    },
+    "casefile_sha256_echo": {
+      "type": "string",
+      "description": "The case-file hash printed in the case file header, echoed back verbatim."
+    },
+    "authored_verdict": {
+      "type": "boolean",
+      "enum": [false],
+      "description": "Always false: the challenger audits, it never authors."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every finding against the draft, each one self-contained.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "title", "detail"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "description": "Short stable id, e.g. F1."},
+          "kind": {
+            "type": "string",
+            "enum": ["unsupported_claim", "unearned_conviction", "under_rated_conviction", "blind_spot", "would_change_the_answer", "data_conflict", "other"]
+          },
+          "title": {"type": "string", "minLength": 1},
+          "detail": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "endorsement": {
+      "description": "Optional typed endorsement: the highest rating on the owner's five-word scale this challenger would support on this record. Null when no endorsement is issued.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["highest_rating_supported"],
+      "properties": {
+        "highest_rating_supported": {
+          "type": "string",
+          "enum": ["strong_buy", "buy", "hold", "sell", "monitor"]
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The challenger's overall view of the draft, in plain CIO-suitable English."
+    }
+  }
+}

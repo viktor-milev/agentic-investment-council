@@ -1,0 +1,17 @@
+{
+  "authored_verdict": false,
+  "casefile_sha256_echo": "879c9eef9af549d7231df0428bb5e59b2bc4e92b02f63078d8afdc89cac507e5",
+  "endorsement": {
+    "highest_rating_supported": "hold"
+  },
+  "findings": [
+    {
+      "detail": "invalid by contract",
+      "id": "F1",
+      "title": "no kind on this item"
+    }
+  ],
+  "nonce_echo": "fx-nonce-1",
+  "run_id_echo": "fx-run-1",
+  "summary": "The draft's hold is defensible but rests on an unsourced price anchor and skips the risk-free comparison."
+}

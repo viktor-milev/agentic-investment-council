@@ -1,0 +1,40 @@
+{
+  "run_id": "report-fixture-invented-basket",
+  "subject": {
+    "constituents": [
+      {
+        "currency": "USD",
+        "listing": "NYSE (INVENTED)",
+        "name": "Alpha Chips Inc (INVENTED)",
+        "ticker": "ACHP"
+      },
+      {
+        "currency": "USD",
+        "listing": "NASDAQ (INVENTED)",
+        "name": "Beta Grid Corp (INVENTED)",
+        "ticker": "BGRD"
+      }
+    ],
+    "currency": "USD",
+    "kind": "basket",
+    "asset_class": "equity",
+    "listing": null,
+    "name": "AI Infrastructure Pair (INVENTED BASKET)",
+    "thesis_proportions": [
+      {
+        "constituent": "ACHP",
+        "emphasis": "roughly two thirds of the idea"
+      },
+      {
+        "constituent": "BGRD",
+        "emphasis": "the remaining third"
+      }
+    ],
+    "ticker": null
+  },
+  "question_verbatim": "Is the AI infrastructure pair - Alpha Chips with Beta Grid - worth buying as one idea at today's prices? (INVENTED FIXTURE)",
+  "pack_sha256": "98b0d64f8c2f33d17192ac3086c68affbaad4b4af15d87644c425b81eb725ca5",
+  "created_at": "2026-08-31T09:00Z",
+  "schema_version": "1.2.0",
+  "note": "INVENTED fixture for the report suite. Every value on this run is invented and every source says so."
+}

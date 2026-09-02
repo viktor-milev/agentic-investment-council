@@ -1,0 +1,449 @@
+{
+ "capture_version": "1.2.0",
+ "captured_at": "2026-08-30T06:00Z",
+ "gaps": [],
+ "market_state": {
+  "disclosure": null,
+  "state": "open"
+ },
+ "question_verbatim": "Is Bitcoin attractive at today's price? (INVENTED FIXTURE)",
+ "subject": {
+  "asset_class": "crypto",
+  "currency": "USD",
+  "kind": "bitcoin",
+  "listing": null,
+  "name": "Bitcoin",
+  "ticker": null
+ },
+ "sufficiency": {
+  "requirements": [
+   {
+    "answered_by": [],
+    "description": "Is the subject earning more than a year ago? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - Bitcoin has no earnings and no filings; the equity fact families are absent by design for this class (W6/W2.8)",
+    "id": "profit_growth",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "profit growth cannot anchor conviction; the asset class's own anchors carry the case"
+   },
+   {
+    "answered_by": [],
+    "description": "How much cash does the subject generate after unavoidable spending? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - there is no business inside the asset; no cash generation exists to measure",
+    "id": "free_cash_flow",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the cash-generation leg of the case is empty; the class anchors stand in for it"
+   },
+   {
+    "answered_by": [],
+    "description": "Is the price expensive or cheap against the subject's own history or peers? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - no earnings rating exists for Bitcoin; there is nothing to divide the price by",
+    "id": "rating_vs_history_or_peers",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "price against its own history is the only rating-like read, and it is weaker than an earnings rating"
+   },
+   {
+    "answered_by": [],
+    "description": "Does the earnings or cash yield beat the risk-free rate? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the asset pays nothing and earns nothing; there is no yield to compare",
+    "id": "yield_vs_risk_free",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the comparison against the risk-free rate is one-sided by design; the cost of waiting in bills is the whole reading"
+   },
+   {
+    "answered_by": [
+     "etf_net_flows_daily",
+     "etf_flows_note"
+    ],
+    "description": "Are the US spot funds absorbing coins this week? (INVENTED FIXTURE)",
+    "id": "flow_regime",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "realized_price",
+     "sth_cost_basis",
+     "lth_cost_basis"
+    ],
+    "description": "Where the downside rungs sit, in dollars rather than chart lines. (INVENTED FIXTURE)",
+    "id": "downside_ladder",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "cycle_peak_2021",
+     "cycle_trough_2021",
+     "cycle_drawdown_2021",
+     "cycle_recovery_months_2021"
+    ],
+    "description": "How deep prior cycles fell and how many months each took to come back. (INVENTED FIXTURE)",
+    "id": "cycle_durations",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "realized_volatility_5y",
+     "risk_free_rate_3m"
+    ],
+    "description": "The two inputs the rating bar is computed from: cash, and the asset's own five-year volatility. (INVENTED FIXTURE)",
+    "id": "rating_bar_inputs",
+    "kind": "thesis_specific",
+    "status": "answered"
+   }
+  ]
+ },
+ "tier1": [
+  {
+   "as_of": "2026-08-30",
+   "derived": null,
+   "freshness_rule_days": 1,
+   "id": "price_last",
+   "source": "INVENTED FIXTURE - CoinGecko public price page, read at the sitting (the owner named the aggregator, W6.1)",
+   "unit": "USD",
+   "value": "60000.00"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "supply_circulating",
+   "source": "INVENTED FIXTURE - Coin Metrics free public data",
+   "unit": "BTC",
+   "value": "19900000"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "etf_net_flows_daily",
+   "source": "INVENTED FIXTURE - Farside Investors daily US spot-fund flow table",
+   "unit": "USD_m",
+   "value": "125.5"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 365,
+   "id": "halving_next",
+   "source": "INVENTED FIXTURE - protocol schedule via a dated public block explorer",
+   "unit": "date",
+   "value": "2028-03-15"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 365,
+   "id": "halving_next_block",
+   "source": "INVENTED FIXTURE - protocol schedule, fixed block height beside the drifting date",
+   "unit": "block_height",
+   "value": "1050000"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": {
+    "operands": [
+     {
+      "label": "cumulative to 2026-06-30",
+      "value": "58120.2"
+     },
+     {
+      "label": "cumulative since 2026-07-01",
+      "value": "4330.3"
+     }
+    ],
+    "operation": "add"
+   },
+   "freshness_rule_days": 3,
+   "id": "etf_net_flows_cumulative",
+   "source": "INVENTED FIXTURE - Farside Investors daily table, cumulated across the two published halves",
+   "unit": "US$m",
+   "value": "62450.5"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 2,
+   "id": "funding_rate",
+   "source": "INVENTED FIXTURE - the perpetual venue's own published funding series",
+   "unit": "percent per 8 hours",
+   "value": "0.0091"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 2,
+   "id": "open_interest",
+   "source": "INVENTED FIXTURE - the venue's published open-interest series",
+   "unit": "US$m",
+   "value": "31480"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "realized_price",
+   "source": "INVENTED FIXTURE - checkonchain daily series (invented reading)",
+   "unit": "USD",
+   "value": "53049"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "realized_price",
+      "label": "realized price today",
+      "value": "53049"
+     },
+     {
+      "label": "realized price 30 days earlier",
+      "value": "51869"
+     }
+    ],
+    "operation": "subtract"
+   },
+   "freshness_rule_days": 3,
+   "id": "realized_price_change_30d",
+   "source": "INVENTED FIXTURE - the same series read 30 days apart",
+   "unit": "USD",
+   "value": "1180"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "mvrv_z_score",
+   "source": "INVENTED FIXTURE - bitcoin-data.com standardised MVRV series",
+   "unit": "z-score",
+   "value": "0.85"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "sth_cost_basis",
+   "source": "INVENTED FIXTURE - checkonchain daily series (invented reading)",
+   "unit": "USD",
+   "value": "69980"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "lth_cost_basis",
+   "source": "INVENTED FIXTURE - checkonchain daily series (invented reading)",
+   "unit": "USD",
+   "value": "48918"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "lth_supply",
+   "source": "INVENTED FIXTURE - checkonchain daily series (invented reading)",
+   "unit": "BTC",
+   "value": "14210000"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "lth_supply_change_30d",
+   "source": "INVENTED FIXTURE - the same supply series read 30 days apart",
+   "unit": "BTC",
+   "value": "-96000"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "hash_rate_7d_avg",
+   "source": "INVENTED FIXTURE - mempool.space keyless JSON (invented reading), seven-day average",
+   "unit": "EH/s",
+   "value": "951"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "difficulty",
+   "source": "INVENTED FIXTURE - mempool.space keyless JSON (invented reading)",
+   "unit": "T",
+   "value": "142.6"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_peak_2013",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "1151"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_trough_2013",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "152"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_drawdown_2013",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "percent",
+   "value": "-86.8"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_recovery_months_2013",
+   "source": "INVENTED FIXTURE - months from the trough to the prior peak, read off the same dated price history",
+   "unit": "months",
+   "value": "37"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_peak_2017",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "19783"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_trough_2017",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "3122"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_drawdown_2017",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "percent",
+   "value": "-84.2"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_recovery_months_2017",
+   "source": "INVENTED FIXTURE - months from the trough to the prior peak, read off the same dated price history",
+   "unit": "months",
+   "value": "35"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_peak_2021",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "68789"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_trough_2021",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "USD",
+   "value": "15476"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_drawdown_2021",
+   "source": "INVENTED FIXTURE - the asset's own dated price history",
+   "unit": "percent",
+   "value": "-77.5"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "cycle_recovery_months_2021",
+   "source": "INVENTED FIXTURE - months from the trough to the prior peak, read off the same dated price history",
+   "unit": "months",
+   "value": "25"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "calendar_fomc_next",
+   "source": "INVENTED FIXTURE - the central bank's published meeting calendar",
+   "unit": "date",
+   "value": "2026-09-16"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 60,
+   "id": "calendar_protocol_next",
+   "source": "INVENTED FIXTURE - the protocol's own schedule",
+   "unit": "date",
+   "value": "2028-04-20"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "realized_volatility_5y",
+   "source": "INVENTED FIXTURE - five years of daily closes from the aggregator that priced the subject, annualised",
+   "unit": "percent annualised",
+   "value": "48.6"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 7,
+   "id": "risk_free_rate_3m",
+   "source": "INVENTED FIXTURE - the central bank's published bill rate",
+   "unit": "percent",
+   "value": "3.68"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "exchange_balance_total",
+   "source": "INVENTED FIXTURE - Coin Metrics community data (invented reading)",
+   "unit": "BTC",
+   "value": "2704339"
+  }
+ ],
+ "tier2": [
+  {
+   "as_of": "2026-08-29",
+   "figures": [
+    "125.5"
+   ],
+   "id": "etf_flows_note",
+   "source": "INVENTED FIXTURE - Farside Investors daily flow table, read 2026-08-30",
+   "text": "INVENTED FIXTURE - Farside's table shows a net inflow of 125.5 million dollars across the US spot funds on 2026-08-29, the fourth straight day of inflows."
+  }
+ ]
+}

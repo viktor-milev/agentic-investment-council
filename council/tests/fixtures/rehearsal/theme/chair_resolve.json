@@ -1,0 +1,138 @@
+{
+ "dispositions": [
+  {
+   "disposition": "adjudicated",
+   "finding_id": "F1",
+   "response": "INVENTED FIXTURE - engaged and settled: the rationale already names the single period; the document stands."
+  },
+  {
+   "disposition": "overruled",
+   "finding_id": "F2",
+   "response": "INVENTED FIXTURE - rejected on the record: the sizing entries name what would close each gap."
+  }
+ ],
+ "final_markdown": "## The chairman's final word\n\nINVENTED FIXTURE - both findings engaged by name; the document stands as drafted. Monitor stands, scored at the declared falsifiers.",
+ "final_verdict": {
+  "constituent_notes": [
+   {
+    "constituent": "GSTA",
+    "load_bearing_metric": "deployment backlog",
+    "role_in_thesis": "INVENTED FIXTURE - the deployment leg of the named universe.",
+    "tripwire": null
+   },
+   {
+    "constituent": "GSTB",
+    "load_bearing_metric": "storage revenue",
+    "role_in_thesis": "INVENTED FIXTURE - the revenue leg of the named universe.",
+    "tripwire": null
+   }
+  ],
+  "conviction_rationale": "INVENTED FIXTURE - a watch-state: the theme's falsifiers are named and scored and the named universe answered its essential metrics, but nothing prices the theme itself.",
+  "evidence_dependencies": [
+   "storage_installs_q",
+   "storage_installs_prior_year_q",
+   "price_last__gsta",
+   "storage_revenue_q__gstb"
+  ],
+  "key_numbers": [
+   {
+    "as_of": "2026-08-28",
+    "name": "Grid Storage Alpha last price",
+    "pack_fact_id": "price_last__gsta",
+    "unit": "USD",
+    "value": "45.30"
+   }
+  ],
+  "mispricing": {
+   "arithmetic": null,
+   "magnitude": null,
+   "read": "no_view"
+  },
+  "rating": "monitor",
+  "sizing_inputs": [
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no realized volatility series; the gap is stated here.",
+    "id": "realized_volatility",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no liquidity series; the gap is stated here.",
+    "id": "liquidity",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no event dates series; the gap is stated here.",
+    "id": "event_dates",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   },
+   {
+    "as_of": null,
+    "detail": "INVENTED FIXTURE - the pack carries no drawdown shape series; the gap is stated here.",
+    "id": "drawdown_shape",
+    "pack_fact_ids": [],
+    "unit": null,
+    "value": null
+   }
+  ],
+  "tripwires": {
+   "falsifiers": [
+    {
+     "date": "2026-11-15",
+     "figure_name": "storage_installs_q",
+     "metric_identity_assumed": "INVENTED FIXTURE - quarterly utility-scale storage installations in gigawatts, as the tracker defines them, both periods.",
+     "prior_period_as_of": "2025-08-15",
+     "prior_period_unit": "GW",
+     "prior_period_value": "9.1",
+     "source": "industry deployment tracker, quarterly release (INVENTED)",
+     "statement": "INVENTED FIXTURE - if quarterly storage installations print at or below the prior year, the theme is wrong.",
+     "theme_falsifier_id": "storage_install_growth"
+    },
+    {
+     "date": "2026-12-31",
+     "figure_name": "storage_credit_note",
+     "metric_identity_assumed": "INVENTED FIXTURE - the credit's statutory status against current law.",
+     "prior_period_as_of": null,
+     "prior_period_unit": null,
+     "prior_period_value": null,
+     "source": "dated policy tracker page (INVENTED)",
+     "statement": "INVENTED FIXTURE - if the storage investment credit is repealed, the theme is wrong.",
+     "theme_falsifier_id": "storage_credit_repeal"
+    }
+   ],
+   "invalidation_levels": [
+    {
+     "constituent": "GSTB",
+     "level": "10.00",
+     "meaning": "INVENTED FIXTURE - a Grid Storage Beta close under 10.00 breaks the expression's weakest leg.",
+     "unit": "USD"
+    }
+   ],
+   "reopening_triggers": [
+    {
+     "constituent": "GSTA",
+     "date": null,
+     "detail": "INVENTED FIXTURE - reopen if Grid Storage Alpha closes at or under 40.00 USD.",
+     "kind": "price",
+     "level": "40.00",
+     "unit": "USD"
+    },
+    {
+     "date": "2026-11-15",
+     "detail": "INVENTED FIXTURE - reopen on the next quarterly deployment tracker release.",
+     "kind": "event",
+     "level": null,
+     "unit": null
+    }
+   ]
+  }
+ }
+}

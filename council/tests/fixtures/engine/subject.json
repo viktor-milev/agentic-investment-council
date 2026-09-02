@@ -1,0 +1,8 @@
+{
+  "kind": "single_stock",
+  "asset_class": "equity",
+  "name": "Fixture Manufacturing Company (an invented test subject)",
+  "ticker": "FIXT",
+  "listing": "Invented Exchange",
+  "currency": "USD"
+}

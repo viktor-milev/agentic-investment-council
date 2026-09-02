@@ -1,0 +1,4 @@
+# Python bytecode is regenerated on demand; it is not source and a reviewer
+# cannot read it.
+__pycache__/
+*.pyc

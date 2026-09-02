@@ -1,0 +1,24 @@
+{
+  "status": "success",
+  "failure_reason": null,
+  "run_id_echo": "report-fixture-invented-1",
+  "casefile_sha256": "cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34cd34",
+  "summary": "The draft is honest about the four tests and right that the price is full. Where it is weakest is self-awareness about its own inputs: the rich read rests on one multiple, and the reopening prices are asserted rather than stress-tested. Neither weakness argues for a stronger rating. The highest rating this record supports is hold.",
+  "findings": [
+    {
+      "id": "F1",
+      "kind": "unsupported_claim",
+      "title": "The rich read leans on one multiple",
+      "detail": "The draft prices the shares off the forward earnings multiple alone; the cash-flow rating gets no test of its own."
+    },
+    {
+      "id": "F2",
+      "kind": "blind_spot",
+      "title": "No test of the demand cycle turning",
+      "detail": "The draft never says what a demand downturn would do to the reopening prices it names."
+    }
+  ],
+  "endorsement": {
+    "highest_rating_supported": "hold"
+  }
+}

@@ -1,0 +1,271 @@
+{
+ "capture_version": "1.2.0",
+ "captured_at": "2026-08-30T21:30Z",
+ "gaps": [],
+ "market_state": {
+  "disclosure": null,
+  "state": "open"
+ },
+ "question_verbatim": "Is copper worth committing new capital to through the three-month contract at today's price? (INVENTED FIXTURE)",
+ "subject": {
+  "asset_class": "commodity",
+  "currency": "USD",
+  "kind": "commodity",
+  "listing": null,
+  "name": "Copper (London three-month contract)",
+  "product": "copper",
+  "ticker": null
+ },
+ "sufficiency": {
+  "requirements": [
+   {
+    "answered_by": [],
+    "description": "Is the subject earning more than a year ago? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the subject is a metal, not a business; the equity fact families are absent by design",
+    "id": "profit_growth",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "profit growth cannot anchor conviction; the asset class's own anchors carry the case"
+   },
+   {
+    "answered_by": [],
+    "description": "How much cash does the subject generate after unavoidable spending? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - there is no business inside the metal; no cash generation exists to measure",
+    "id": "free_cash_flow",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the cash-generation leg of the case is empty; the class anchors stand in for it"
+   },
+   {
+    "answered_by": [],
+    "description": "Is the price expensive or cheap against the subject's own history or peers? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - no earnings rating exists for a metal; the curve and the inventories carry the read instead",
+    "id": "rating_vs_history_or_peers",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "price against its own history is the only rating-like read, and it is weaker than an earnings rating"
+   },
+   {
+    "answered_by": [],
+    "description": "Does the earnings or cash yield beat the risk-free rate? (INVENTED FIXTURE)",
+    "gap_reason": "INVENTED FIXTURE - the metal pays nothing and costs carry; the curve prices that, and there is no yield to compare",
+    "id": "yield_vs_risk_free",
+    "kind": "canonical_test",
+    "reason_kind": "absent_by_design",
+    "status": "declared_gap",
+    "weakened_test": "the comparison against the risk-free rate is one-sided by design; the cost of waiting in bills is the whole reading"
+   },
+   {
+    "answered_by": [
+     "exchange_inventory_lme",
+     "exchange_inventory_comex",
+     "exchange_inventory_shfe",
+     "carry_annualised"
+    ],
+    "description": "Is the market tight or loose, venue by venue, and does time work for us? (INVENTED FIXTURE)",
+    "id": "tight_or_loose",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "price_last",
+     "cross_venue_price",
+     "cross_venue_gap",
+     "venue_gap_note"
+    ],
+    "description": "How much of this price is the metal and how much is policy? (INVENTED FIXTURE)",
+    "id": "metal_or_policy",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "tradable_horizon_months",
+     "open_interest"
+    ],
+    "description": "Can the trade be carried for the horizon the thesis needs? (INVENTED FIXTURE)",
+    "id": "can_it_be_carried",
+    "kind": "thesis_specific",
+    "status": "answered"
+   },
+   {
+    "answered_by": [
+     "realized_volatility_5y",
+     "risk_free_rate_3m"
+    ],
+    "description": "The two inputs the rating bar is computed from. (INVENTED FIXTURE)",
+    "id": "rating_bar_inputs",
+    "kind": "thesis_specific",
+    "status": "answered"
+   }
+  ]
+ },
+ "tier1": [
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "price_last",
+   "source": "INVENTED FIXTURE - the London metals price, read from the only free mirror - a scraped third-party table, so this figure carries a stated confidence note",
+   "unit": "USD per tonne",
+   "value": "14370.00"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "contract_venue",
+   "source": "INVENTED FIXTURE - the contract the trade would be done in",
+   "unit": "venue",
+   "value": "London Metal Exchange"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "contract_month",
+   "source": "INVENTED FIXTURE - the contract the trade would be done in",
+   "unit": "contract month",
+   "value": "three-month"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "cross_venue_price",
+   "source": "INVENTED FIXTURE - the New York venue's own published settlement, converted from cents per pound",
+   "unit": "USD per tonne",
+   "value": "14800.00"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "cross_venue_price",
+      "label": "New York settlement",
+      "value": "14800.00"
+     },
+     {
+      "fact_id": "price_last",
+      "label": "London three-month",
+      "value": "14370.00"
+     }
+    ],
+    "operation": "subtract"
+   },
+   "freshness_rule_days": 3,
+   "id": "cross_venue_gap",
+   "source": "INVENTED FIXTURE - the difference between the two venue prices",
+   "unit": "USD per tonne",
+   "value": "430.00"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 3,
+   "id": "carry_annualised",
+   "source": "INVENTED FIXTURE - read off the curve: the cash price stands above the three-month price, so the trade is paid to wait",
+   "unit": "percent",
+   "value": "4.60"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "exchange_inventory_lme",
+   "source": "INVENTED FIXTURE - the London venue's published warehouse stocks, read from the same free mirror",
+   "unit": "tonnes",
+   "value": "234275"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "exchange_inventory_comex",
+   "source": "INVENTED FIXTURE - the New York venue's published warehouse stocks",
+   "unit": "tonnes",
+   "value": "648900"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 5,
+   "id": "exchange_inventory_shfe",
+   "source": "INVENTED FIXTURE - the Shanghai venue's published warehouse stocks",
+   "unit": "tonnes",
+   "value": "89400"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "tradable_horizon_months",
+   "source": "INVENTED FIXTURE - the last contract month with genuine depth on the named venue",
+   "unit": "months",
+   "value": "12"
+  },
+  {
+   "as_of": "2026-08-25",
+   "derived": null,
+   "freshness_rule_days": 12,
+   "id": "open_interest",
+   "source": "INVENTED FIXTURE - the futures regulator's weekly file",
+   "unit": "contracts",
+   "value": "283299"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 60,
+   "id": "calendar_tariff_review",
+   "source": "INVENTED FIXTURE - the published date of the next border-tax review",
+   "unit": "date",
+   "value": "2026-10-01"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "calendar_fomc_next",
+   "source": "INVENTED FIXTURE - the central bank's published meeting calendar",
+   "unit": "date",
+   "value": "2026-09-16"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "realized_volatility_5y",
+   "source": "INVENTED FIXTURE - five years of daily settlements on the named venue, annualised",
+   "unit": "percent annualised",
+   "value": "24.9"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 7,
+   "id": "risk_free_rate_3m",
+   "source": "INVENTED FIXTURE - the central bank's published bill rate",
+   "unit": "percent",
+   "value": "3.68"
+  }
+ ],
+ "tier2": [
+  {
+   "as_of": "2026-08-28",
+   "figures": [
+    "14370.00",
+    "14800.00",
+    "430.00"
+   ],
+   "id": "venue_gap_note",
+   "source": "INVENTED FIXTURE - the two venues' own published prices",
+   "text": "INVENTED FIXTURE - The same metal settled at 14370.00 dollars a tonne in London and 14800.00 dollars a tonne in New York on the same day, a gap of 430.00 dollars that border-tax policy, not scarcity, opened."
+  }
+ ]
+}

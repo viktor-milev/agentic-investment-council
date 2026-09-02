@@ -1,0 +1,73 @@
+{
+  "capture_version": "1.2.0",
+  "subject": {
+    "kind": "single_stock",
+    "asset_class": "equity",
+    "name": "Example Manufacturing Co",
+    "ticker": "EXMP",
+    "listing": "NYSE (INVENTED)",
+    "currency": "USD"
+  },
+  "question_verbatim": "One defect only: a derived fact whose declared arithmetic does not recompute. (INVENTED FIXTURE)",
+  "captured_at": "2026-08-30T21:30Z",
+  "market_state": {
+    "state": "open",
+    "disclosure": null
+  },
+  "tier1": [
+    {
+      "id": "gross_liquid_funds_mrq_end",
+      "value": "1500.75",
+      "unit": "USD_m",
+      "as_of": "2026-07-15",
+      "source": "INVENTED FIXTURE - Example Manufacturing 10-Q liquidity note, 2026-07-15",
+      "freshness_rule_days": 120,
+      "derived": null
+    },
+    {
+      "id": "funds_promised_away_mrq_end",
+      "value": "300.25",
+      "unit": "USD_m",
+      "as_of": "2026-07-15",
+      "source": "INVENTED FIXTURE - Example Manufacturing 10-Q collateral note, 2026-07-15",
+      "freshness_rule_days": 120,
+      "derived": null
+    },
+    {
+      "id": "spendable_funds_mrq_end",
+      "value": "1200.49",
+      "unit": "USD_m",
+      "as_of": "2026-07-15",
+      "source": "INVENTED FIXTURE - derived inside the pack; the declared subtraction is deliberately wrong by one cent",
+      "freshness_rule_days": 120,
+      "derived": {
+        "operation": "subtract",
+        "operands": [
+          {
+            "label": "gross liquid funds",
+            "value": "1500.75",
+            "fact_id": "gross_liquid_funds_mrq_end"
+          },
+          {
+            "label": "funds promised away",
+            "value": "300.25",
+            "fact_id": "funds_promised_away_mrq_end"
+          }
+        ]
+      }
+    }
+  ],
+  "tier2": [],
+  "gaps": [],
+  "sufficiency": {
+    "requirements": [
+      {
+        "id": "resilience_read",
+        "description": "How much money is actually free to spend? (INVENTED FIXTURE)",
+        "kind": "thesis_specific",
+        "status": "answered",
+        "answered_by": ["spendable_funds_mrq_end"]
+      }
+    ]
+  }
+}

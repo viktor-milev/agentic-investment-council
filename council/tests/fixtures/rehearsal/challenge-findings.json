@@ -1,0 +1,21 @@
+{
+ "authored_verdict": false,
+ "endorsement": {
+  "highest_rating_supported": "buy"
+ },
+ "findings": [
+  {
+   "detail": "The draft's conviction sentence says profit 'grew 12 percent on the year' from a single quarterly comparison. The record holds exactly one quarter and its comparative; calling that compounding overstates what the record shows. Say one quarter, or lower the conviction wording.",
+   "id": "F1",
+   "kind": "unearned_conviction",
+   "title": "One quarter of growth carries the whole compounding claim"
+  },
+  {
+   "detail": "Every cautious voice cites the order-backlog passage's two cancellations; the draft dismisses them as unsized. The passage states the figures literally - the draft should either size them against guided revenue or name the omission as a limit of the ruling.",
+   "id": "F2",
+   "kind": "blind_spot",
+   "title": "The two backlog cancellations are quoted but never sized"
+  }
+ ],
+ "summary": "The rating is defensible at this price on this record: the rating-versus-own-history and cash-versus-bill arithmetic both stand, and the falsifier is scoreable. Two findings: the compounding language rests on one quarter, and the backlog cancellations deserve arithmetic, not adjectives. Neither overturns the buy; both should tighten the final wording. (INVENTED FIXTURE)"
+}
