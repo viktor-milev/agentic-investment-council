@@ -36,6 +36,47 @@ rules that matter most in practice:
   (the four tests + thesis-specific) mapped to the fact ids that answer it. The four
   canonical tests carry EXACTLY these ids — `profit_growth`, `free_cash_flow`,
   `rating_vs_history_or_peers`, `yield_vs_risk_free` — the gate refuses any other spelling (MAC-2).
+- **A filer that does not report capital spending at all (rulings AB19 and
+  AB20).** Some companies never publish capital spending as a line of its own
+  — Coinbase is the first the council met. The sitting does NOT refuse.
+  Capture `capital_expenditure_q` and its prior-year pair as a DERIVED ceiling
+  built from the NARROWEST published line that contains capital spending,
+  struck identically in both years out of the SAME line, and **tag each of the
+  four figures** — the two ceilings and the two free-cash-flow figures built
+  on them:
+
+  ```json
+  "capital_expenditure_q": ... "bound": {"kind": "ceiling",
+                                         "published_line": "Other investing activities, net"}
+  "free_cash_flow_q":      ... "bound": {"kind": "floor", "published_line": null}
+  ```
+
+  The `published_line` is the line's name **as the filer prints it**, written
+  identically on both years — case and spacing are ignored, anything else is
+  a different line and the gate refuses. Declare the gap `absent_by_design`
+  alongside; its `fact_class` must read exactly **`a separately reported
+  capital-expenditure line`** — that phrase is what arms the check. Tag
+  without the gap row, or declare the gap without the tags, and the sitting
+  refuses either way: the two travel together.
+
+  The tag is what the case file renders for every seat, in a sentence the
+  machine generates from it — you no longer have to work the words into the
+  source sentence yourself, and a differently-worded source is no longer
+  refused. Where no published line contains the item, refuse as before. This
+  licenses no substitute against any other must-have.
+
+  **Which line is the NARROWEST published one containing capital spending is
+  not something the machine can see, and the tag does not change that.**
+  Naming a line is a claim about the filer's statements, never a check of one;
+  the gate can only compare your two claims to each other. That judgement
+  stays yours.
+
+  Worked example: `council/runs/council-coin-2026-09-04/evidence/capture.json`
+  — copy its arithmetic and its source sentences, but note that it was
+  written to the previous contract (`capture_version` 1.2.0) and carries no
+  tags, because runs on record are never rewritten. Your capture is 1.3.0 and
+  needs them. The migration is set out in
+  `council/tests/test_evidence.py::to_contract_1_3_0`.
 - `sec.gov`'s archive refuses automated fetches; use `data.sec.gov` or the
   issuer's investor-relations copies.
 

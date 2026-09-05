@@ -543,7 +543,9 @@ def _check_vocabulary(capture):
 def _check_source_lines(capture):
     """A source containing any line break is refused: rendered into a
     case file it could mint free-standing prompt lines (round-11
-    finding). splitlines is the one definition of a line break."""
+    finding). splitlines is the one definition of a line break. A bound
+    tag's published line is rendered into the case file the same way
+    and carries the same rule."""
     reasons = []
     for label, entry in _entries(capture):
         source = str(entry["source"])
@@ -552,6 +554,14 @@ def _check_source_lines(capture):
                 "%s '%s' has a line break inside its source - a source "
                 "names where a fact came from - one line, never a page "
                 "of text" % (label, entry["id"]))
+    for fact in capture["tier1"]:
+        tag = fact.get("bound")
+        line = tag.get("published_line") if isinstance(tag, dict) else None
+        if line is not None and "".join(str(line).splitlines()) != str(line):
+            reasons.append(
+                "tier1 fact '%s' has a line break inside the published "
+                "line named by its bound tag - that name is a line from "
+                "a filing, not a page of text" % fact["id"])
     return reasons
 
 

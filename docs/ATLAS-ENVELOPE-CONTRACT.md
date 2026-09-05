@@ -3,7 +3,9 @@
 *Commissioned by the architect under owner ruling AB17 (2026-09-02). Ground truth: the producer is
 `council/engine/publisher.py`, the declared shape is `council/schemas/verdict_schema.json`
 (`atlas_envelope`), the checker is `council/engine/readback.py`, and the worked example is
-`council/runs/council-btc-2026-09-01/atlas-envelope.json` — the live Bitcoin SELL.*
+`council/runs/council-btc-2026-09-01/atlas-envelope.json` — the live Bitcoin SELL. The stand-in
+example is `council/runs/council-coin-2026-09-04` — Coinbase, HOLD — the first sitting whose
+capital-spending figure is a declared ceiling (§2, "Bounds"). Updated 2026-09-05 with §7.*
 
 ## 1. What the package is
 
@@ -33,6 +35,12 @@ can appear):
 - **`sizing_inputs`** — at least four rows, each with `id`, `value`, `unit`, `as_of`, the
   `pack_fact_ids` behind it and a plain-English `detail`. The Bitcoin run's four ids:
   `realized_volatility`, `liquidity`, `event_dates`, `drawdown_shape`.
+  **Bounds (rulings AB19/AB20/AB22, capture contract 1.3.0).** A filer that publishes no
+  capital-spending line may have a wider line standing in for it as a declared CEILING, and the
+  free cash flow built on it is then a FLOOR — a bound, not a measurement. That label
+  (`bound.kind` and the published line it names) lives on the fact in the FROZEN PACK, not in
+  this package: a key number or sizing input here carries only `pack_fact_id`. Resolve the id
+  against `pack/pack.json` before treating the figure as a measurement (§7, gap 3).
 - **`scenario_rating`** — for an anchorless subject, the full ladder with the published arithmetic,
   the volatility-scaled bar and the sensitivity; on an equity it rides as context; may be null.
 - **`pack_hash`** — the 64-character fingerprint of the frozen evidence pack.
@@ -71,8 +79,31 @@ not police the note itself (registered as P-ANCHORLESS-9, pending the Atlas inte
    portfolio instruction is the ruled trigger that retires the frozen PowerShell stack (AB1). It must
    be reported to the owner and the architect when it happens.
 
+4. **Read beside the package, until §7's gaps close.** The envelope is not yet self-sufficient:
+   take the subject's identity from `verdict.json` → `subject`, the audit state from
+   `verdict.json` → `warnings` and `challenge`, and bound tags from `pack/pack.json`.
+
 ## 6. Versioning
 
 The envelope's shape is governed by `council/schemas/verdict_schema.json` in this repository and is
 validated twice at publish — once inside the verdict, once standalone. Changes to it are owner-ruled,
 never silent.
+
+## 7. Known gaps, registered — the integration charge's opening worklist
+
+Found while writing this contract from the code and recorded in the build log; none is hidden, and
+each is the first thing the Atlas integration charge should decide:
+
+1. **The standalone package names no security** (P-ANCHORLESS-7): no name, ticker, listing,
+   currency or run id — only `subject_kind` and `asset_class`. Identity lives on `verdict.json` →
+   `subject`; until the schema changes (owner-ruled), a consumer must read it there.
+2. **The package carries no audit state** (P-ANCHORLESS-8): the challenge outcome, the
+   endorsement ceiling, a degraded-audit cap and every warning — including the note that fires
+   when the published rating differs from the auditor's ceiling — are verdict-level fields only.
+   A consumer reading the package alone sees a bare rating.
+3. **Bound tags are not surfaced** (P-ANCHORLESS-10): a key number built on a declared stand-in is
+   a ceiling or a floor in the pack and an unqualified figure here (§2, "Bounds").
+4. **`for_atlas_note` is not policed at publish** (P-ANCHORLESS-9, §4): the owner's own words
+   travel verbatim; whether to machine-limit them is his ruling to make.
+5. **Schema laxity** (P-ANCHORLESS-2, extended): `asset_class`, `product` and `scenario_rating`
+   are declared but not required, while the publisher always emits them.

@@ -25,6 +25,23 @@ inputs (the cash rate and five-year realized volatility): without them
 no rating could ever be earned, and the sitting could only say hold -
 which is the failure this check exists to prevent.
 
+One floor can be answered by a STAND-IN rather than by the thing
+itself (owner ruling AB19): where a filer publishes no capital-spending
+line at all, the narrowest line that contains it may stand in its
+place. That licence is not free. The capture must declare it, strike
+the stand-in the same way in both years out of the SAME published line,
+tag each figure a ceiling, and tag the free cash flow built on it a
+floor - and this check refuses, at capture cost, when it does not.
+
+Owner ruling AB20 moved that declaration out of PROSE and into the
+capture's own shape: the figure carries a bound tag naming what it is
+and which published line it was struck from, rather than this gate
+hunting for particular words in a source sentence. Naming a line is a
+CLAIM about the filer's statements, not a reading of them - so the one
+condition a machine still cannot know is unchanged by the tag: whether
+the line chosen really is the NARROWEST one published stays with the
+sitting host, and nothing here checks it.
+
 CLI:
     python -m council.evidence.sufficiency <pack.json>
         [--floors <floors.json>] [--out <sufficiency-result.json>]
@@ -111,6 +128,325 @@ def _arithmetic_mismatch(entry, fact):
                        "named facts",
                        ", ".join(repr(item) for item in operands)))
     return None
+
+
+def _text_key(text):
+    """A declared gap's fact class, or a published line's name, as this
+    gate matches it. Case and runs of whitespace carry no meaning in
+    either, so a substitute is not waved through unchecked over a
+    capital letter, and two years are not called two lines over a
+    doubled space."""
+    return " ".join(str(text).split()).casefold()
+
+
+def _bound_tag(fact, kind):
+    """This fact's bound tag where it declares the named kind, or None.
+    A capture may tag any figure a bound; only the tags the ruled terms
+    ask about are read here."""
+    tag = (fact or {}).get("bound")
+    if isinstance(tag, dict) and tag.get("kind") == kind:
+        return tag
+    return None
+
+
+def _unsourced_leaf(fact_id, facts_by_id, seen=None):
+    """The first figure in this fact's derivation chain that rests on a
+    number written into the capture rather than on a reading taken off
+    a filing - as (the fact that does it, the operand's own label) - or
+    None where every branch bottoms out in an observed fact.
+
+    An operand may legally be an inline constant, and for an ordinary
+    derived figure that is fine. A stand-in for a line the filer never
+    published is the case where it is not: checking only the immediate
+    operands leaves the chain one step longer than the check, and the
+    figures it bottoms out in can still be invented (audit finding
+    r2-1). The chain may be as long as the filer's statements require;
+    what it may not do is end in nothing."""
+    if seen is None:
+        seen = set()
+    if fact_id in seen:
+        return None
+    seen.add(fact_id)
+    derived = (facts_by_id.get(fact_id) or {}).get("derived")
+    if not derived:
+        return None
+    for operand in derived.get("operands") or ():
+        reference = operand.get("fact_id")
+        if reference not in facts_by_id:
+            return (fact_id, operand.get("label") or "one of its operands")
+        deeper = _unsourced_leaf(reference, facts_by_id, seen)
+        if deeper is not None:
+            return deeper
+    return None
+
+
+def _substitute_failures(entry, facts_by_id, gap_kinds):
+    """Why this DECLARED capital-spending substitute breaks the owner's
+    terms - one refusal per broken term - or nothing where it holds.
+
+    Owner ruling AB19: a filer that publishes no capital-spending line
+    of its own no longer stops the council. The sitting stands the
+    narrowest line that CONTAINS the item in its place. But a
+    substitute the five advisors cannot see is worse than a refusal,
+    so the ruling binds four conditions on it, and three of them are
+    things this gate can know: the same line, named, struck the same
+    way in BOTH years; the figure tagged a ceiling; and any free cash
+    flow built on it tagged a floor.
+
+    The fourth - that the line chosen is the NARROWEST one the filer
+    publishes - is deliberately NOT checked. This gate cannot see the
+    filer's statements, so a proxy for it would give false assurance,
+    which is worse than no check at all; it stays the sitting host's
+    judgement under council/RUNBOOK.md section 1. The tag added by
+    ruling AB20 does not change that one inch: a fact naming the line
+    it was read from is making a CLAIM about the filer's statements,
+    and this gate can compare two such claims to each other but can
+    never check either against a filing.
+
+    None of it applies unless the capture DECLARES the substitution by
+    naming the ruled gap class as absent by design. A sitting on a
+    filer that reports capital spending normally never gets past the
+    arming statement below. The one thing judged UNDECLARED is the
+    mirror image: a figure tagged as standing in for an unpublished
+    line while no gap row says so. AB19 requires the gap row alongside,
+    and a stand-in nobody declared is the omission the ruling exists to
+    stop - so it refuses rather than passing in silence."""
+    terms = entry.get("substitute")
+    if not terms:
+        return []
+    # ANY row declaring the class absent by design arms this, so that
+    # appending a second row for the same class cannot switch the
+    # ruling off (audit finding r1-5).
+    wanted = _text_key(terms["armed_by_gap_class"])
+    armed = False
+    for fact_class, reasons in gap_kinds.items():
+        if _text_key(fact_class) == wanted:
+            armed = armed or "absent_by_design" in reasons
+
+    failures = []
+
+    def broken(what, because, where):
+        failures.append((what, "%s (%s)" % (because, terms["why"]), where))
+
+    ceiling_ids = (entry["id"], terms["paired_id"])
+
+    if not armed:
+        # A stand-in with no declaration behind it. The tag says this
+        # figure was struck from a wider line because the filer
+        # publishes none of its own - which is exactly the case AB19
+        # says must be declared in the gaps, so that the weakened test
+        # is named and reaches the seats. Passing it in silence would
+        # let a capture claim the licence and skip every term of it.
+        for fact_id in ceiling_ids:
+            tag = _bound_tag(facts_by_id.get(fact_id), "ceiling")
+            if tag is None or not tag.get("published_line"):
+                continue
+            broken("the undeclared stand-in on '%s'" % fact_id,
+                   "this figure is tagged as a ceiling struck from the "
+                   "published line %r, which says the filer publishes "
+                   "no line of its own for it - but the capture "
+                   "declares no such gap, so nothing tells the "
+                   "advisors that the cash test they are reading is a "
+                   "bound rather than a measurement"
+                   % tag.get("published_line"),
+                   "a gap row naming the fact class %r with "
+                   "reason_kind 'absent_by_design', saying which test "
+                   "is weakened and how"
+                   % terms["armed_by_gap_class"])
+        return failures
+
+    # AB19 condition 2: struck identically in both years. A capture
+    # that derives one year and observes the other, or strikes them by
+    # different arithmetic, is manufacturing growth rather than
+    # measuring it.
+    if terms["paired_id"] not in facts_by_id:
+        broken(terms["paired_id"],
+               "this capture stands a wider published line in place of "
+               "capital spending, but carries that stand-in for one "
+               "year only - the change between the two years would be "
+               "an artefact of the two figures being struck "
+               "differently, not something the business did",
+               "the same containing line in the comparative column of "
+               "the same filing, struck by the same arithmetic")
+    strikes = {}
+    for fact_id in ceiling_ids:
+        fact = facts_by_id.get(fact_id)
+        if fact is None:
+            continue
+        if fact.get("derived"):
+            strikes[fact_id] = fact["derived"]
+            # The whole chain, not just the first step: a stand-in must
+            # bottom out in readings taken off the filing (r1-1, r2-1).
+            unsourced = _unsourced_leaf(fact_id, facts_by_id)
+            if unsourced:
+                holder, label = unsourced
+                broken("the published line behind '%s'" % fact_id,
+                       "this figure stands in for capital spending, so "
+                       "it must be struck out of a line the filer "
+                       "actually published. Followed down, '%s' rests "
+                       "on %r - a number written into the capture, "
+                       "resting on no captured reading at all. The "
+                       "arithmetic would recompute exactly and still "
+                       "show nothing" % (holder, label),
+                       "capture the containing line itself as a fact, "
+                       "dated and sourced, and strike the figure from "
+                       "it")
+        else:
+            broken(fact_id,
+                   "this figure stands in for a capital-spending line "
+                   "the filer does not publish, so it must SHOW how it "
+                   "was struck out of the containing line - stated on "
+                   "its own it is asserted, and nothing here proves "
+                   "both years were struck the same way",
+                   "declare the arithmetic - the operation and the "
+                   "containing-line facts it runs over - so the gate "
+                   "recomputes it")
+    if len(strikes) == len(ceiling_ids):
+        this_year, last_year = (strikes[fact_id] for fact_id in ceiling_ids)
+        here = len(this_year.get("operands") or ())
+        there = len(last_year.get("operands") or ())
+        if this_year.get("operation") != last_year.get("operation"):
+            broken("the two capital-spending figures, struck two ways",
+                   "'%s' is struck by a %r and '%s' by a %r. The "
+                   "substitute must be struck IDENTICALLY in both "
+                   "years: two different operations measure two "
+                   "different things, and the growth between them "
+                   "would be manufactured"
+                   % (ceiling_ids[0], this_year.get("operation"),
+                      ceiling_ids[1], last_year.get("operation")),
+                   "the same containing line in both years, by the "
+                   "same arithmetic")
+        elif here != there:
+            broken("the two capital-spending figures, struck over "
+                   "different numbers of figures",
+                   "'%s' is struck out of %d figure(s) and '%s' out of "
+                   "%d. A strike over a different number of pieces is "
+                   "not the same strike, so the two years are not "
+                   "comparable"
+                   % (ceiling_ids[0], here, ceiling_ids[1], there),
+                   "the same containing line in both years, by the "
+                   "same arithmetic")
+
+    # AB19 condition 3 as AB20 reshapes it: the figure DECLARES itself
+    # a ceiling in the capture's own shape, and names the published
+    # line it was struck from. The tag is what the case file renders
+    # for every seat, so a substitute the advisors cannot see is a
+    # refusal here rather than a lie by omission at the sitting.
+    named_lines = {}
+    for fact_id in ceiling_ids:
+        fact = facts_by_id.get(fact_id)
+        if fact is None:
+            continue
+        tag = _bound_tag(fact, "ceiling")
+        if tag is None:
+            broken("the stand-in tag on '%s'" % fact_id,
+                   "this figure is the WHOLE of a wider line, so it can "
+                   "only overstate what the company spends and the cash "
+                   "test it feeds is harsher than the truth, never "
+                   "kinder - but the capture does not tag it a ceiling, "
+                   "so nothing the five advisors read says the figure "
+                   "is a bound at all",
+                   "a bound tag on the fact, kind 'ceiling', naming the "
+                   "published line the figure was struck from")
+            continue
+        if not tag.get("published_line"):
+            broken("the line named by the stand-in tag on '%s'" % fact_id,
+                   "this figure is tagged a ceiling but names no "
+                   "published line, so there is nothing to compare the "
+                   "two years against - the whole point of naming the "
+                   "line is that both years must come off the SAME one",
+                   "the bound tag's published_line - the line's name as "
+                   "the filer prints it")
+            continue
+        named_lines[fact_id] = tag["published_line"]
+
+    # AB19 condition 2, the half prose could never carry (registered
+    # finding P-AB19-1): matching operations over matching operand
+    # counts says the two strikes have the same SHAPE, never that they
+    # came off the same LINE. A capture could strike the prior year out
+    # of an unrelated line and show a year-on-year change that the
+    # business never had. Now that each year names its line, the two
+    # names must agree.
+    if len(named_lines) == len(ceiling_ids):
+        first, second = (named_lines[fact_id] for fact_id in ceiling_ids)
+        if _text_key(first) != _text_key(second):
+            broken("the two capital-spending figures, struck off two "
+                   "different published lines",
+                   "'%s' is struck from %r and '%s' from %r. The "
+                   "substitute must come off the SAME line in both "
+                   "years: two different lines hold two different sets "
+                   "of items, so the change between them is an artefact "
+                   "of the choice of line and not something the "
+                   "business did"
+                   % (ceiling_ids[0], first, ceiling_ids[1], second),
+                   "the same containing line in the comparative column "
+                   "of the same filing, named identically in both bound "
+                   "tags")
+
+    # AB19 condition 4: free cash flow BUILT ON a ceiling is a FLOOR,
+    # and says so where it will be read. Both halves are checked - the
+    # label alone, whether a word in a sentence or a tag in the file,
+    # would let an ordinary cash flow wear it (audit finding r1-3).
+    # Only the figures named here are judged: a rule reaching every
+    # figure that rests on a ceiling refuses the ruling's own worked
+    # example, whose year-on-year CHANGE rests on both and is neither
+    # a floor nor a ceiling.
+    #
+    # Owner ruling AB22 (registered finding P-AB19-2): these figures
+    # must be PRESENT, both years. Judging them only where the capture
+    # happened to carry them left the caveat one silent step from
+    # vanishing - leave the cash flow out and the council answers the
+    # cash question off some other line, with nothing anywhere on the
+    # page saying the answer rests on a bound. The capturing session
+    # already holds the numbers, so this costs it nothing but the
+    # writing down.
+    for fact_id, ceiling_id in terms["floors_built_on"].items():
+        fact = facts_by_id.get(fact_id)
+        if fact is None:
+            broken(fact_id,
+                   "the figure standing in for capital spending is "
+                   "'%s', which can only be too high, so the cash flow "
+                   "struck against it is a bound and not a "
+                   "measurement. This capture does not carry that cash "
+                   "flow at all, so the council would answer the cash "
+                   "question with nothing on the page telling the five "
+                   "advisors they are reading a bound" % ceiling_id,
+                   "the same filing the containing line was read from: "
+                   "strike this cash flow by subtracting '%s' from the "
+                   "period's operating cash flow, and tag it a floor"
+                   % ceiling_id)
+            continue
+        derived = fact.get("derived") or {}
+        names = [item.get("fact_id")
+                 for item in derived.get("operands") or ()]
+        # CONTAINING the ceiling is not RESTING on it. A figure that is
+        # too high only makes the result too low when it is taken away:
+        # added, or subtracted the other way round, the result is a
+        # ceiling wearing the word floor - the opposite of what the
+        # seats would read (audit finding r4-2).
+        if derived.get("operation") != "subtract" or (
+                ceiling_id not in names[1:]):
+            broken("'%s', which is published as a floor but does not "
+                   "rest on the ceiling" % fact_id,
+                   "the figure standing in for capital spending is "
+                   "'%s', and this cash flow is a bound only if that "
+                   "figure is SUBTRACTED from the cash the business "
+                   "generated. Here it is not, so the arithmetic does "
+                   "not support the word the advisors would read"
+                   % ceiling_id,
+                   "strike this cash flow by subtracting '%s' from the "
+                   "period's operating cash flow, or drop the floor "
+                   "language from its source" % ceiling_id)
+            continue
+        if _bound_tag(fact, "floor") is None:
+            broken("the bound tag on '%s'" % fact_id,
+                   "this cash flow is struck against a capital-spending "
+                   "figure that can only be too high, so the cash flow "
+                   "itself can only be too low - a floor, not a "
+                   "measurement - but the capture does not tag it one, "
+                   "so the advisors would read a bound as a fact",
+                   "a bound tag on the fact, kind 'floor'")
+    return failures
 
 
 def _as_of_moment(text):
@@ -226,8 +562,18 @@ def check(pack, floors):
     # A declared gap lifts a conditional floor only when the capture
     # says the fact class is absent BY DESIGN - any other reason is a
     # gathering failure, not an unavailability (audit finding r1-6).
-    gap_kinds = {gap["fact_class"]: gap.get("reason_kind")
-                 for gap in capture["gaps"]}
+    #
+    # EVERY row for a class is kept, not just the last one. Nothing
+    # stops a capture naming one class twice, and reading only the last
+    # row let an appended row silently reverse the first: it could lift
+    # a floor whose real reason was a gathering failure, and it could
+    # switch the AB19 substitute check off altogether (audit finding
+    # AB19 r1-5). Each reader below takes the safer direction over the
+    # whole list.
+    gap_kinds = {}
+    for gap in capture["gaps"]:
+        gap_kinds.setdefault(gap["fact_class"], []).append(
+            gap.get("reason_kind"))
     freshness = pack.get("freshness", {})
     facts_by_id = {fact["id"]: fact for fact in capture["tier1"]}
 
@@ -299,8 +645,13 @@ def check(pack, floors):
         if level == "advisory":
             advisory_missing.append(what + " (not captured)")
             return
-        if level == "conditional" and gap_kinds.get(
-                lift_key) == "absent_by_design":
+        # A floor is lifted only where EVERY row declared for the class
+        # says absent-by-design: one row calling it a gathering failure
+        # is enough to keep the floor standing.
+        declared = gap_kinds.get(lift_key) or ()
+        if (level == "conditional" and declared
+                and all(reason == "absent_by_design"
+                        for reason in declared)):
             lifted_by_declared_gap.append(lift_key)
             return
         why = entry["why"]
@@ -332,6 +683,14 @@ def check(pack, floors):
                     if reason:
                         refuse(fact_id, reason + " (%s)" % entry["why"],
                                entry["likely_source"])
+                # Owner ruling AB19: where the capture DECLARES that the
+                # filer publishes no line of its own for this fact, the
+                # figure standing in its place carries the ruling's own
+                # terms. Undeclared, this is a no-op and an ordinary
+                # sitting sees no change at all.
+                for what, why, where in _substitute_failures(
+                        entry, facts_by_id, gap_kinds):
+                    refuse(what, why, where)
                 if not fresh(fact_id):
                     enforce_stale(entry, fact_id, stale_words(fact_id))
                 else:

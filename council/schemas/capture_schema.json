@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Evidence capture contract 1.2.0 - what the evidence session hands the gate",
-  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only.",
+  "title": "Evidence capture contract 1.3.0 - what the evidence session hands the gate",
+  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 adds the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. Nothing else changed, and an ordinary capture carries no such tag.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
   ],
   "properties": {
     "capture_version": {
-      "const": "1.2.0"
+      "const": "1.3.0"
     },
     "subject": {
       "type": "object",
@@ -372,6 +372,32 @@
                     }
                   }
                 }
+              }
+            }
+          },
+          "bound": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "published_line"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "ceiling",
+                  "floor"
+                ]
+              },
+              "published_line": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
               }
             }
           }

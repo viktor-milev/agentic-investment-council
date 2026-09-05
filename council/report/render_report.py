@@ -1232,6 +1232,44 @@ def _member_fact_cell(facts_by_id, concept, ticker):
     return cell + ((" " + esc(unit)) if unit else "")
 
 
+def _bound_words(tag):
+    """A figure declared a BOUND rather than a measurement, in the same
+    sentence the seat case files carry (council/engine/briefs.py
+    _bound_note) - the page and the briefs say one thing, and the
+    report suite proves the two strings equal.
+
+    Owner ruling AB20 moved this declaration out of the fact's source
+    sentence and into the capture's own shape, so every place that used
+    to read it out of the prose renders it from the tag instead. This
+    page is one of them: without it the owner would read a bound as a
+    measurement.
+
+    The sentence does NOT say the line named is the narrowest one the
+    filer publishes. Nothing here can know that."""
+    if not isinstance(tag, dict):
+        return None
+    named = bool(tag.get("published_line"))
+    if tag.get("kind") == "ceiling":
+        words = ("declared a CEILING: this figure can only overstate "
+                 "what it stands for, never understate it, so any test "
+                 "it feeds is harsher than the truth and never kinder")
+        if named:
+            words += (" - it is the whole of one published line, which "
+                      "contains the item this fact stands in for "
+                      "because the filer reports no line of its own for "
+                      "it; the capture names that line below, as data")
+        return words
+    if tag.get("kind") == "floor":
+        words = ("declared a FLOOR: this figure can only understate "
+                 "what it stands for, never overstate it - the true "
+                 "figure can only be higher")
+        if named:
+            words += (" - struck against the published line the capture "
+                      "names below, as data")
+        return words
+    return None
+
+
 def _proportions_card(page, proportions):
     """The thesis proportions under their ruled label - the same
     sentence the seat briefs carry, verbatim."""
@@ -1580,6 +1618,15 @@ def _evidence_section(page, run):
             status = status.get("status")
         word = FRESHNESS_WORD.get(status, status or "not stated")
         source_html = esc(fact.get("source", ""))
+        bound = _bound_words(fact.get("bound"))
+        if bound:
+            source_html += "<br>%s" % esc(bound)
+            tag = fact.get("bound") or {}
+            if tag.get("published_line"):
+                source_html += ("<br>The published line, as the capture "
+                                "names it: %s"
+                                % esc(" ".join(
+                                    str(tag["published_line"]).split())))
         note = notes.get(fact_id)
         if note:
             source_html += "<br>Arithmetic: %s" % esc(note)

@@ -57,7 +57,7 @@ def gate_check(capture):
 def minimal_capture():
     """The smallest contract-valid single-name capture; gate-clean."""
     return {
-        "capture_version": "1.2.0",
+        "capture_version": "1.3.0",
         "subject": {"kind": "single_stock",
                     "asset_class": "equity",
                     "name": "Example Manufacturing Co",
@@ -210,6 +210,49 @@ class TestGateShape(GateTest):
         capture = minimal_capture()
         capture["extra_field"] = "not in the contract"
         self.assert_refused(capture, "extra_field")
+
+
+class TestGateBoundTag(GateTest):
+    """The 1.3.0 contract's one new field (owner ruling AB20): a figure
+    may declare itself a bound rather than a measurement, and a
+    stand-in names the published line it was struck from."""
+
+    def tagged(self, tag):
+        capture = minimal_capture()
+        capture["tier1"][0]["bound"] = tag
+        return capture
+
+    def test_a_well_formed_bound_tag_is_accepted(self):
+        for tag in ({"kind": "ceiling", "published_line": "Other "
+                     "investing activities, net"},
+                    {"kind": "floor", "published_line": None},
+                    None):
+            result = gate_check(self.tagged(tag))
+            self.assertEqual(result["result"], "accepted", result["reasons"])
+
+    def test_a_bound_of_an_unruled_kind_is_refused(self):
+        self.assert_refused(self.tagged(
+            {"kind": "estimate", "published_line": None}), "kind")
+
+    def test_a_bound_tag_missing_its_published_line_is_refused(self):
+        """Stated or stated as absent - never simply left out, so that
+        a stand-in cannot lose its line to a typo."""
+        self.assert_refused(self.tagged({"kind": "ceiling"}),
+                            "published_line")
+
+    def test_a_blank_published_line_is_refused(self):
+        self.assert_refused(
+            self.tagged({"kind": "ceiling", "published_line": "   "}),
+            "published_line")
+
+    def test_a_line_break_in_the_published_line_is_refused(self):
+        """The round-11 rule, extended to the new field: it renders
+        into every seat's case file, so it is one line or it is
+        refused."""
+        self.assert_refused(
+            self.tagged({"kind": "ceiling",
+                         "published_line": "Other investing\nactivities"}),
+            "line break")
 
 
 class TestGateIds(GateTest):
@@ -2178,6 +2221,689 @@ class TestADifferenceIsBoundToItsOwnOperands(unittest.TestCase):
             freeze.build_pack(copy.deepcopy(load_fixture("gold-pass.json"))),
             FLOORS)
         self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+
+
+# ---- owner rulings AB19 and AB20: the capital-spending substitute ----
+#
+# Where a filer publishes no capital-spending line of its own, the
+# sitting substitutes the narrowest line that CONTAINS it. Three of the
+# ruling's four conditions can be checked by a machine and are checked
+# below; the fourth - that the line chosen is the NARROWEST one the
+# filer publishes - cannot be, because this gate cannot see the filer's
+# statements, and it stays the sitting host's judgement under
+# council/RUNBOOK.md section 1. Ruling AB20 does not change that: a tag
+# naming a line is a CLAIM about the filer's statements, never a check
+# of one.
+#
+# AB20 moved the declaration out of the source PROSE and into the
+# capture's own shape - each figure carries a bound tag saying what it
+# is and, for a stand-in, which published line it was struck from. The
+# tests that used to mangle a source sentence now remove or contradict
+# a tag, which is the same condition asked in the shape the owner
+# ruled.
+
+# The gap class whose declaration ARMS the conditions, written here as
+# a literal so that disarming the check by editing floors.json fails
+# these tests instead of passing quietly.
+SUBSTITUTE_GAP = "a separately reported capital-expenditure line"
+
+# The published line both years are struck from. Naming it is what
+# makes the two years comparable at all (registered finding P-AB19-1).
+PUBLISHED_LINE = "Other investing activities, net"
+
+CEILING_LABEL = (
+    "INVENTED FIXTURE - a deterministic transform inside the pack; it "
+    "is the WHOLE of the containing line, which holds capital spending "
+    "among other items, so it can only overstate what this company "
+    "spends, never understate it")
+FLOOR_LABEL = (
+    "INVENTED FIXTURE - the capital-spending operand is a ceiling, so "
+    "this free cash flow is a FLOOR: the true figure can only be higher")
+
+LIVE_RUNS = os.path.join(ROOT, "council", "runs")
+
+
+def fact_in(capture, fact_id):
+    for fact in capture["tier1"]:
+        if fact["id"] == fact_id:
+            return fact
+    raise KeyError(fact_id)
+
+
+def drop_fact(capture, fact_id):
+    capture["tier1"] = [fact for fact in capture["tier1"]
+                        if fact["id"] != fact_id]
+
+
+def containing_line(capture, fact_id, value):
+    """An invented whole-containing-line reading, dated and ruled like
+    the capital-spending figure it feeds."""
+    capture["tier1"].append({
+        "id": fact_id, "value": value, "unit": "USD_m",
+        "as_of": "2026-07-15",
+        "source": ("INVENTED FIXTURE - the whole 'other investing "
+                   "activities, net' line of Example Manufacturing's "
+                   "cumulative cash-flow statement"),
+        "freshness_rule_days": 120, "derived": None})
+
+
+def without_cash_flow(capture, *fact_ids):
+    """The capture as a session that simply left the free-cash-flow
+    figures out - the shape owner ruling AB22 is about. Whatever rested
+    on a dropped figure goes with it, and the cash question is
+    repointed at the operating line that remains, so the capture still
+    reaches the sufficiency check whole and the refusal under test is
+    the substitute's own, never a dangling reference's."""
+    gone = set(fact_ids)
+    if "free_cash_flow_q" in gone:
+        gone.add("fcf_yield_ratio")
+    for fact_id in gone:
+        drop_fact(capture, fact_id)
+    for requirement in capture["sufficiency"]["requirements"]:
+        if requirement["id"] == "free_cash_flow":
+            requirement["answered_by"] = ["operating_cash_flow_q",
+                                          "operating_cash_flow_prior_year_q"]
+        else:
+            requirement["answered_by"] = [item for item
+                                          in requirement["answered_by"]
+                                          if item not in gone]
+    return capture
+
+
+def struck(operation, operands):
+    return {"operation": operation,
+            "operands": [{"label": "INVENTED FIXTURE - operand",
+                          "value": value, "fact_id": fact_id}
+                         for fact_id, value in operands]}
+
+
+def substitute_capture(declare_gap=True):
+    """exmp-pass rebuilt as a filer that reports no capital-spending
+    line: both years struck identically out of the whole containing
+    line, both labelled as ceilings, both free-cash-flow figures
+    published as floors. The AB19 worked example, in invented numbers.
+    """
+    capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+    containing_line(capture, "containing_line_6m", "500.0")
+    containing_line(capture, "containing_line_3m_q1", "265.5")
+    containing_line(capture, "containing_line_6m_prior_year", "480.0")
+    containing_line(capture, "containing_line_3m_q1_prior_year", "259.75")
+    ceiling = fact_in(capture, "capital_expenditure_q")
+    ceiling["source"] = CEILING_LABEL
+    ceiling["bound"] = {"kind": "ceiling", "published_line": PUBLISHED_LINE}
+    ceiling["derived"] = struck(
+        "subtract", [("containing_line_6m", "500.0"),
+                     ("containing_line_3m_q1", "265.5")])
+    prior = fact_in(capture, "capital_expenditure_prior_year_q")
+    prior["source"] = CEILING_LABEL
+    prior["bound"] = {"kind": "ceiling", "published_line": PUBLISHED_LINE}
+    prior["derived"] = struck(
+        "subtract", [("containing_line_6m_prior_year", "480.0"),
+                     ("containing_line_3m_q1_prior_year", "259.75")])
+    for fcf in ("free_cash_flow_q", "free_cash_flow_prior_year_q"):
+        fact_in(capture, fcf)["source"] = FLOOR_LABEL
+        fact_in(capture, fcf)["bound"] = {"kind": "floor",
+                                          "published_line": None}
+    if declare_gap:
+        capture["gaps"].append({
+            "fact_class": SUBSTITUTE_GAP,
+            "reason": ("INVENTED FIXTURE - this filer folds capital "
+                       "spending into a wider investing line and "
+                       "publishes no line of its own"),
+            "reason_kind": "absent_by_design",
+            "weakened_test": ("the free-cash-flow test, answered as a "
+                              "bound rather than as a measurement")})
+    return capture
+
+
+class TestCapexSubstitute(unittest.TestCase):
+    def outcome(self, capture):
+        """Gate, freeze, then judge - a capture the gate would have
+        thrown out proves nothing about the sufficiency check."""
+        gated = gate_check(capture)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        return sufficiency.check(freeze.build_pack(capture), FLOORS)
+
+    def refuse_naming(self, capture, *needles):
+        outcome = self.outcome(capture)
+        self.assertEqual(outcome["result"], "refuse", outcome["message"])
+        blob = "\n".join("%s %s" % (item["what"], item["why_needed"])
+                         for item in outcome["missing"])
+        for needle in needles:
+            self.assertIn(needle, blob)
+        return outcome
+
+    def test_the_declared_substitute_done_right_passes(self):
+        outcome = self.outcome(substitute_capture())
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_declared_substitute_that_shows_no_arithmetic_refuses(self):
+        """(1) The gap is declared and nothing else changes: the figure
+        is still a plain observed reading, so nothing shows that the
+        same line was struck the same way in both years."""
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        capture["gaps"].append({
+            "fact_class": SUBSTITUTE_GAP,
+            "reason": "INVENTED FIXTURE - no capital-spending line",
+            "reason_kind": "absent_by_design",
+            "weakened_test": "the free-cash-flow test"})
+        self.refuse_naming(capture, "capital_expenditure_q")
+
+    def test_a_substitute_struck_for_one_year_only_refuses(self):
+        """(2a) The current year is derived, the prior year observed:
+        the difference between them is manufactured, not measured."""
+        capture = substitute_capture()
+        fact_in(capture,
+                "capital_expenditure_prior_year_q")["derived"] = None
+        self.refuse_naming(capture, "capital_expenditure_prior_year_q")
+
+    def test_a_substitute_struck_by_two_operations_refuses(self):
+        """(2b) Both years derived, but by different arithmetic."""
+        capture = substitute_capture()
+        containing_line(capture, "containing_line_part_a", "100.0")
+        containing_line(capture, "containing_line_part_b", "120.25")
+        fact_in(capture, "capital_expenditure_prior_year_q")["derived"] = (
+            struck("add", [("containing_line_part_a", "100.0"),
+                           ("containing_line_part_b", "120.25")]))
+        self.refuse_naming(capture, "'subtract'", "'add'")
+
+    def test_a_substitute_struck_over_more_operands_refuses(self):
+        """(2c) Same operation, more pieces: a three-part strike beside
+        a two-part one is not the same strike."""
+        capture = substitute_capture()
+        containing_line(capture, "containing_line_part_a", "100.0")
+        containing_line(capture, "containing_line_part_b", "60.0")
+        containing_line(capture, "containing_line_part_c", "60.25")
+        fact_in(capture, "capital_expenditure_prior_year_q")["derived"] = (
+            struck("sum", [("containing_line_part_a", "100.0"),
+                           ("containing_line_part_b", "60.0"),
+                           ("containing_line_part_c", "60.25")]))
+        self.refuse_naming(capture, "capital_expenditure_prior_year_q")
+
+    def test_a_substitute_not_tagged_a_ceiling_refuses(self):
+        """(3), in AB20's shape. Struck correctly in both years, but
+        nothing in the file says the figure is a bound at all.
+
+        MIGRATED from the prose form: before AB20 this test rewrote the
+        fact's source sentence to drop the ruled words. The condition
+        asked is identical - the seats must be told the figure is a
+        ceiling - and only where the capture says it has moved."""
+        capture = substitute_capture()
+        del fact_in(capture, "capital_expenditure_q")["bound"]
+        self.refuse_naming(capture, "capital_expenditure_q",
+                           "does not tag it a ceiling")
+
+    def test_a_substitute_whose_prior_year_is_untagged_refuses(self):
+        """(3) The prior-year figure is a substitute too, and carries
+        the same duty to say so."""
+        capture = substitute_capture()
+        fact_in(capture, "capital_expenditure_prior_year_q")["bound"] = None
+        self.refuse_naming(capture, "capital_expenditure_prior_year_q")
+
+    def test_a_substitute_tagged_a_ceiling_naming_no_line_refuses(self):
+        """(3) A tag that names no published line leaves the two years
+        with nothing to be compared against - the hole AB20 exists to
+        close, reopened by an empty tag."""
+        capture = substitute_capture()
+        fact_in(capture, "capital_expenditure_q")["bound"] = {
+            "kind": "ceiling", "published_line": None}
+        self.refuse_naming(capture, "capital_expenditure_q",
+                           "names no published line")
+
+    def test_free_cash_flow_not_tagged_a_floor_refuses(self):
+        """(4) Cash flow built on a ceiling can only be too low. A
+        capture that does not say so hands the seats a bound dressed
+        as a measurement. MIGRATED from the prose form."""
+        capture = substitute_capture()
+        del fact_in(capture, "free_cash_flow_q")["bound"]
+        self.refuse_naming(capture, "free_cash_flow_q",
+                           "does not tag it one")
+
+    def test_the_prior_year_free_cash_flow_carries_the_same_duty(self):
+        """(4) Both years, or the growth read is the one that lies."""
+        capture = substitute_capture()
+        fact_in(capture, "free_cash_flow_prior_year_q")["bound"] = None
+        self.refuse_naming(capture, "free_cash_flow_prior_year_q")
+
+    # ---- registered finding P-AB19-1, the point of this unit --------
+
+    def test_two_ceilings_off_different_published_lines_refuse(self):
+        """P-AB19-1. Both years struck by the same operation over the
+        same number of operands, both tagged ceilings - and off two
+        unrelated lines. The shape matched; the LINE did not, and the
+        year-on-year change was manufactured. Prose could never catch
+        this, and it is what the owner granted the schema version for.
+        """
+        capture = substitute_capture()
+        fact_in(capture, "capital_expenditure_prior_year_q")["bound"] = {
+            "kind": "ceiling",
+            "published_line": "Purchases of investments, net"}
+        self.refuse_naming(capture, "capital_expenditure_prior_year_q",
+                           "Other investing activities, net",
+                           "Purchases of investments, net")
+
+    def test_the_same_line_written_two_ways_is_still_one_line(self):
+        """Case and runs of whitespace carry no meaning in a line's
+        name, so a capitalised or double-spaced copy is the same line -
+        a refusal there would be the machine policing typography."""
+        capture = substitute_capture()
+        fact_in(capture, "capital_expenditure_prior_year_q")["bound"] = {
+            "kind": "ceiling",
+            "published_line": "  OTHER  investing   activities, net "}
+        outcome = self.outcome(capture)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+
+    # ---- registered finding P-AB19-2, the point of this unit --------
+
+    def test_a_declared_substitute_carrying_no_cash_flow_refuses(self):
+        """P-AB19-2, closed by owner ruling AB22. Every term above is
+        met - the same line, named, struck the same way in both years,
+        both figures tagged ceilings - and the free-cash-flow figures
+        built on that ceiling are simply not in the capture. The cash
+        question is answered off the operating line instead, so the
+        council sits on a cash read with no 'this is a bound' caveat
+        anywhere on the page. That was the last silent path by which
+        the caveat could vanish, and it now costs a capture."""
+        capture = without_cash_flow(substitute_capture(),
+                                    "free_cash_flow_q",
+                                    "free_cash_flow_prior_year_q")
+        self.refuse_naming(capture, "free_cash_flow_q",
+                           "free_cash_flow_prior_year_q")
+
+    def test_a_declared_substitute_missing_this_years_cash_flow_refuses(self):
+        """AB22 binds BOTH years: one of the pair is enough to refuse,
+        and the refusal names the year that is missing."""
+        capture = without_cash_flow(substitute_capture(),
+                                    "free_cash_flow_q")
+        outcome = self.refuse_naming(capture, "free_cash_flow_q")
+        self.assertNotIn("free_cash_flow_prior_year_q",
+                         [item["what"] for item in outcome["missing"]])
+
+    def test_a_declared_substitute_missing_last_years_cash_flow_refuses(self):
+        """The other year. Without it the growth read is struck against
+        a bound one side and nothing the other."""
+        capture = without_cash_flow(substitute_capture(),
+                                    "free_cash_flow_prior_year_q")
+        outcome = self.refuse_naming(capture, "free_cash_flow_prior_year_q")
+        self.assertNotIn("free_cash_flow_q",
+                         [item["what"] for item in outcome["missing"]])
+
+    def test_the_absent_cash_flow_refusal_is_a_shopping_list(self):
+        """A refusal costs a capture, so it must say what to go and
+        get. The missing fact is named, the reason says why the council
+        cannot sit without it, and the third field says where to strike
+        it - naming the ceiling it must be struck against, which the
+        floors data supplies and this test does not."""
+        capture = without_cash_flow(substitute_capture(),
+                                    "free_cash_flow_q",
+                                    "free_cash_flow_prior_year_q")
+        outcome = self.outcome(capture)
+        self.assertEqual(outcome["result"], "refuse", outcome["message"])
+        wanted = {"free_cash_flow_q": "capital_expenditure_q",
+                  "free_cash_flow_prior_year_q":
+                      "capital_expenditure_prior_year_q"}
+        listed = {item["what"]: item for item in outcome["missing"]}
+        for fact_id, ceiling_id in wanted.items():
+            self.assertIn(fact_id, listed)
+            item = listed[fact_id]
+            self.assertTrue(item["why_needed"].strip(), fact_id)
+            self.assertIn("bound", item["why_needed"])
+            self.assertIn(ceiling_id, item["where_it_likely_lives"])
+
+    # ---- audit round 1 ----------------------------------------------
+
+    def test_a_ceiling_struck_from_typed_in_numbers_refuses(self):
+        """r1-1. A figure may declare its arithmetic over numbers typed
+        straight into the capture, with no captured line behind them.
+        The arithmetic then recomputes perfectly and proves nothing: a
+        seat would read a ceiling that was never read off a filing."""
+        capture = substitute_capture()
+        for fact_id in ("capital_expenditure_q",
+                        "capital_expenditure_prior_year_q"):
+            for operand in fact_in(capture, fact_id)["derived"]["operands"]:
+                operand.pop("fact_id", None)
+        self.refuse_naming(capture, "capital_expenditure_q")
+
+    def test_a_ceiling_whose_containing_line_is_invented_refuses(self):
+        """r2-1, a bypass of the round-1 repair. Naming a captured
+        fact is not enough if THAT fact rests on typed-in numbers: the
+        chain bottoms out in nothing, and the ceiling is invented one
+        step further down."""
+        capture = substitute_capture()
+        fact_in(capture, "containing_line_6m")["derived"] = {
+            "operation": "subtract",
+            "operands": [{"label": "INVENTED FIXTURE - typed in",
+                          "value": "600.0"},
+                         {"label": "INVENTED FIXTURE - typed in",
+                          "value": "100.0"}]}
+        self.refuse_naming(capture, "containing_line_6m")
+
+    def test_a_ceiling_struck_from_a_derived_but_sourced_line_passes(self):
+        """The chain may be more than one step long. What it may not do
+        is bottom out in a number nobody read off a filing."""
+        capture = substitute_capture()
+        containing_line(capture, "containing_line_9m", "760.0")
+        containing_line(capture, "containing_line_3m_q3", "260.0")
+        fact_in(capture, "containing_line_6m")["derived"] = struck(
+            "subtract", [("containing_line_9m", "760.0"),
+                         ("containing_line_3m_q3", "260.0")])
+        outcome = self.outcome(capture)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_floor_label_on_cash_flow_struck_elsewhere_refuses(self):
+        """r1-3. The ruling binds free cash flow BUILT ON the ceiling.
+        Reading the label without checking what the figure rests on
+        lets an ordinary cash flow wear the word 'floor'."""
+        capture = substitute_capture()
+        containing_line(capture, "unrelated_outflow", "234.5")
+        fact_in(capture, "free_cash_flow_q")["derived"] = struck(
+            "subtract", [("operating_cash_flow_q", "1234.5"),
+                         ("unrelated_outflow", "234.5")])
+        self.refuse_naming(capture, "free_cash_flow_q",
+                           "capital_expenditure_q")
+
+    def test_a_floor_that_adds_the_ceiling_instead_of_subtracting_refuses(
+            self):
+        """r4-2. Containing the ceiling is not resting on it. Adding a
+        figure that is too high makes the result too high as well - a
+        ceiling wearing the word floor, which is the opposite of what
+        the seats would read."""
+        capture = substitute_capture()
+        fact = fact_in(capture, "free_cash_flow_prior_year_q")
+        fact["derived"] = struck(
+            "add", [("operating_cash_flow_prior_year_q", "1100.25"),
+                    ("capital_expenditure_prior_year_q", "220.25")])
+        fact["value"] = "1320.5"
+        self.refuse_naming(capture, "free_cash_flow_prior_year_q")
+
+    def test_a_floor_that_subtracts_the_wrong_way_round_refuses(self):
+        """r4-2, the other shape: the right operation with the ceiling
+        as the figure being subtracted FROM."""
+        capture = substitute_capture()
+        fact = fact_in(capture, "free_cash_flow_prior_year_q")
+        fact["derived"] = struck(
+            "subtract", [("capital_expenditure_prior_year_q", "220.25"),
+                         ("operating_cash_flow_prior_year_q", "1100.25")])
+        fact["value"] = "-880.0"
+        self.refuse_naming(capture, "free_cash_flow_prior_year_q")
+
+    def test_a_floor_label_on_a_plain_reading_refuses(self):
+        """r1-3, the blunter shape: the figure is not struck against
+        anything at all, and still says it is a floor."""
+        capture = substitute_capture()
+        fact_in(capture, "free_cash_flow_q")["derived"] = None
+        self.refuse_naming(capture, "free_cash_flow_q")
+
+    def test_a_second_gap_row_cannot_disarm_the_substitute(self):
+        """r1-5. Two gap rows naming the same class used to leave only
+        the last one standing, so appending a row switched the whole
+        ruling off in silence."""
+        capture = substitute_capture()
+        fact_in(capture, "capital_expenditure_q")["derived"] = None
+        capture["gaps"].append({
+            "fact_class": SUBSTITUTE_GAP,
+            "reason": "INVENTED FIXTURE - a second row on the same class",
+            "reason_kind": "other",
+            "weakened_test": "none"})
+        self.refuse_naming(capture, "capital_expenditure_q")
+
+class TestOrdinaryFilerUnaffected(unittest.TestCase):
+    """The anti-over-tightening half. A sitting on a filer that reports
+    capital spending normally must see no change whatsoever, and the
+    required floor must still refuse when the figure is simply absent -
+    AB19 licenses a labelled substitute, never a silent omission."""
+
+    def test_an_undeclared_substitute_shape_is_not_policed(self):
+        """A filer may derive its quarterly capital spending out of two
+        cumulative statements without substituting anything - Apple's
+        shape. Absent the declaration AND the tag, nothing applies."""
+        capture = substitute_capture(declare_gap=False)
+        for fact_id in ("capital_expenditure_q",
+                        "capital_expenditure_prior_year_q",
+                        "free_cash_flow_q", "free_cash_flow_prior_year_q"):
+            fact_in(capture, fact_id).pop("bound", None)
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_stand_in_tag_with_no_declared_gap_refuses(self):
+        """A tag nobody declared. The figure says it was struck from a
+        wider line because the filer publishes none of its own - which
+        is precisely the case AB19 orders declared in the gaps, so that
+        the weakened test is named and travels to the seats. Silence
+        here would let a capture take the licence and skip every term
+        of it, so it refuses instead."""
+        capture = substitute_capture(declare_gap=False)
+        self.assertEqual(gate_check(capture)["result"], "accepted")
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "refuse", outcome["message"])
+        blob = "\n".join(
+            "%s %s %s" % (item["what"], item["why_needed"],
+                          item["where_it_likely_lives"])
+            for item in outcome["missing"])
+        self.assertIn("undeclared stand-in", blob)
+        self.assertIn(SUBSTITUTE_GAP, blob)
+
+    def test_a_bound_tag_on_any_other_figure_is_not_policed(self):
+        """The tag is a truthful self-label any figure may carry - an
+        estimate given as a bound, say. Only the capital-spending terms
+        the owner ruled are enforced, and only where the gap declares
+        them; policing every tagged figure would be inventing rules he
+        has not made."""
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        fact_in(capture, "operating_cash_flow_q")["bound"] = {
+            "kind": "floor", "published_line": None}
+        self.assertEqual(gate_check(capture)["result"], "accepted")
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_bare_ceiling_tag_on_capital_spending_is_not_a_stand_in(self):
+        """The boundary of the new refusal, pinned. What must be
+        declared in the gaps is a figure standing in for a line the
+        filer does not publish - and that claim is the NAMED line. A
+        bare ceiling tag says only that the figure can be too high,
+        which is a truthful self-label a filer may honestly carry, so
+        it passes and the seats simply read it."""
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        fact_in(capture, "capital_expenditure_q")["bound"] = {
+            "kind": "ceiling", "published_line": None}
+        self.assertEqual(gate_check(capture)["result"], "accepted")
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_ceiling_tag_on_a_figure_the_ruling_does_not_name_passes(self):
+        """The same, in the sharper form: a full stand-in tag naming a
+        published line, on a fact the substitute terms say nothing
+        about. AB19 is about capital spending and nothing else."""
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        fact_in(capture, "operating_cash_flow_q")["bound"] = {
+            "kind": "ceiling", "published_line": PUBLISHED_LINE}
+        self.assertEqual(gate_check(capture)["result"], "accepted")
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_an_ordinary_capture_still_passes_with_an_observed_figure(self):
+        outcome = sufficiency.check(pack_for("exmp-pass.json"), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+        self.assertIn("capital_expenditure_q",
+                      outcome["floors"]["satisfied"])
+
+    def test_an_ordinary_filer_may_leave_the_cash_flow_out(self):
+        """AB22's boundary, pinned. The new requirement is armed by the
+        declaration and by nothing else: a filer that publishes capital
+        spending as a line of its own substitutes nothing, so the
+        council never reads a bound, and whether it carries a
+        free-cash-flow figure is the ordinary sufficiency question it
+        always was - not this ruling's business. Over-tightening here
+        would refuse sittings the owner never ruled against."""
+        capture = without_cash_flow(
+            copy.deepcopy(load_fixture("exmp-pass.json")),
+            "free_cash_flow_q", "free_cash_flow_prior_year_q")
+        gated = gate_check(capture)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+
+    def test_a_second_gap_row_cannot_lift_a_conditional_floor(self):
+        """r1-5, the half that predates this unit: the same last-row-
+        wins reading let an appended row LIFT a floor whose declared
+        reason was a gathering failure. Ruling r1-6 says only
+        absent-by-design lifts anything."""
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        capture["gaps"][0]["reason_kind"] = "other"
+        duplicate = copy.deepcopy(capture["gaps"][0])
+        duplicate["reason_kind"] = "absent_by_design"
+        capture["gaps"].append(duplicate)
+        gated = gate_check(capture)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "refuse", outcome["message"])
+        self.assertIn("short_interest_shares",
+                      [item["what"] for item in outcome["missing"]])
+
+    def test_capital_spending_absent_and_undeclared_still_refuses(self):
+        # Dropping the figure drops what rests on it: free cash flow is
+        # struck from it, and the cash yield from that.
+        capture = copy.deepcopy(load_fixture("exmp-pass.json"))
+        for orphan in ("capital_expenditure_q", "free_cash_flow_q",
+                       "fcf_yield_ratio"):
+            drop_fact(capture, orphan)
+        answers = {"free_cash_flow": ["free_cash_flow_prior_year_q"],
+                   "yield_vs_risk_free": ["risk_free_rate_1m_tbill"]}
+        for requirement in capture["sufficiency"]["requirements"]:
+            if requirement["id"] in answers:
+                requirement["answered_by"] = answers[requirement["id"]]
+        gated = gate_check(capture)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "refuse")
+        self.assertIn("capital_expenditure_q",
+                      [item["what"] for item in outcome["missing"]])
+
+
+# The migration this unit's contract asks of a capture written to the
+# previous one: the version string, and - for a sitting that stood a
+# wider line in place of capital spending - the bound tags that used to
+# be words inside a source sentence. It is applied IN MEMORY only.
+# Runs on record are records: ruling AB20 says in terms that the COIN
+# capture stays as it is, the AB16(5) precedent, so nothing here writes
+# to council/runs. What the tests below prove is that the new contract
+# costs a capture nothing but the declaration itself.
+COIN_PUBLISHED_LINE = "Other investing activities, net"
+
+
+def to_contract_1_3_0(capture):
+    """A recorded 1.2.0 capture as the 1.3.0 contract wants it."""
+    capture["capture_version"] = "1.3.0"
+    declared = any(gap.get("fact_class") == SUBSTITUTE_GAP
+                   and gap.get("reason_kind") == "absent_by_design"
+                   for gap in capture["gaps"])
+    if not declared:
+        return capture
+    for fact_id in ("capital_expenditure_q",
+                    "capital_expenditure_prior_year_q"):
+        fact_in(capture, fact_id)["bound"] = {
+            "kind": "ceiling", "published_line": COIN_PUBLISHED_LINE}
+    for fact_id in ("free_cash_flow_q", "free_cash_flow_prior_year_q"):
+        fact_in(capture, fact_id)["bound"] = {"kind": "floor",
+                                              "published_line": None}
+    return capture
+
+
+def live_records_present(root, run_ids):
+    """The public copy publishes no live run at all. A checkout that
+    holds any of them holds the sittings on record, and the tests
+    below run - a partial set is a lost record, not a public copy."""
+    return any(os.path.exists(os.path.join(root, run_id, "evidence",
+                                           "capture.json"))
+               for run_id in run_ids)
+
+
+@unittest.skipUnless(
+    live_records_present(LIVE_RUNS, ("council-coin-2026-09-04",
+                                     "council-btc-2026-09-01")),
+    "live run records are not published in the public copy")
+class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
+    """The sittings on record, re-run end to end over the real
+    captures. These are not invented fixtures: they are the evidence
+    the council actually sat on, and a change that refuses one of them
+    has broken a sitting that already happened.
+
+    Both are read from disk untouched and migrated in memory to the
+    contract in force - the version string, plus the bound tags for the
+    sitting that declared a substitute. The files themselves are NOT
+    rewritten (owner ruling AB20; the AB16(5) precedent), so a capture
+    on record no longer re-validates as it stands, and this is what
+    that costs: exactly the declaration, and nothing else.
+
+    Only the two captures below were written to the previous contract.
+    The earlier single-name runs (GOOG, the two AAPL acceptance runs)
+    are capture_version 1.0.0, two contracts back, and cannot stand in
+    for an ordinary filer here. The ordinary filer is covered by
+    TestOrdinaryFilerUnaffected above."""
+
+    def recorded(self, run_id):
+        return canonical.read_json(
+            os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json"))
+
+    def stages(self, run_id):
+        capture = to_contract_1_3_0(self.recorded(run_id))
+        gated = gate.validate_capture(capture, SCHEMA)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        outcome = sufficiency.check(freeze.build_pack(capture), FLOORS)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+        self.assertEqual(outcome["missing"], [])
+        return outcome
+
+    def test_the_coin_capture_is_the_ab19_worked_example_and_passes(self):
+        outcome = self.stages("council-coin-2026-09-04")
+        self.assertEqual(outcome["requirements_checked"], 17)
+
+    def test_the_bitcoin_capture_another_class_is_untouched(self):
+        self.stages("council-btc-2026-09-01")
+
+    def test_an_ordinary_capture_needs_only_the_version_string(self):
+        """The migration's whole cost, for a sitting that substituted
+        nothing: one string. The Bitcoin capture declares no capital-
+        spending gap, so it grows no tags."""
+        capture = to_contract_1_3_0(self.recorded("council-btc-2026-09-01"))
+        self.assertEqual([fact for fact in capture["tier1"]
+                          if "bound" in fact], [])
+
+    def test_the_recorded_files_are_left_exactly_as_they_are(self):
+        """Ruling AB20 in terms: captures already on record are not
+        rewritten. They therefore no longer validate as they stand, and
+        that is stated rather than papered over."""
+        for run_id in ("council-coin-2026-09-04", "council-btc-2026-09-01"):
+            capture = self.recorded(run_id)
+            self.assertEqual(capture["capture_version"], "1.2.0")
+            gated = gate.validate_capture(capture, SCHEMA)
+            self.assertEqual(gated["result"], "refused", run_id)
+            self.assertTrue(any("capture_version" in reason
+                                for reason in gated["reasons"]),
+                            gated["reasons"])
+
+
+class TestThePublicSkipIsAllOrNothing(unittest.TestCase):
+    """What the skip above means: "no live run is published here", not
+    "one of the two is missing". A checkout holding one of them still
+    has records, so the sittings on record are still checked and a
+    record that went missing fails loudly instead of skipping green."""
+
+    def test_one_record_present_is_not_the_public_copy(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            os.makedirs(os.path.join(scratch, "run-a", "evidence"))
+            with open(os.path.join(scratch, "run-a", "evidence",
+                                   "capture.json"), "w"):
+                pass
+            self.assertTrue(live_records_present(scratch,
+                                                 ("run-a", "run-b")))
+
+    def test_no_record_at_all_is_the_public_copy(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            self.assertFalse(live_records_present(scratch,
+                                                  ("run-a", "run-b")))
 
 
 if __name__ == "__main__":

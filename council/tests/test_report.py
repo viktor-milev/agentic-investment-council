@@ -1078,6 +1078,49 @@ class TestKindFixturesHonourTheContracts(unittest.TestCase):
                              [], fixture_dir)
 
 
+class TestBoundTagReachesTheOwnersPage(unittest.TestCase):
+    """Owner ruling AB20. The declaration that a figure is a BOUND left
+    the fact's source sentence for the capture's own shape, so every
+    place that used to read it out of the prose renders it from the tag
+    instead. This page is one of them: the owner is the last reader,
+    and a bound he reads as a measurement is the failure AB19 exists to
+    prevent."""
+
+    CEILING = {"kind": "ceiling",
+               "published_line": "Other investing activities, net"}
+    FLOOR = {"kind": "floor", "published_line": None}
+
+    def test_the_page_and_the_seat_briefs_speak_one_sentence(self):
+        for tag in (self.CEILING, self.FLOOR):
+            self.assertEqual(R._bound_words(tag),
+                             briefs._bound_note({"bound": tag}))
+
+    def test_an_untagged_fact_renders_nothing(self):
+        self.assertIsNone(R._bound_words(None))
+        self.assertIsNone(R._bound_words(
+            {"kind": "estimate", "published_line": None}))
+
+    def test_a_ceiling_says_it_can_only_overstate(self):
+        words = R._bound_words(self.CEILING)
+        self.assertIn("declared a CEILING", words)
+        self.assertIn("can only overstate", words)
+
+    def test_the_sentence_never_carries_the_capture_s_own_words(self):
+        """Audit finding AB20 r1-1. The line's NAME is capture free
+        text; the sentence is generated and says only that the capture
+        names a line. On this page the name is rendered beside the
+        sentence and HTML-escaped; in a seat's case file it travels
+        inside the quoted-data fence."""
+        self.assertNotIn("Other investing activities, net",
+                         R._bound_words(self.CEILING))
+
+    def test_neither_sentence_claims_the_line_is_the_narrowest(self):
+        """The one condition no machine here can check."""
+        for tag in (self.CEILING, self.FLOOR):
+            self.assertNotIn("narrowest",
+                             R._bound_words(tag).casefold())
+
+
 class TestThemesCRound1Regression(unittest.TestCase):
     """THEMES-C r1-1: a row bound to one member renders its ticker tag
     on every table that receives the binding, not only the tripwires -

@@ -206,6 +206,67 @@ def _freshness_note(fact, freshness_record):
     return "fresh at capture: %s days old against a %s-day rule" % (age, rule)
 
 
+def _bound_note(fact):
+    """The plain sentence a BOUND figure carries into every seat's case
+    file, GENERATED from the capture's own tag rather than written
+    beside it by hand - the same rule the equation sentence follows, so
+    the words next to a value can never disagree with the tag that
+    earned them (owner ruling AB20).
+
+    A ceiling can only be too high, a floor only too low; a ceiling
+    that names the published line it was struck from is standing in for
+    an item the filer does not report at all, and the seats are told
+    so. What the tag does NOT say, and this sentence does not imply, is
+    that the line named is the narrowest one the filer publishes - no
+    machine here can see the filer's statements.
+
+    Every word of this sentence is generated: the kind is an enum, and
+    nothing from the capture is interpolated into it. The published
+    line's NAME is capture free text, so it travels separately, inside
+    the quoted-data fence - never as the case file's own voice (audit
+    finding THEMES-B r5-1, applied to the subject's and every member's
+    identity; the same entity read here, fix-checklist item 8a). Raised
+    again against this field as AB20 audit finding r1-1."""
+    tag = fact.get("bound")
+    if not isinstance(tag, dict):
+        return None
+    named = bool(tag.get("published_line"))
+    if tag.get("kind") == "ceiling":
+        words = ("declared a CEILING: this figure can only overstate "
+                 "what it stands for, never understate it, so any test "
+                 "it feeds is harsher than the truth and never kinder")
+        if named:
+            words += (" - it is the whole of one published line, which "
+                      "contains the item this fact stands in for "
+                      "because the filer reports no line of its own for "
+                      "it; the capture names that line below, as data")
+        return words
+    if tag.get("kind") == "floor":
+        words = ("declared a FLOOR: this figure can only understate "
+                 "what it stands for, never overstate it - the true "
+                 "figure can only be higher")
+        if named:
+            words += (" - struck against the published line the capture "
+                      "names below, as data")
+        return words
+    return None
+
+
+def _bound_line_lines(fact):
+    """The published line's NAME, fenced as quoted data - capture free
+    text never speaks in the case file's own voice (audit findings
+    THEMES-B r5-1 and AB20 r1-1). Nothing where the fact carries no
+    tag, or a tag that names no line."""
+    tag = fact.get("bound")
+    if not isinstance(tag, dict) or not tag.get("published_line"):
+        return []
+    return ["", "  The published line this figure was struck from, as "
+            "the capture names it:", "",
+            QUOTE_FENCE_OPEN,
+            _quote_lines(_one_line(tag["published_line"])),
+            QUOTE_FENCE_CLOSE, ""]
+
+
 def _arithmetic_note(fact):
     derived = fact.get("derived")
     if not derived:
@@ -484,6 +545,10 @@ def render_casefile(pack, sufficiency_result, framed_question, subject):
                      % (fact.get("id"), _one_line(fact.get("value")),
                         _one_line(fact.get("unit")), fact.get("as_of")))
         lines.append("  - source: %s" % _one_line(fact.get("source")))
+        bound = _bound_note(fact)
+        if bound:
+            lines.append("  - %s" % _one_line(bound))
+            lines.extend(_bound_line_lines(fact))
         note = generated_notes.get(fact.get("id")) or _arithmetic_note(fact)
         if note:
             lines.append("  - %s" % _one_line(note))
