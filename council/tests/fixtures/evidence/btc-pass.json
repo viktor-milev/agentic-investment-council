@@ -395,7 +395,7 @@
    "freshness_rule_days": 30,
    "id": "calendar_fomc_next",
    "source": "INVENTED FIXTURE - the central bank's published meeting calendar",
-   "unit": "date",
+   "unit": "iso_date",
    "value": "2026-09-16"
   },
   {
@@ -404,7 +404,7 @@
    "freshness_rule_days": 60,
    "id": "calendar_protocol_next",
    "source": "INVENTED FIXTURE - the protocol's own schedule",
-   "unit": "date",
+   "unit": "iso_date",
    "value": "2028-04-20"
   },
   {
@@ -433,6 +433,15 @@
    "source": "INVENTED FIXTURE - Coin Metrics community data (invented reading)",
    "unit": "BTC",
    "value": "2704339"
+  },
+  {
+   "as_of": "2026-08-29",
+   "derived": null,
+   "freshness_rule_days": 2,
+   "id": "spot_volume_daily_usd",
+   "source": "INVENTED FIXTURE - the venues' published daily spot turnover, summed across the record's named venues",
+   "unit": "USD_per_day",
+   "value": "31480000000"
   }
  ],
  "tier2": [

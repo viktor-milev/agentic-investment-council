@@ -19,6 +19,15 @@ On the verdict hash: verdict.json cannot carry its own hash, so inside
 verdict.json the Atlas envelope's verdict_hash is null. The standalone
 atlas-envelope.json is written after the verdict and carries the real hash
 of verdict.json; the read-back entry point proves the two agree.
+
+Owner ruling AB23 made the hand-off self-sufficient. It now names its own
+subject, states the audit outcome the portfolio system computes its
+effective rating from, and tags every row that rests on a declared bound
+rather than a measurement. Two things about the ASSEMBLY carry that
+ruling and must not be reordered: the warnings list is complete before the
+envelope is built (the AB16(5) note is appended above), and both copies -
+the one inside the verdict and the standalone file - are built from the
+same dict, so read-back's field-for-field comparison keeps holding.
 """
 
 import json
@@ -331,6 +340,55 @@ def _scenario_rating(final, subject, pack, run_dir, events):
     return published
 
 
+def _bound_of(row, fact_ids, facts):
+    """The bound tag for one hand-off row (owner ruling AB23(4)).
+
+    A row that QUOTES one tier-1 fact inherits whatever that fact
+    declares: a capital-spending figure standing in for a line the filer
+    never published is a ceiling, and the free cash flow built on it a
+    floor (AB19/AB20/AB22). A row the council COMPUTED carries null -
+    the direction of a bound can invert through arithmetic, and nothing
+    here can know which way, so the publisher declines to guess rather
+    than print a bound it cannot stand behind.
+
+    QUOTES, not merely cites. A sizing row may RESTATE a percentage as
+    the fraction its id is pinned to, and for a fall that restatement
+    takes the magnitude - which reverses the order. A signed ceiling on
+    a drawdown recorded as a negative percentage says the true value is
+    no HIGHER than that; as a positive depth the same statement is a
+    FLOOR, saying the true fall is no shallower. Copying the word
+    across would have told Atlas a fall can only be shallower when it
+    can only be deeper (audit finding r3-2). Flipping the word instead
+    is not sound either: a signed FLOOR admits values above zero, where
+    the magnitude is bounded in neither direction. So the same policy
+    the paragraph above states applies here - a transformed reading
+    carries no bound.
+
+    Read from the frozen pack, never from the chairman: his contract has
+    no field to write it in."""
+    ids = [rid for rid in fact_ids if rid is not None]
+    if len(ids) != 1 or ids[0] not in facts:
+        return None
+    fact = facts[ids[0]]
+    if (row.get("value") != fact.get("value")
+            or row.get("unit") != fact.get("unit")):
+        return None
+    return fact.get("bound") or None
+
+
+def _tag_rows(rows, id_key, facts):
+    """Every hand-off row, with its bound tag resolved from the pack."""
+    tagged = []
+    for row in rows:
+        cited = row.get(id_key)
+        if not isinstance(cited, list):
+            cited = [cited]
+        entry = dict(row)
+        entry["bound"] = _bound_of(row, cited, facts)
+        tagged.append(entry)
+    return tagged
+
+
 def assemble_and_publish(run_dir):
     """Assemble the verdict from the chairman's final document (or the
     draft, degraded, when the audit did not run), validate it, write
@@ -401,16 +459,19 @@ def assemble_and_publish(run_dir):
                              challenge["challenger_tokens"],
                              challenge["model_requested"])
     subject = invocation["subject"]
+    pack = canonical.read_json(pack_path)
+    tier1_by_id = {fact["id"]: fact
+                   for fact in (pack.get("capture") or {}).get("tier1", [])}
     # The scenario block is computed ONCE, from the frozen pack, and the
     # same object travels into both the verdict and the hand-off: Atlas
     # must never receive a different reading of the same ladder.
     verdict_scenario_rating = _scenario_rating(
-        final, subject, canonical.read_json(pack_path), run_dir, events)
+        final, subject, pack, run_dir, events)
     if degraded_from is not None:
         verdict_scenario_rating = degrade_scenario_rating(
             verdict_scenario_rating, degraded_from, final["rating"])
     verdict = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "run_id": invocation["run_id"],
         "subject": subject,
         "question_verbatim": invocation["question_verbatim"],
@@ -436,15 +497,37 @@ def assemble_and_publish(run_dir):
         "warnings": warnings,
         "atlas_envelope": {
             "rating": final["rating"],
-            "key_numbers": final["key_numbers"],
+            "key_numbers": _tag_rows(final["key_numbers"],
+                                     "pack_fact_id", tier1_by_id),
             "tripwires": final["tripwires"],
-            "sizing_inputs": final["sizing_inputs"],
+            "sizing_inputs": _tag_rows(final["sizing_inputs"],
+                                       "pack_fact_ids", tier1_by_id),
             "scenario_rating": verdict_scenario_rating,
             # The subject's frozen shape travels to Atlas as captured -
-            # copied from the invocation, never chair-authored.
+            # copied from the invocation, never chair-authored. Since
+            # AB23(1) that includes the identity, so the standalone
+            # package can be verified without opening the verdict.
             "subject_kind": subject.get("kind"),
             "asset_class": subject.get("asset_class"),
             "product": subject.get("product"),
+            "run_id": invocation["run_id"],
+            "subject_name": subject.get("name"),
+            "subject_ticker": subject.get("ticker"),
+            "subject_listing": subject.get("listing"),
+            "subject_currency": subject.get("currency"),
+            # The audit state (AB23(2)): Atlas computes its effective
+            # rating FROM the ceiling, and a consumer that had to open a
+            # second file to learn a buy was capped was one refactor
+            # away from acting on a bare rating. The warnings list is
+            # final by this line - the AB16(5) note is appended above.
+            "challenge_status": challenge["status"],
+            "endorsement_highest_rating_supported": (
+                (challenge["endorsement"] or {}).get(
+                    "highest_rating_supported")),
+            "warnings": warnings,
+            "unknown_sizing_ids": [
+                entry["id"] for entry in final["sizing_inputs"]
+                if briefs.pinned_sizing_unit(entry["id"]) is None],
             "constituents": subject.get("constituents"),
             "vehicle": subject.get("vehicle"),
             "thesis_proportions": subject.get("thesis_proportions"),

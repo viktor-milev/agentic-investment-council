@@ -476,6 +476,225 @@ class TestAtlasEnvelope(unittest.TestCase):
                       "verdict&#x27;s own hash, so the hand-off can be proved.", HTML)
 
 
+class TestTheHandOffStandsAlone(unittest.TestCase):
+    """Owner ruling AB23. The hand-off section shows the package as it
+    actually travels: the subject it names, the audit state the
+    portfolio system computes its effective rating from, and the ids
+    whose meaning the council's own list does not fix.
+
+    Every assertion here FAILED before the change: the page showed a
+    rating, a kind and a pack hash, and nothing else."""
+
+    def atlas(self, page=None):
+        page = page if page is not None else HTML
+        return page[page.index('<h2 id="atlas">'):]
+
+    def test_the_package_names_its_own_subject_and_sitting(self):
+        atlas = self.atlas()
+        self.assertIn('<th class="nowrap">Subject</th>'
+                      "<td>Specimen Works (SPWK, INVENTED-X, USD)</td>",
+                      atlas)
+        self.assertIn('<th class="nowrap">Sitting</th>'
+                      "<td><code>report-fixture-invented-1</code></td>",
+                      atlas)
+
+    def test_the_package_states_the_audit_outcome_and_the_ceiling(self):
+        atlas = self.atlas()
+        self.assertIn("The outside audit ran, and the package says so.",
+                      atlas)
+        self.assertIn("The highest rating the auditor said the record "
+                      "supports is <strong>Hold", atlas)
+
+    def test_the_warnings_are_said_to_travel_with_it(self):
+        self.assertIn("Every warning on this verdict travels inside the "
+                      "package too &mdash; 2 of them", self.atlas())
+
+    def test_a_package_with_no_endorsed_ceiling_says_that_plainly(self):
+        self.assertIn("The auditor endorsed no ceiling, so the package "
+                      "carries none.", self.atlas(BASKET_HTML))
+
+    def test_the_ids_the_reader_does_not_know_are_named(self):
+        """AB23(6): a sizing id outside the council's own list travels
+        with its own declared unit, and the page says which ones."""
+        atlas = self.atlas()
+        self.assertIn("Sizing facts whose meaning is not fixed by the "
+                      "council&#x27;s own list", atlas)
+        for sizing_id in ("realized_vol_90d", "avg_daily_turnover",
+                          "deepest_drawdown_5y", "next_results_date"):
+            self.assertIn(sizing_id, atlas)
+
+    def test_the_theme_package_names_no_unknown_ids(self):
+        """Every one of its rows is an id the list pins, so the page
+        says nothing - the note appears only when it has something to
+        say."""
+        self.assertNotIn("Sizing facts whose meaning is not fixed",
+                         self.atlas(THEME_HTML))
+
+
+class TestAPackageWrittenBeforeTheAuditFields(unittest.TestCase):
+    """ENVELOPE-ATLAS, plugin audit round 1, finding r1-4. Every one of
+    the seven sittings on record was published under contract 1.0.0 to
+    1.2.0, and none of their packages carries the audit-state fields.
+    Re-rendering one of them - step 4 of the runbook - printed "The
+    outside audit did NOT run" and "The auditor endorsed no ceiling"
+    about runs whose audit ran and whose auditor DID set a ceiling.
+    Three false sentences on a page the owner reads, and the worst of
+    them tells him a rating was not capped when it was.
+
+    Absence of a field is not a negative finding: an older package
+    simply does not carry the audit state, and the page says so."""
+
+    def rendered_without(self, *fields):
+        work = tempfile.mkdtemp(prefix="council-legacy-package-")
+        self.addCleanup(shutil.rmtree, work, True)
+        run_dir = os.path.join(work, "run")
+        shutil.copytree(FIXTURE, run_dir)
+        path = os.path.join(run_dir, "verdict.json")
+        with open(path, "rb") as handle:
+            verdict = json.loads(handle.read().decode("utf-8"))
+        for field in fields:
+            verdict["atlas_envelope"].pop(field, None)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(verdict, handle)
+        page = R.render(run_dir)
+        return page[page.index('<h2 id="atlas">'):]
+
+    def legacy(self):
+        return self.rendered_without(
+            "challenge_status", "endorsement_highest_rating_supported",
+            "warnings")
+
+    def test_it_never_says_the_audit_did_not_run(self):
+        self.assertNotIn("did NOT run", self.legacy())
+
+    def test_it_never_claims_the_auditor_endorsed_no_ceiling(self):
+        self.assertNotIn("endorsed no ceiling", self.legacy())
+
+    def test_it_never_counts_warnings_the_package_does_not_carry(self):
+        self.assertNotIn("0 of them", self.legacy())
+
+    def test_it_says_plainly_that_the_package_predates_the_fields(self):
+        atlas = self.legacy()
+        self.assertIn("predates", atlas)
+        self.assertIn("challenge round", atlas)
+
+    def test_a_current_package_still_states_its_audit_state(self):
+        """The guard must not silence a package that HAS the fields."""
+        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        self.assertIn("The outside audit ran, and the package says so.",
+                      atlas)
+        self.assertNotIn("predates", atlas)
+
+
+class TestAFailedAuditIsNotAnAuditConclusion(unittest.TestCase):
+    """ENVELOPE-ATLAS, the plugin audit's closing pass, finding r3-3.
+    On EVERY failed-audit package the card said, in consecutive
+    sentences, that the audit did not run and that "The auditor
+    endorsed no ceiling" - an audit conclusion drawn from an audit that
+    never happened. The ceiling is null there because nobody answered,
+    not because anybody declined to set one. The same principle the
+    r1-4 fix applies one branch up: absence is not a finding."""
+
+    def rendered(self, status, ceiling=None):
+        work = tempfile.mkdtemp(prefix="council-failed-audit-")
+        self.addCleanup(shutil.rmtree, work, True)
+        run_dir = os.path.join(work, "run")
+        shutil.copytree(FIXTURE, run_dir)
+        path = os.path.join(run_dir, "verdict.json")
+        with open(path, "rb") as handle:
+            verdict = json.loads(handle.read().decode("utf-8"))
+        envelope = verdict["atlas_envelope"]
+        envelope["challenge_status"] = status
+        envelope["endorsement_highest_rating_supported"] = ceiling
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(verdict, handle)
+        page = R.render(run_dir)
+        return page[page.index('<h2 id="atlas">'):]
+
+    def test_a_failed_audit_never_claims_a_ceiling_was_considered(self):
+        for status in ("timeout", "launch_failure", "malformed_output",
+                       "schema_failure", "binding_failure",
+                       "internal_failure"):
+            atlas = self.rendered(status)
+            self.assertNotIn("endorsed no ceiling", atlas, status)
+
+    def test_it_says_why_there_is_no_ceiling(self):
+        atlas = self.rendered("timeout")
+        self.assertIn("did NOT run", atlas)
+        self.assertIn("no ceiling was accepted", atlas)
+        self.assertIn("a gap, not the auditor", atlas)
+
+    def test_it_never_says_nobody_answered_when_papers_were_rejected(self):
+        """The closing incremental's one finding. Two of the six
+        failure statuses mean the challenger DID answer and the machine
+        threw the answer away: a schema-invalid document, or echoes that
+        do not bind to this run. The page says so a few sections up -
+        'The challenger returned papers, but the machine rejected them'
+        - so a card claiming nobody answered contradicted the same page.
+        One sentence true in all six cases: nothing was accepted."""
+        for status in ("timeout", "launch_failure", "malformed_output",
+                       "schema_failure", "binding_failure",
+                       "internal_failure"):
+            atlas = self.rendered(status)
+            self.assertNotIn("No auditor answered", atlas, status)
+            self.assertIn("no ceiling was accepted", atlas, status)
+
+    def test_a_successful_audit_with_no_ceiling_still_says_so(self):
+        atlas = self.rendered("success")
+        self.assertIn("The auditor endorsed no ceiling", atlas)
+
+    def test_a_successful_audit_with_a_ceiling_still_names_it(self):
+        atlas = self.rendered("success", ceiling="hold")
+        self.assertIn("supports is <strong>Hold", atlas)
+
+
+class TestBoundRowsInTheHandOff(unittest.TestCase):
+    """AB23(4), closing P-ANCHORLESS-10: a figure standing in for one
+    the filer never published is a CEILING, and the hand-off printed it
+    as an unqualified number. The tag now travels on the row, and the
+    page renders it in the same words the case files use."""
+
+    def rendered(self, tag, on_key_number=True):
+        """The single-name fixture with ONE hand-off row tagged."""
+        work = tempfile.mkdtemp(prefix="council-bound-handoff-")
+        self.addCleanup(shutil.rmtree, work, True)
+        run_dir = os.path.join(work, "run")
+        shutil.copytree(FIXTURE, run_dir)
+        path = os.path.join(run_dir, "verdict.json")
+        with open(path, "rb") as handle:
+            verdict = json.loads(handle.read().decode("utf-8"))
+        key = "key_numbers" if on_key_number else "sizing_inputs"
+        verdict["atlas_envelope"][key][0]["bound"] = tag
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(verdict, handle)
+        page = R.render(run_dir)
+        return page[page.index('<h2 id="atlas">'):]
+
+    def test_a_ceiling_key_number_says_so_and_names_its_line(self):
+        atlas = self.rendered({"kind": "ceiling",
+                               "published_line": "Other investing "
+                                                 "activities, net"})
+        self.assertIn("declared a CEILING", atlas)
+        self.assertIn("can only overstate", atlas)
+        self.assertIn("Other investing activities, net", atlas)
+
+    def test_a_floor_sizing_row_says_the_figure_can_only_be_higher(self):
+        atlas = self.rendered({"kind": "floor", "published_line": None},
+                              on_key_number=False)
+        self.assertIn("declared a FLOOR", atlas)
+        self.assertIn("can only be higher", atlas)
+
+    def test_an_untagged_package_renders_no_bound_words(self):
+        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        self.assertNotIn("declared a CEILING", atlas)
+        self.assertNotIn("declared a FLOOR", atlas)
+
+    def test_the_page_and_the_case_file_say_the_same_words(self):
+        """One declaration, one wording, wherever it appears."""
+        tag = {"kind": "ceiling", "published_line": None}
+        self.assertIn(E(R._bound_words(tag)), self.rendered(tag))
+
+
 class TestHeadAndFooter(unittest.TestCase):
     def test_title_stamps(self):
         self.assertIn("<h1>Investment Council &mdash; Specimen Works (SPWK)</h1>", HTML)
@@ -486,7 +705,7 @@ class TestHeadAndFooter(unittest.TestCase):
 
     def test_footer_carries_run_id_computed_hash_and_schema_version(self):
         self.assertIn("publication hash <code>%s</code>" % VERDICT_SHA, HTML)
-        self.assertIn("contract version <code>1.2.0</code>", HTML)
+        self.assertIn("contract version <code>1.3.0</code>", HTML)
         self.assertIn("Rendered from the run directory by "
                       "<code>council/report/render_report.py</code>", HTML)
 
@@ -1052,7 +1271,7 @@ class TestEnvelopeKindFields(unittest.TestCase):
 
 
 class TestKindFixturesHonourTheContracts(unittest.TestCase):
-    """The two new fixture runs are invented INSIDE the frozen 1.2.0
+    """The two new fixture runs are invented INSIDE the frozen 1.3.0
     contracts, exactly as run-invented-1 is."""
 
     def _schema(self, name):

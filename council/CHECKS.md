@@ -51,6 +51,12 @@ python council/tests/test_e2e_rehearsal.py
   rating his own ladder does not earn, the five seats' distinct evidence
   emphases, the sealed words on the owner's own possession, and MAC-1 — the
   answer contract provably precedes the case file in every rendered brief.
+  Since ENVELOPE-ATLAS it also covers the hand-off package standing alone
+  (owner ruling AB23): its identity and audit state on both copies, the
+  bound tag resolved from the frozen pack onto each key number and sizing
+  row, the three newly required fields, the pinned sizing-input units with
+  the one checked percent-to-fraction restatement, and read-back still
+  CLEAN over every sitting on record after the version bump.
 - **bridge** — the challenger command's exact flag surface, the stdin
   prompt, the isolated schema-only directory, every failure status, and a
   real tree-kill on timeout. Every test runs against a fake launcher: the
@@ -75,7 +81,11 @@ python council/tests/test_e2e_rehearsal.py
   and nothing publishes), and the empty-theme refusal with its shopping-list
   note. Zero model calls.
 
-## The old stack's eleven checks (must stay green, untouched)
+## The old stack's eleven checks — RETIRED (ruling AB24, 2026-09-06)
+
+The frozen PowerShell stack is retired: Atlas integrated the council and the AB1 trigger fired.
+These eleven are no longer run at any gate and no longer need to be green; they are listed only
+so the record stays legible until the owner rules on deleting the stack from the tree.
 
 ```
 python schemas/verdict-schema.Tests.py

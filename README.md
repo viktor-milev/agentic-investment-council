@@ -46,6 +46,8 @@ chairman build a scenario ladder with their own stated probabilities, the expect
 computed against a bar of cash plus a premium scaled to the asset's own five-year volatility, and
 the arithmetic and its sensitivity are printed on the page. Probabilities are labelled the
 council's judgment, never evidence. A commodity product nobody has ruled on refuses rather than
+sitting quietly on a generic template.
+
 **A filer with no capital-spending line** does not stop the sitting. A wider published line may
 stand in for it, but only if it declares itself: the evidence file tags the figure as a *ceiling*
 (it can only overstate the spending) and names the published line it was taken from, and the case
@@ -73,19 +75,21 @@ The six suites, and what each covers:
 | Suite | Tests | Covers |
 |---|---|---|
 | `council/tests/test_foundations.py` | 19 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file |
-| `council/tests/test_evidence.py` | 215 | the provenance gate, the byte-identical freeze, sufficiency pass and refusal paths per subject kind and per asset class |
-| `council/tests/test_engine.py` | 252 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the scenario-earned rating, the publisher's change appendix |
+| `council/tests/test_evidence.py` | 217 | the provenance gate, the byte-identical freeze, sufficiency pass and refusal paths per subject kind and per asset class |
+| `council/tests/test_engine.py` | 299 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the scenario-earned rating, the publisher's change appendix |
 | `council/tests/test_bridge.py` | 29 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** |
-| `council/tests/test_report.py` | 155 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the decision front |
+| `council/tests/test_report.py` | 175 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the decision front |
 | `council/tests/test_e2e_rehearsal.py` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → nine canned seats → canned challenge → publish → read-back → rendered report, with **zero model calls** |
 
-679 tests at this snapshot; all six suites are green standalone in this tree (exit code 0).
-`test_evidence.py` reports **four tests skipped here and only here**: one test class
-(`TestLiveCapturesStillClearEveryStage`) re-runs the gate over two *live run records*, which are
-among the material this copy does not publish. The class skips only when *no* live run exists
-at all — a checkout holding any record still runs them, so a record that went missing fails
-loudly rather than skipping quietly (`TestThePublicSkipIsAllOrNothing` pins that). The file is
-byte-identical to the private tree — see *What is deliberately absent* below.
+746 tests at this snapshot; all six suites are green standalone in this tree (exit code 0).
+**Six tests skip here and only here**, all for the same reason — they read *live run records*,
+which are among the material this copy does not publish. `test_evidence.py` reports four: one
+test class (`TestLiveCapturesStillClearEveryStage`) re-runs the gate over two live captures.
+`test_engine.py` reports two: `TestEveryPublishedRunStillReadsBack` re-verifies every published
+sitting against its own record. Each skips only when *no* live run exists at all — a checkout
+holding any record still runs them, so a record that went missing fails loudly rather than
+skipping quietly (`TestThePublicSkipIsAllOrNothing` pins that). Both files are byte-identical to
+the private tree — see *What is deliberately absent* below.
 
 **`test_e2e_rehearsal.py` is the demonstration to run first.** It exercises the entire pipeline
 with real artifacts and no model, no network, and no API key — the fastest honest way to see what
@@ -107,9 +111,11 @@ This is an extraction, not a fork. Each omission below has one reason.
   question and dated personal records. Nothing from a real sitting travels. Invented fixtures
   under `council/tests/fixtures/` replace them almost everywhere — but not quite: the four
   `TestLiveCapturesStillClearEveryStage` tests in `council/tests/test_evidence.py` open two run
-  records directly (`council-btc-2026-09-01` and `council-coin-2026-09-04`) and therefore
-  **skip** in this copy, with the reason printed. The skip fires only when no live run exists at
-  all, so the omission stays visible rather than papered over.
+  records directly (`council-btc-2026-09-01` and `council-coin-2026-09-04`), and the two
+  `TestEveryPublishedRunStillReadsBack` tests in `council/tests/test_engine.py` re-verify every
+  published sitting against its record. All six therefore **skip** in this copy, with the reason
+  printed. A skip fires only when no live run exists at all, so the omission stays visible rather
+  than papered over.
 - **The owner's rulings ledger** (`docs/OWNER-RULINGS.md`). It is a private decision log that
   quotes him throughout. The specs here cite its ruling ids (`AB13`, `W2.5`, `§X` and so on) and
   those citations are left intact, so the reasoning stays traceable even though the source is not

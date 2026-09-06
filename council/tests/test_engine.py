@@ -2668,6 +2668,7 @@ class TestKindBriefs(EngineTest):
         # rates nothing (ANCHORLESS-SPEC section 3).
         self.assertEqual(briefs.draft_contract(fixture("subject.json")),
                          briefs._DRAFT_CONTRACT_BASE
+                         % briefs._sizing_unit_table()
                          + briefs._EQUITY_LADDER_CONTRACT)
         self.assertNotIn("EXACTLY one entry per named constituent",
                          self.chair_brief(fixture("subject.json")))
@@ -4124,6 +4125,769 @@ class TestContractBeforeEvidence(EngineTest):
             self.assertIn(briefs.CONTRACT_MARKER, text[:one_read], name)
             self.assertIn("Your one write", text[:one_read], name)
 
+
+# ---------------------------------------------------------------------
+# ENVELOPE-ATLAS (owner ruling AB23, confirmed AB24): the hand-off gains
+# the subject's identity, the audit state, bound tags on its own rows,
+# three newly required fields, and ONE PINNED UNIT per sizing-input id.
+# Every test below was written before the change and FAILED against the
+# pre-fix code.
+# ---------------------------------------------------------------------
+
+BOUND_LINE = "Other investing activities, net"
+
+
+def bound_pack(fact_id, kind="ceiling", line=BOUND_LINE):
+    """The engine pack with ONE fact declared a bound - the AB20
+    stand-in shape, in the capture's own words."""
+    pack = copy.deepcopy(fixture("pack.json"))
+    for fact in pack["capture"]["tier1"]:
+        if fact["id"] == fact_id:
+            fact["bound"] = {"kind": kind, "published_line": line}
+            return pack
+    raise KeyError(fact_id)
+
+
+class TestPinnedSizingUnits(EngineTest):
+    """AB23(6). The ids were stable across all seven published sittings
+    and the units were not: `realized_volatility` alone travelled as
+    `annualised_fraction`, `percentage_points`, `percent annualised`,
+    `fraction_annualized`, `fraction_per_year` and `ratio`, and
+    `drawdown_shape` was both a percentage and a price. A reader that
+    reads a percentage as a fraction is wrong by a hundred times.
+
+    The unit is refused at the chair's desk, named, and re-asked once,
+    exactly as every other mechanical check behaves."""
+
+    def check(self, mutate, pack=None):
+        draft = copy.deepcopy(fixture_answer("chair_draft")["draft_verdict"])
+        mutate(draft)
+        return host.check_draft_verdict(draft, pack or fixture("pack.json"),
+                                        host._seat_schemas())
+
+    def row(self, draft, sizing_id):
+        for entry in draft["sizing_inputs"]:
+            if entry["id"] == sizing_id:
+                return entry
+        raise KeyError(sizing_id)
+
+    def test_the_fixture_bench_already_speaks_the_pinned_units(self):
+        """The baseline every other test here leans on."""
+        self.assertEqual(self.check(lambda draft: None), [])
+
+    def test_a_percentage_realized_volatility_is_refused_by_name(self):
+        def percent(draft):
+            row = self.row(draft, "realized_volatility")
+            row["unit"] = "percent"
+            row["value"] = "34"
+            row["pack_fact_ids"] = ["realized_vol_90d",
+                                    "avg_daily_dollar_volume"]
+        reasons = self.check(percent)
+        self.assertTrue(any("fraction_annualized" in r for r in reasons),
+                        reasons)
+        self.assertTrue(any("realized_volatility" in r for r in reasons),
+                        reasons)
+
+    def test_every_required_id_refuses_a_unit_that_is_not_its_own(self):
+        for sizing_id in host.REQUIRED_SIZING_IDS:
+            unit = briefs.SIZING_UNITS[sizing_id]
+
+            def wrong(draft, sizing_id=sizing_id):
+                self.row(draft, sizing_id)["unit"] = "made_up_unit"
+            reasons = self.check(wrong)
+            self.assertTrue(any(unit in r for r in reasons),
+                            "%s: %r" % (sizing_id, reasons))
+
+    def test_a_value_without_a_unit_is_refused(self):
+        def stripped(draft):
+            row = self.row(draft, "liquidity")
+            row["unit"] = None
+            row["pack_fact_ids"] = ["avg_daily_dollar_volume",
+                                    "market_cap"]
+        reasons = self.check(stripped)
+        self.assertTrue(any("USD_per_day" in r for r in reasons), reasons)
+
+    def test_a_stated_gap_keeps_its_null_unit(self):
+        """A row with no figure explains the gap and carries no unit;
+        there is nothing there to misread."""
+        def gap(draft):
+            row = self.row(draft, "liquidity")
+            row["value"] = None
+            row["unit"] = None
+            row["as_of"] = None
+            row["pack_fact_ids"] = []
+            row["detail"] = "No dated turnover series stands in the pack."
+        self.assertEqual(self.check(gap), [])
+
+    def test_a_suffixed_id_inherits_its_base_units_pin(self):
+        def suffixed(draft, unit):
+            draft["sizing_inputs"].append({
+                "id": "liquidity__fixt",
+                "detail": "The one member's own turnover.",
+                "value": "18000000", "unit": unit, "as_of": "2026-08-28",
+                "pack_fact_ids": ["avg_daily_dollar_volume"]})
+        good = self.check(lambda d: suffixed(d, "USD_per_day"))
+        self.assertEqual([r for r in good if "liquidity__fixt" in r], [])
+        bad = self.check(lambda d: suffixed(d, "USD"))
+        self.assertTrue(any("USD_per_day" in r and "liquidity__fixt" in r
+                            for r in bad), bad)
+
+    def test_an_unknown_id_must_declare_its_unit(self):
+        def unknown(draft, unit):
+            draft["sizing_inputs"].append({
+                "id": "borrow_cost", "detail": "The cost to borrow.",
+                "value": "0.02", "unit": unit, "as_of": "2026-08-28",
+                "pack_fact_ids": ["market_cap", "net_cash"]})
+        self.assertEqual(
+            [r for r in self.check(
+                lambda d: unknown(d, "fraction_annualized"))
+             if "borrow_cost" in r], [])
+        reasons = self.check(lambda d: unknown(d, None))
+        self.assertTrue(any("borrow_cost" in r and "DECLARE" in r
+                            for r in reasons), reasons)
+
+    def test_a_fraction_that_is_really_a_percentage_is_refused(self):
+        """The defect in one line: the percentage written where
+        the fraction was meant."""
+        def hundredfold(draft):
+            row = self.row(draft, "realized_volatility")
+            row["value"] = "34"
+            row["pack_fact_ids"] = ["realized_vol_90d", "market_cap"]
+        reasons = self.check(hundredfold)
+        self.assertTrue(any("fraction" in r for r in reasons), reasons)
+
+    def test_a_calendar_sentence_is_not_a_date(self):
+        def sentence(draft):
+            row = self.row(draft, "event_dates")
+            row["value"] = ("one dated company event stands at the "
+                            "sitting: a fireside chat on 2026-09-10")
+            row["pack_fact_ids"] = ["next_results_date_checked",
+                                    "events_calendar_check"]
+        reasons = self.check(sentence)
+        self.assertTrue(any("event_dates" in r for r in reasons), reasons)
+
+    def test_a_list_of_dates_is_a_value_and_passes(self):
+        def dates(draft):
+            row = self.row(draft, "event_dates")
+            row["value"] = "2026-10-20, 2026-11-05"
+            row["pack_fact_ids"] = ["next_results_date_checked",
+                                    "events_calendar_check"]
+        self.assertEqual([r for r in self.check(dates)
+                          if "event_dates" in r], [])
+
+    def test_a_drawdown_is_a_positive_depth_within_the_whole_price(self):
+        def shaped(draft, value):
+            row = self.row(draft, "drawdown_shape")
+            row["value"] = value
+            row["pack_fact_ids"] = ["range_52w_low", "range_52w_high"]
+        for bad in ("-0.38", "38", "1.4"):
+            reasons = self.check(lambda d, v=bad: shaped(d, v))
+            self.assertTrue(any("drawdown_shape" in r for r in reasons),
+                            "%s accepted: %r" % (bad, reasons))
+        self.assertEqual([r for r in self.check(lambda d: shaped(d, "0.38"))
+                          if "drawdown_shape" in r], [])
+
+    def test_the_chair_brief_states_the_table_the_checks_enforce(self):
+        run = self.harness(run_id="unit-table-brief-run")
+        run.drive(until="CHALLENGE")
+        chair = [text for name, text in run.briefs_text().items()
+                 if "chair_draft" in name]
+        self.assertTrue(chair)
+        for text in chair:
+            for sizing_id, unit in briefs.SIZING_UNITS.items():
+                self.assertIn(sizing_id, text)
+                self.assertIn(unit, text)
+
+    def test_a_wrong_unit_is_re_asked_once_with_the_reason(self):
+        run = self.harness(run_id="unit-retry-run")
+        bad = copy.deepcopy(fixture_answer("chair_draft"))
+        for entry in bad["draft_verdict"]["sizing_inputs"]:
+            if entry["id"] == "realized_volatility":
+                entry["unit"] = "percent annualized"
+        run.queue("chair_draft", bad)
+        run.drive(until="CHALLENGE")
+        rejected = [e for e in run.events()
+                    if e["event"] == "answer_rejected"]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(rejected[0]["seat"], "chair_draft")
+        self.assertIn("fraction_annualized", rejected[0]["reason"])
+        # Re-asked, not failed: the run went on to the challenge.
+        self.assertEqual(host.status(run.run_dir)["state"], "CHALLENGE")
+
+
+class TestThePercentRestatement(EngineTest):
+    """Two ruled requirements meet on ONE fact and pull opposite ways.
+    The anchorless bar reads the five-year volatility as a PERCENTAGE
+    and refuses any other unit, so the bar cannot be wrong by a hundred
+    (ladder._percent_fact); AB23(6) publishes the same reading to Atlas
+    as a FRACTION, for exactly the same reason. Without the restatement
+    below, a capture would have to carry one measurement twice, in two
+    units, for two readers - and the anchorless rehearsal could not
+    publish at all.
+
+    The restatement is checked, never trusted: it moves the decimal
+    point and changes nothing else."""
+
+    def check(self, entry, pack=None):
+        draft = copy.deepcopy(fixture_answer("chair_draft")["draft_verdict"])
+        for index, row in enumerate(draft["sizing_inputs"]):
+            if row["id"] == entry["id"]:
+                draft["sizing_inputs"][index] = entry
+                break
+        else:
+            self.fail("no row named %r" % entry["id"])
+        return [r for r in host.check_draft_verdict(
+            draft, pack or self.percent_pack(), host._seat_schemas())
+            if entry["id"] in r]
+
+    def percent_pack(self):
+        """The pack as a capture that carries its volatility in percent
+        - the unit the anchorless bar insists on."""
+        pack = copy.deepcopy(fixture("pack.json"))
+        for fact in pack["capture"]["tier1"]:
+            if fact["id"] == "realized_vol_90d":
+                fact["unit"] = "percent annualized"
+                fact["value"] = "34"
+            if fact["id"] == "max_drawdown_5y":
+                fact["unit"] = "percent"
+                fact["value"] = "-38"
+        return pack
+
+    def row(self, sizing_id, value, unit, fact_id):
+        return {"id": sizing_id, "detail": "A restated reading.",
+                "value": value, "unit": unit, "as_of": "2026-08-28",
+                "pack_fact_ids": [fact_id]}
+
+    def test_a_percentage_may_be_published_as_its_own_fraction(self):
+        self.assertEqual(
+            self.check(self.row("realized_volatility", "0.34",
+                                "fraction_annualized", "realized_vol_90d")),
+            [])
+
+    def test_the_arithmetic_is_checked_and_not_taken_on_trust(self):
+        reasons = self.check(self.row("realized_volatility", "0.034",
+                                      "fraction_annualized",
+                                      "realized_vol_90d"))
+        self.assertTrue(any("decimal point" in r for r in reasons), reasons)
+
+    def test_a_fall_recorded_negative_publishes_as_a_positive_depth(self):
+        self.assertEqual(
+            self.check(self.row("drawdown_shape", "0.38",
+                                "fraction_of_price", "max_drawdown_5y")),
+            [])
+        reasons = self.check(self.row("drawdown_shape", "-0.38",
+                                      "fraction_of_price",
+                                      "max_drawdown_5y"))
+        self.assertTrue(reasons)
+
+    def test_the_date_still_quotes_the_fact_exactly(self):
+        entry = self.row("realized_volatility", "0.34",
+                         "fraction_annualized", "realized_vol_90d")
+        entry["as_of"] = "2026-01-01"
+        reasons = self.check(entry)
+        self.assertTrue(any("as_of" in r for r in reasons), reasons)
+
+    def test_a_unit_that_does_not_say_percent_is_no_restatement(self):
+        """LULU's shape: a fraction labelled `ratio` in the pack. The
+        label says nothing about scale, so nothing may be inferred from
+        it - the row is refused and the chairman states the gap."""
+        pack = copy.deepcopy(fixture("pack.json"))
+        for fact in pack["capture"]["tier1"]:
+            if fact["id"] == "realized_vol_90d":
+                fact["unit"] = "ratio"
+                fact["value"] = "0.34"
+        reasons = self.check(
+            self.row("realized_volatility", "0.34", "fraction_annualized",
+                     "realized_vol_90d"), pack=pack)
+        self.assertTrue(reasons)
+
+    def test_an_ordinary_quote_is_untouched_by_the_rule(self):
+        """A pack already written in the pinned unit is quoted exactly,
+        as it always was - and a wrong figure is still refused."""
+        self.assertEqual(
+            self.check(self.row("liquidity", "18000000", "USD_per_day",
+                                "avg_daily_dollar_volume")), [])
+        reasons = self.check(self.row("liquidity", "18000001",
+                                      "USD_per_day",
+                                      "avg_daily_dollar_volume"))
+        self.assertTrue(any("quotes its fact" in r for r in reasons),
+                        reasons)
+
+
+class TestAuditRoundOneRegressions(EngineTest):
+    """ENVELOPE-ATLAS, plugin audit round 1 (gpt-5.6-sol at high). Three
+    of the four findings land here; the fourth is in the report suite.
+    Each test below FAILED against the pre-fix code."""
+
+    def check(self, mutate, pack=None):
+        draft = copy.deepcopy(fixture_answer("chair_draft")["draft_verdict"])
+        mutate(draft)
+        return host.check_draft_verdict(draft, pack or fixture("pack.json"),
+                                        host._seat_schemas())
+
+    def row(self, draft, sizing_id):
+        for entry in draft["sizing_inputs"]:
+            if entry["id"] == sizing_id:
+                return entry
+        raise KeyError(sizing_id)
+
+    # r1-1: the chair contract told the chairman to publish null where
+    # the pack holds no figure in the pinned unit and to "never restate"
+    # - but the gate ACCEPTS one restatement, and on an anchorless
+    # sitting the bar forces the volatility fact to be a percentage. A
+    # chairman obeying the brief would have published nothing where a
+    # real figure stood.
+    def test_the_chair_contract_states_the_one_permitted_restatement(self):
+        text = briefs.draft_contract(fixture("subject.json"))
+        self.assertIn("PERCENTAGE", text)
+        self.assertIn("move the decimal point", text)
+        self.assertIn("citing that one fact", text)
+
+    def test_the_contract_no_longer_forbids_what_the_gate_allows(self):
+        text = briefs.draft_contract(fixture("subject.json"))
+        self.assertNotIn("never restate a number in a", text)
+
+    def test_the_brief_and_the_gate_agree_on_a_worked_restatement(self):
+        """The words a chairman reads permit exactly what the machine
+        accepts: a percentage in the pack, published as its fraction."""
+        pack = copy.deepcopy(fixture("pack.json"))
+        for fact in pack["capture"]["tier1"]:
+            if fact["id"] == "realized_vol_90d":
+                fact["unit"] = "percent annualized"
+                fact["value"] = "34"
+
+        def restate(draft):
+            self.row(draft, "realized_volatility")["value"] = "0.34"
+        self.assertEqual(self.check(restate, pack=pack), [])
+
+    # r1-2: date.fromisoformat on this runtime also accepts the basic
+    # and week-date forms, so `20260910` and `2026-W37` published into
+    # a contract that says YYYY-MM-DD - and a week date resolves to a
+    # Monday the chairman never wrote.
+    def test_only_the_dashed_calendar_form_is_a_date(self):
+        def dated(draft, value):
+            row = self.row(draft, "event_dates")
+            row["value"] = value
+            row["pack_fact_ids"] = ["next_results_date_checked",
+                                    "events_calendar_check"]
+        for bad in ("20260910", "2026-W37", "2026-W37-4", "2026-9-10"):
+            reasons = [r for r in self.check(lambda d, v=bad: dated(d, v))
+                       if "event_dates" in r]
+            self.assertTrue(reasons, "%r was accepted as a date" % bad)
+        for good in ("2026-10-20", "2026-10-20, 2026-11-05"):
+            self.assertEqual(
+                [r for r in self.check(lambda d, v=good: dated(d, v))
+                 if "event_dates" in r], [], good)
+
+    def test_a_date_that_is_not_on_the_calendar_is_still_refused(self):
+        def impossible(draft):
+            row = self.row(draft, "event_dates")
+            row["value"] = "2026-02-30"
+            row["pack_fact_ids"] = ["next_results_date_checked",
+                                    "events_calendar_check"]
+        self.assertTrue([r for r in self.check(impossible)
+                         if "event_dates" in r])
+
+    # r1-3: a row citing the SAME pack fact twice fell through every
+    # branch of the citation checks - the single-cite test is
+    # `len(cited) == 1`. An arbitrary value and as-of published while
+    # the row rested on one real fact, and the publisher read the same
+    # length and dropped the fact's bound tag.
+    def test_one_fact_cited_twice_is_refused(self):
+        def twice(draft):
+            row = self.row(draft, "liquidity")
+            row["pack_fact_ids"] = ["avg_daily_dollar_volume",
+                                    "avg_daily_dollar_volume"]
+        reasons = self.check(twice)
+        self.assertTrue(any("more than once" in r and "liquidity" in r
+                            for r in reasons), reasons)
+
+    def test_a_duplicate_citation_can_no_longer_hide_a_wrong_figure(self):
+        """The hole the duplicate opened: the exact-quote check never
+        ran, so any number at all could ride one real fact id."""
+        def forged(draft):
+            row = self.row(draft, "liquidity")
+            row["pack_fact_ids"] = ["avg_daily_dollar_volume",
+                                    "avg_daily_dollar_volume"]
+            row["value"] = "999999999"
+            row["as_of"] = "1999-01-01"
+        self.assertTrue(self.check(forged))
+
+    def test_the_bound_survives_a_row_that_quotes_one_tagged_fact(self):
+        """The publisher reads a single quoted fact's tag; with the
+        duplicate refused at the desk, no such row can reach it."""
+        pack = bound_pack("avg_daily_dollar_volume", kind="floor",
+                          line=None)
+        path = os.path.join(self.base, "bound-dup-pack.json")
+        canonical.write_canonical_json(path, pack)
+        run = self.harness(run_id="bound-survives-run", pack=path)
+        run.drive()
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        rows = {row["id"]: row for row in envelope["sizing_inputs"]}
+        self.assertEqual(rows["liquidity"]["bound"],
+                         {"kind": "floor", "published_line": None})
+
+
+class TestAuditClosingPassRegressions(EngineTest):
+    """ENVELOPE-ATLAS, the plugin audit's closing full pass. Two of its
+    three findings land here; the third is in the report suite. Each
+    test below FAILED against the pre-fix code."""
+
+    def percent_pack(self, bound=None, drawdown="-38"):
+        """A capture carrying its volatility and its drawdown as
+        PERCENTAGES - the shape the anchorless bar forces - with one
+        fact optionally declared a bound."""
+        pack = copy.deepcopy(fixture("pack.json"))
+        for fact in pack["capture"]["tier1"]:
+            if fact["id"] == "realized_vol_90d":
+                fact["unit"] = "percent annualized"
+                fact["value"] = "34"
+            if fact["id"] == "max_drawdown_5y":
+                fact["unit"] = "percent"
+                fact["value"] = drawdown
+                if bound is not None:
+                    fact["bound"] = bound
+        return pack
+
+    def restated(self, seat_key, payload):
+        """The chairman's document, restating both percentages as the
+        fractions their ids are pinned to."""
+        rows = payload[seat_key]["sizing_inputs"]
+        for row in rows:
+            if row["id"] == "realized_volatility":
+                row["value"] = "0.34"
+            if row["id"] == "drawdown_shape":
+                row["value"] = "0.38"
+        return payload
+
+    # r3-1: Decimal("sNaN") CONSTRUCTS, and the comparison that follows
+    # signalled outside the guard. check_draft_verdict raised, nothing
+    # caught it, and the run was left in a non-terminal state with no
+    # rejection recorded - wedged, and wedged again on every retry.
+    def test_a_signalling_nan_is_refused_and_never_raises(self):
+        draft = copy.deepcopy(fixture_answer("chair_draft")["draft_verdict"])
+        for row in draft["sizing_inputs"]:
+            if row["id"] == "realized_volatility":
+                row["value"] = "sNaN"
+        reasons = host.check_draft_verdict(draft, self.percent_pack(),
+                                           host._seat_schemas())
+        self.assertTrue(reasons)
+        self.assertTrue(any("realized_volatility" in r for r in reasons),
+                        reasons)
+
+    def test_every_unreadable_number_leaves_a_durable_record(self):
+        """The rule the crash broke: a seat that answers badly is
+        rejected on the record and re-asked - never a raise that leaves
+        the run in a state no event explains."""
+        for number, value in enumerate(("sNaN", "-sNaN", "NaN", "abc")):
+            pack_path = os.path.join(self.base,
+                                     "percent-%d.json" % number)
+            canonical.write_canonical_json(pack_path, self.percent_pack())
+            run = self.harness(run_id="unreadable-run-%d" % number,
+                               pack=pack_path)
+            payload = copy.deepcopy(fixture_answer("chair_draft"))
+            for row in payload["draft_verdict"]["sizing_inputs"]:
+                if row["id"] == "realized_volatility":
+                    row["value"] = value
+            run.queue("chair_draft", payload)
+            run.drive(until="CHALLENGE")
+            rejected = [e for e in run.events()
+                        if e["event"] == "answer_rejected"]
+            self.assertEqual(len(rejected), 1, value)
+            self.assertEqual(rejected[0]["seat"], "chair_draft", value)
+            self.assertIn(host.status(run.run_dir)["state"],
+                          ("CHALLENGE", "CHAIR_DRAFT"), value)
+
+    # r3-2: a restated row CITES one fact but does not QUOTE it, and the
+    # publisher copied the fact's bound onto it anyway. Taking the
+    # magnitude of a negative percentage reverses the order: a signed
+    # ceiling (the true value no HIGHER than the recorded one) becomes,
+    # as a positive depth, a floor (the true fall no shallower). Atlas
+    # would have read the bound backwards - told a fall can only be
+    # shallower when it can only be deeper.
+    def published_envelope(self, pack, run_id, restate):
+        pack_path = os.path.join(self.base, run_id + "-pack.json")
+        canonical.write_canonical_json(pack_path, pack)
+        run = self.harness(run_id=run_id, pack=pack_path)
+        if restate:
+            for seat, key in (("chair_draft", "draft_verdict"),
+                              ("chair_resolve", "final_verdict")):
+                run.queue(seat, self.restated(
+                    key, copy.deepcopy(fixture_answer(seat))))
+        run.drive()
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+        return canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+
+    def test_a_restated_row_carries_no_bound(self):
+        envelope = self.published_envelope(
+            self.percent_pack(bound={"kind": "ceiling",
+                                     "published_line": BOUND_LINE}),
+            "restated-bound-run", restate=True)
+        rows = {row["id"]: row for row in envelope["sizing_inputs"]}
+        self.assertEqual(rows["drawdown_shape"]["value"], "0.38")
+        self.assertIsNone(rows["drawdown_shape"]["bound"])
+
+    def test_a_row_that_quotes_its_fact_keeps_the_bound(self):
+        """The rule must not throw away a bound it CAN stand behind."""
+        envelope = self.published_envelope(
+            bound_pack("avg_daily_dollar_volume", kind="floor", line=None),
+            "quoted-bound-run", restate=False)
+        rows = {row["id"]: row for row in envelope["sizing_inputs"]}
+        self.assertEqual(rows["liquidity"]["bound"],
+                         {"kind": "floor", "published_line": None})
+
+
+class TestEnvelopeIdentity(EngineTest):
+    """AB23(1), closing P-ANCHORLESS-7. The standalone package named no
+    security at all: a consumer had to open verdict.json to learn what
+    it was about."""
+
+    def test_the_standalone_package_names_its_own_subject(self):
+        run = self.harness(run_id="identity-run")
+        run.drive()
+        verdict = run.verdict()
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        subject = verdict["subject"]
+        self.assertEqual(envelope["subject_name"], subject["name"])
+        self.assertEqual(envelope["subject_ticker"], subject["ticker"])
+        self.assertEqual(envelope["subject_listing"], subject["listing"])
+        self.assertEqual(envelope["subject_currency"], subject["currency"])
+        self.assertEqual(envelope["run_id"], verdict["run_id"])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_identity_is_copied_from_the_invocation_not_the_chairman(self):
+        """A chairman cannot name the subject: the field does not exist
+        in his contract, and his answer is refused if he invents it."""
+        run = self.harness(run_id="chair-cannot-name-run")
+        forged = copy.deepcopy(fixture_answer("chair_draft"))
+        forged["draft_verdict"]["subject_name"] = "A Different Company"
+        run.queue("chair_draft", forged)
+        run.drive(until="CHALLENGE")
+        rejected = [e for e in run.events()
+                    if e["event"] == "answer_rejected"]
+        self.assertEqual(len(rejected), 1)
+        self.assertIn("subject_name", rejected[0]["reason"])
+        draft = canonical.read_json(
+            os.path.join(run.run_dir, "chair", "draft-verdict.json"))
+        self.assertNotIn("subject_name", draft)
+
+
+class TestEnvelopeAuditState(EngineTest):
+    """AB23(2), closing P-ANCHORLESS-8 - the gap Atlas said it cared
+    most about. Its effective rating is computed FROM the auditor's
+    ceiling, and a consumer reading the package alone saw a bare
+    rating."""
+
+    def test_the_audit_state_travels_on_both_copies(self):
+        run = self.harness(run_id="audit-state-run")
+        run.drive()
+        verdict = run.verdict()
+        standalone = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        for package in (verdict["atlas_envelope"], standalone):
+            self.assertEqual(package["challenge_status"],
+                             verdict["challenge"]["status"])
+            self.assertEqual(
+                package["endorsement_highest_rating_supported"],
+                (verdict["challenge"]["endorsement"] or {}).get(
+                    "highest_rating_supported"))
+            self.assertEqual(package["warnings"], verdict["warnings"])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_the_ab16_note_reaches_the_package_itself(self):
+        """The live Bitcoin shape: the auditor's ceiling is monitor,
+        the council publishes sell, and the note naming both words
+        must be readable without opening a second file."""
+        run = self.harness(run_id="divergent-envelope-run")
+        resolve = copy.deepcopy(fixture_answer("chair_resolve"))
+        resolve["final_verdict"]["rating"] = "sell"
+        run.queue("chair_resolve", resolve)
+
+        def ceiling(doc):
+            doc["findings"]["endorsement"] = {
+                "highest_rating_supported": "monitor"}
+        run.drive(challenge_mutate=ceiling)
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        self.assertEqual(envelope["rating"], "sell")
+        self.assertEqual(envelope["endorsement_highest_rating_supported"],
+                         "monitor")
+        notes = [w for w in envelope["warnings"]
+                 if w.startswith("Rating against the outside auditor")]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("published sell", notes[0])
+        self.assertIn("monitor", notes[0])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_a_failed_audit_says_so_inside_the_package(self):
+        run = self.harness(run_id="degraded-envelope-run")
+        run.drive(challenge="challenge-failure.json")
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        self.assertEqual(envelope["challenge_status"], "timeout")
+        self.assertIsNone(envelope["endorsement_highest_rating_supported"])
+        self.assertTrue(any("outside audit did not run" in w
+                            for w in envelope["warnings"]),
+                        envelope["warnings"])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+
+class TestEnvelopeRequiredFields(EngineTest):
+    """AB23(3), closing P-ANCHORLESS-2 extended: three fields the
+    publisher has always emitted were declared but not required, so a
+    package missing one validated clean."""
+
+    def test_each_of_the_three_is_now_required(self):
+        run = self.harness(run_id="required-fields-run")
+        run.drive()
+        sample = run.verdict()["atlas_envelope"]
+        schema = host._verdict_schema()["properties"]["atlas_envelope"]
+        self.assertEqual(validate.validate(sample, schema), [])
+        for field in ("asset_class", "product", "scenario_rating"):
+            short = {k: v for k, v in sample.items() if k != field}
+            errors = validate.validate(short, schema)
+            self.assertTrue(any(field in e for e in errors),
+                            "%s: %r" % (field, errors))
+
+
+class TestEnvelopeBoundTags(EngineTest):
+    """AB23(4), closing P-ANCHORLESS-10. A figure standing in for one
+    the filer never published is a CEILING, not a measurement (AB19,
+    AB20, AB22) - and the package carried it as an unqualified number,
+    so a consumer had to open the frozen pack to find out."""
+
+    def write_pack(self, pack):
+        path = os.path.join(self.base, "bound-pack.json")
+        canonical.write_canonical_json(path, pack)
+        return path
+
+    def published(self, pack, run_id):
+        run = self.harness(run_id=run_id, pack=self.write_pack(pack))
+        run.drive()
+        return run, canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+
+    def test_a_ceiling_fed_key_number_prints_its_bound_and_its_line(self):
+        run, envelope = self.published(bound_pack("market_cap"),
+                                       "bound-key-number-run")
+        rows = {row["name"]: row for row in envelope["key_numbers"]}
+        bound = rows["market value"]["bound"]
+        self.assertEqual(bound["kind"], "ceiling")
+        self.assertEqual(bound["published_line"], BOUND_LINE)
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_a_council_computed_key_number_carries_no_bound(self):
+        run, envelope = self.published(bound_pack("market_cap"),
+                                       "unbound-key-number-run")
+        for row in envelope["key_numbers"]:
+            self.assertIn("bound", row)
+            if row["name"] != "market value":
+                self.assertIsNone(row["bound"], row["name"])
+
+    def test_a_bound_sizing_row_carries_the_tag_and_a_computed_one_does_not(
+            self):
+        run, envelope = self.published(
+            bound_pack("avg_daily_dollar_volume", kind="floor", line=None),
+            "bound-sizing-run")
+        rows = {row["id"]: row for row in envelope["sizing_inputs"]}
+        self.assertEqual(rows["liquidity"]["bound"],
+                         {"kind": "floor", "published_line": None})
+        self.assertIsNone(rows["drawdown_shape"]["bound"])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_the_publisher_reads_the_pack_and_never_the_chairman(self):
+        """The chairman has no bound field to write: the tag on a row
+        is resolved from the frozen pack by the id the row cites."""
+        schema = host._seat_schemas()["draft_verdict"]
+        forged = copy.deepcopy(
+            fixture_answer("chair_draft")["draft_verdict"])
+        forged["key_numbers"][0]["bound"] = {"kind": "ceiling",
+                                             "published_line": "invented"}
+        self.assertTrue(validate.validate(forged, schema))
+
+
+class TestEnvelopeUnknownIdsAreFlagged(EngineTest):
+    """AB23(6): an unknown id is allowed with a declared unit, and the
+    package says so, so Atlas refuses its bound rather than guessing."""
+
+    def test_an_unknown_id_is_named_in_the_package(self):
+        run = self.harness(run_id="unknown-flag-run")
+        extra = {"id": "borrow_cost", "detail": "The cost to borrow.",
+                 "value": "0.02", "unit": "fraction_annualized",
+                 "as_of": "2026-08-28",
+                 "pack_fact_ids": ["market_cap", "net_cash"]}
+        for seat, key in (("chair_draft", "draft_verdict"),
+                          ("chair_resolve", "final_verdict")):
+            payload = copy.deepcopy(fixture_answer(seat))
+            payload[key]["sizing_inputs"].append(copy.deepcopy(extra))
+            run.queue(seat, payload)
+        run.drive()
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        self.assertEqual(envelope["unknown_sizing_ids"], ["borrow_cost"])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+    def test_a_package_of_pinned_ids_flags_nothing(self):
+        run = self.harness(run_id="no-unknown-run")
+        run.drive()
+        envelope = canonical.read_json(
+            os.path.join(run.run_dir, "atlas-envelope.json"))
+        self.assertEqual(envelope["unknown_sizing_ids"], [])
+
+
+class TestTheSchemaVersionIsBumpedLoudly(EngineTest):
+    """AB23(7): the shape changed, so the version says so. Published
+    runs keep the version they were written under and are never
+    rewritten."""
+
+    def test_a_run_published_now_states_1_3_0(self):
+        run = self.harness(run_id="version-run")
+        run.drive()
+        self.assertEqual(run.verdict()["schema_version"], "1.3.0")
+
+    def test_the_schema_declares_that_version_and_nothing_else(self):
+        schema = host._verdict_schema()
+        self.assertEqual(schema["properties"]["schema_version"]["const"],
+                         "1.3.0")
+
+
+def published_run_dirs():
+    """Every run directory in this checkout that actually published a
+    hand-off. The public copy carries none of them."""
+    root = os.path.join(ROOT, "council", "runs")
+    if not os.path.isdir(root):
+        return []
+    return sorted(
+        os.path.join(root, name) for name in os.listdir(root)
+        if os.path.exists(os.path.join(root, name, "atlas-envelope.json")))
+
+
+@unittest.skipUnless(published_run_dirs(),
+                     "no published run records stand in this checkout "
+                     "(the public copy)")
+class TestEveryPublishedRunStillReadsBack(unittest.TestCase):
+    """Records are records. A schema bump must not disturb one sitting
+    already published: read-back compares a run against its own record,
+    never against the schema in force today."""
+
+    def test_every_one_of_them_is_clean(self):
+        for run_dir in published_run_dirs():
+            self.assertEqual(quiet_readback(run_dir), 0,
+                             os.path.basename(run_dir))
+
+    def test_they_keep_the_version_they_were_written_under(self):
+        """The seven sittings on record were published under 1.0.0,
+        1.1.0 and 1.2.0. Not one of them is rewritten to the version
+        this unit introduces."""
+        for run_dir in published_run_dirs():
+            verdict = canonical.read_json(
+                os.path.join(run_dir, "verdict.json"))
+            self.assertIn(verdict["schema_version"],
+                          ("1.0.0", "1.1.0", "1.2.0"),
+                          os.path.basename(run_dir))
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

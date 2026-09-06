@@ -77,6 +77,28 @@ rules that matter most in practice:
   tags, because runs on record are never rewritten. Your capture is 1.3.0 and
   needs them. The migration is set out in
   `council/tests/test_evidence.py::to_contract_1_3_0`.
+- **The four sizing facts, in the units the hand-off is pinned to (ruling
+  AB23(6)).** Atlas reads the sizing rows by id and cannot ask what a number
+  meant, so each id now carries ONE unit and the chairman is refused if he
+  states another: `realized_volatility` and `implied_volatility` in
+  `fraction_annualized` (0.52 means 52% a year), `beta_vs_market` in `ratio`,
+  `liquidity` in `USD_per_day` (the value traded on an average day),
+  `event_dates` in `iso_date` (a date, or several — never a sentence about
+  the calendar), `drawdown_shape` in `fraction_of_price` (0.35 means a 35%
+  fall). The chairman quotes a single cited fact EXACTLY, so **capture the
+  facts these rows will quote in those units** and the sitting is easy.
+
+  Two escapes exist and no others. A reading computed from several facts is
+  stated in the pinned unit by the chairman, citing every operand. And a
+  fact carried in PERCENT may be published as its own fraction — the one
+  restatement the contract allows, because the anchorless bar insists on
+  reading its volatility fact as a percentage (`council/engine/ladder.py`)
+  while the hand-off publishes the same reading as a fraction; the machine
+  checks that arithmetic and nothing else is taken on trust. A unit that
+  merely fails to say what it measures — `ratio` on an annualized
+  volatility, `US$m` on a turnover — buys nothing: the row is refused, and
+  the chairman's only honest move is to set the value null and explain the
+  gap. Capture it right instead.
 - `sec.gov`'s archive refuses automated fetches; use `data.sec.gov` or the
   issuer's investor-relations copies.
 

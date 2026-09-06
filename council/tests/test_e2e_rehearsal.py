@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.lib import canonical, validate  # noqa: E402
-from council.engine import host, readback, runrecord  # noqa: E402
+from council.engine import briefs, host, readback  # noqa: E402
+from council.engine import runrecord  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 REH = os.path.join(ROOT, "council", "tests", "fixtures", "rehearsal")
@@ -201,6 +202,35 @@ class TestEndToEndRehearsal(unittest.TestCase):
         # The footer carries the same hash the envelope recorded.
         self.assertIn(envelope["verdict_hash"], page)
 
+        # Owner ruling AB23: the standalone package stands alone. It
+        # names its own subject and sitting, states the audit outcome
+        # and the auditor's ceiling, carries the whole warnings list,
+        # tags every row for bounds, and flags any sizing id the
+        # council's own list does not pin.
+        self.assertEqual(verdict["schema_version"], "1.3.0")
+        subject = verdict["subject"]
+        self.assertEqual(envelope["subject_name"], subject["name"])
+        self.assertEqual(envelope["subject_ticker"], subject["ticker"])
+        self.assertEqual(envelope["subject_listing"], subject["listing"])
+        self.assertEqual(envelope["subject_currency"],
+                         subject["currency"])
+        self.assertEqual(envelope["run_id"], RUN_ID)
+        self.assertEqual(envelope["challenge_status"], "success")
+        self.assertEqual(envelope["warnings"], verdict["warnings"])
+        self.assertEqual(envelope["unknown_sizing_ids"], [])
+        for row in envelope["key_numbers"] + envelope["sizing_inputs"]:
+            self.assertIn("bound", row)
+        # Every sizing row speaks the unit its id is pinned to.
+        for row in envelope["sizing_inputs"]:
+            pinned = briefs.pinned_sizing_unit(row["id"])
+            if row["value"] is not None:
+                self.assertEqual(row["unit"], pinned, row["id"])
+        # And the page shows the package as it travels.
+        atlas = page[page.index('<h2 id="atlas">'):]
+        self.assertIn(html.escape(subject["name"], quote=True), atlas)
+        self.assertIn("The outside audit ran, and the package says so.",
+                      atlas)
+
 
 class TestKindRehearsals(unittest.TestCase):
     """THEMES part 3: the same REAL chain, kind by kind - one canned
@@ -313,7 +343,40 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         with open(os.path.join(run_dir, "report.html"), "rb") as handle:
             page = handle.read().decode("utf-8")
+        self.last_run_dir = run_dir
         return verdict, page
+
+
+    def envelope_stands_alone(self, verdict, page, run_id):
+        """AB23, asserted the same way on every kind: the package names
+        its subject, carries the audit state, tags its rows, and the
+        read-back still holds field for field against the verdict's own
+        copy."""
+        envelope = canonical.read_json(
+            os.path.join(self.last_run_dir, "atlas-envelope.json"))
+        subject = verdict["subject"]
+        self.assertEqual(verdict["schema_version"], "1.3.0")
+        self.assertEqual(envelope["subject_name"], subject["name"])
+        self.assertEqual(envelope["subject_ticker"], subject["ticker"])
+        self.assertEqual(envelope["run_id"], run_id)
+        self.assertEqual(envelope["challenge_status"],
+                         verdict["challenge"]["status"])
+        self.assertEqual(
+            envelope["endorsement_highest_rating_supported"],
+            (verdict["challenge"]["endorsement"] or {}).get(
+                "highest_rating_supported"))
+        self.assertEqual(envelope["warnings"], verdict["warnings"])
+        for row in envelope["key_numbers"] + envelope["sizing_inputs"]:
+            self.assertIn("bound", row)
+        for row in envelope["sizing_inputs"]:
+            if row["value"] is not None:
+                self.assertEqual(row["unit"],
+                                 briefs.pinned_sizing_unit(row["id"]),
+                                 row["id"])
+        atlas = page[page.index('<h2 id="atlas">'):]
+        self.assertIn(html.escape(subject["name"], quote=True), atlas)
+        self.assertEqual(readback.check(self.last_run_dir), 0)
+        return envelope
 
     def test_a_canned_basket_run_end_to_end(self):
         verdict, page = self.drive_canned(
@@ -345,6 +408,8 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertIn("internal emphasis — a statement about the thesis "
                       "itself, never an instruction to any portfolio:",
                       page)
+        self.envelope_stands_alone(verdict, page,
+                                   "rehearsal-basket-zero-model")
 
     def test_a_canned_theme_run_end_to_end(self):
         verdict, page = self.drive_canned(
@@ -380,6 +445,8 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertIn('<span class="tag">GSTA</span> INVENTED FIXTURE - '
                       "reopen if Grid Storage Alpha closes at or under "
                       "40.00 USD.", page)
+        self.envelope_stands_alone(verdict, page,
+                                   "rehearsal-theme-zero-model")
 
     def test_a_canned_anchorless_run_end_to_end(self):
         """ANCHORLESS-SPEC section 9: one canned rehearsal on an asset
@@ -447,6 +514,21 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertIn("20.69", page)          # the bar it cleared
         self.assertIn("25", page)             # the recovery duration
         self.assertIn("2026-09-16", page)     # the dated calendar
+
+        # AB23 on an anchorless subject: the package stands alone, and
+        # the sizing rows speak the pinned units even though the bar
+        # reads the SAME volatility fact as a percentage - the one
+        # restatement the contract allows, checked by the machine.
+        package = self.envelope_stands_alone(
+            verdict, page, "rehearsal-anchorless-zero-model")
+        rows = {row["id"]: row for row in package["sizing_inputs"]}
+        self.assertEqual(rows["realized_volatility"]["value"], "0.486")
+        self.assertEqual(rows["realized_volatility"]["unit"],
+                         "fraction_annualized")
+        self.assertEqual(block["volatility_pct"], "48.60")
+        self.assertEqual(rows["drawdown_shape"]["unit"],
+                         "fraction_of_price")
+        self.assertEqual(rows["event_dates"]["unit"], "iso_date")
 
     def test_a_canned_anchorless_run_refuses_an_unearned_rating(self):
         """The same canned bench with the chairman's rating raised one
@@ -529,6 +611,16 @@ class TestKindRehearsals(unittest.TestCase):
         # the escaped note - the reader's own text, not the raw string.
         self.assertIn('<div class="card alarm"><span class="shout">%s</span>'
                       "</div>" % html.escape(notes[0], quote=True), page)
+        # AB23(2): and the same note is INSIDE the package, so a reader
+        # that never opens the verdict still learns the council
+        # published sell under a ceiling of monitor.
+        package = canonical.read_json(
+            os.path.join(self.last_run_dir, "atlas-envelope.json"))
+        self.assertEqual(package["rating"], "sell")
+        self.assertEqual(package["endorsement_highest_rating_supported"],
+                         "monitor")
+        self.assertIn(notes[0], package["warnings"])
+        self.assertEqual(readback.check(self.last_run_dir), 0)
 
     def test_an_empty_theme_is_refused_with_the_shopping_list(self):
         work = os.path.join(self.base, "empty-theme")

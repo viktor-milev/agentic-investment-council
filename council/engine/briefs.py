@@ -56,6 +56,54 @@ ADVISOR_SEATS = [
 
 BLIND_LETTERS = ["A", "B", "C", "D", "E"]
 
+# The PINNED sizing-input units (owner ruling AB23(6), confirmed AB24).
+# One unit per id, so a reader of the hand-off can never take a fraction
+# for a percent. Atlas reads these rows by id against a table of what
+# each may feed; before this ruling the ids were stable across all seven
+# published sittings and the units were not - realized_volatility alone
+# had been labelled six different ways, and drawdown_shape had been both
+# a percentage and a price. The value beside each id says what the
+# NUMBER means, and host._sizing_value_reasons refuses one that does not.
+SIZING_UNITS = {
+    "realized_volatility": "fraction_annualized",
+    "implied_volatility": "fraction_annualized",
+    "beta_vs_market": "ratio",
+    "liquidity": "USD_per_day",
+    "event_dates": "iso_date",
+    "drawdown_shape": "fraction_of_price",
+}
+
+# What each pinned unit MEANS, in the chair's own brief and in every
+# refusal message - one sentence, so the words a chairman reads and the
+# words that refuse him are the same words.
+SIZING_UNIT_MEANINGS = {
+    "fraction_annualized": "a fraction of 1 per year, never a percentage "
+                           "- 0.52 means 52% a year",
+    "ratio": "a plain multiple, no unit attached - 1.15 means 1.15 times",
+    "USD_per_day": "US dollars of value traded on an average day, as a "
+                   "plain number of dollars",
+    "iso_date": "a date as YYYY-MM-DD, or several such dates - a value, "
+                "never a sentence about the calendar",
+    "fraction_of_price": "a fall stated as a fraction of the reference "
+                         "price, counted downward as a positive depth - "
+                         "0.35 means a 35% fall",
+}
+
+
+def sizing_base_id(sizing_id):
+    """The concept a sizing-input id names, with any per-member suffix
+    removed: `liquidity__ovh` is the liquidity concept. The contract
+    builds a per-member id as `<concept>__<slug>` and a slug may itself
+    carry underscores (BRK.B is brk_b), so the split is on the FIRST
+    `__` and nothing else."""
+    return str(sizing_id).split("__", 1)[0]
+
+
+def pinned_sizing_unit(sizing_id):
+    """The one unit this id must carry, or None where the id is not one
+    the ruling pins. Suffixed ids inherit the base id's unit (AB23(6))."""
+    return SIZING_UNITS.get(sizing_base_id(sizing_id))
+
 # The five lenses, ruled prose reused from the old advisor brief. The risk
 # lens is rewritten per the rebuild ruling: it is the ASSET's risk (drawdown
 # shape, volatility regime, gap behavior, liquidity), never the owner's book,
@@ -901,6 +949,34 @@ once.
     return head, evidence
 
 
+def _sizing_unit_table():
+    """The pinned units, rendered from the table the checks enforce
+    (owner ruling AB23(6)). Rendering rather than restating is the
+    same rule the bound sentence follows: the words a chairman reads
+    cannot drift from the words that refuse him."""
+    rows = "\n".join(
+        "    - `%s`: **%s** - %s" % (sizing_id, unit,
+                                     SIZING_UNIT_MEANINGS[unit])
+        for sizing_id, unit in SIZING_UNITS.items())
+    return """  - THE UNIT OF EACH SIZING INPUT IS PINNED, one per id, and the machine refuses a
+    draft that states another. The portfolio system reads these rows by id and cannot
+    ask you what you meant; a fraction read as a percentage is wrong by a hundred times.
+%s
+    A per-member entry inherits its base id's unit (`liquidity__abc` is in `USD_per_day`).
+    Any OTHER id is allowed only if you declare its unit, and the hand-off flags it as an
+    id the reader does not know.
+    ONE restatement is allowed and there are no others: where the record carries the
+    reading as a PERCENTAGE and the id is pinned to a fraction, publish it as that
+    fraction, citing that one fact - move the decimal point and change nothing else. The
+    machine checks that arithmetic, and a fall recorded as a negative percentage
+    publishes as the positive depth its unit describes. (This exists because the scenario
+    ladder must read its volatility fact as a percentage, so on an asset rated from a
+    ladder the same figure is a percentage there and a fraction here.) A unit that merely
+    fails to say what it measures licenses nothing. Where the record holds no such figure
+    at all, set the value to null and explain the gap in the detail.
+""" % rows
+
+
 _DRAFT_CONTRACT_BASE = """## The draft verdict - every field, in plain terms
 
 - `rating`: exactly one of `strong_buy`, `buy`, `hold`, `sell`, `monitor`. `monitor` is a
@@ -930,7 +1006,7 @@ _DRAFT_CONTRACT_BASE = """## The draft verdict - every field, in plain terms
   are machine-checked; the arithmetic is on your honor and the reviewer's desk); a value
   citing no fact, or only a passage, is refused; where the pack carries no figure, the
   value is null with the gap explained in the detail.
-- `evidence_dependencies`: the case-file fact and passage ids your ruling actually rests
+%s- `evidence_dependencies`: the case-file fact and passage ids your ruling actually rests
   on - at least one, every one present in the case file.
 - `key_numbers`: the handful of numbers the hand-off envelope should carry forward:
   `[{"name", "value", "unit", "as_of", "pack_fact_id"}]`. `pack_fact_id` names a TIER-1
@@ -1021,7 +1097,7 @@ _EQUITY_LADDER_CONTRACT = """- `scenario_rating`: OPTIONAL here, and supporting 
 def draft_contract(subject):
     """The draft-verdict contract for this subject: the base text plus
     only the additions the subject's kind and class need."""
-    text = _DRAFT_CONTRACT_BASE
+    text = _DRAFT_CONTRACT_BASE % _sizing_unit_table()
     if subjects.is_anchorless(subject):
         text += _CHAIR_LADDER_CONTRACT
     else:

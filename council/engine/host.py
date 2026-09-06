@@ -343,6 +343,149 @@ def _visible(value):
     return False
 
 
+def _sizing_value_reasons(sizing_id, unit, value):
+    """Whether the VALUE says what its pinned unit means (AB23(6)).
+    A unit label alone does not stop the misreading the ruling names:
+    `fraction_annualized` beside the number 52 is still a percentage,
+    and `iso_date` beside a sentence about the calendar is still a
+    sentence. Returns the one reason it is refused, or nothing."""
+    text = str(value).strip()
+    meaning = briefs.SIZING_UNIT_MEANINGS[unit]
+
+    def refuse(what):
+        return ["sizing input %r is stated in %s (%s), but its value %r "
+                "%s" % (sizing_id, unit, meaning, value, what)]
+
+    if unit == "iso_date":
+        dates = text.replace(",", " ").replace(";", " ").split()
+        if not dates:
+            return refuse("names no date at all")
+        import datetime
+        for one in dates:
+            # The SHAPE first, then the calendar. This runtime's
+            # fromisoformat also reads the basic and week-date forms -
+            # `20260910` and `2026-W37` both parse, and a week date
+            # resolves to a Monday nobody wrote (audit finding r1-2).
+            try:
+                if (len(one) != 10 or one[4] != "-" or one[7] != "-"):
+                    raise ValueError(one)
+                datetime.date.fromisoformat(one)
+            except ValueError:
+                return refuse("is not a date, nor a list of dates, "
+                              "written as YYYY-MM-DD")
+        return []
+    try:
+        number = float(text)
+    except ValueError:
+        return refuse("is not a number")
+    if number != number or number in (float("inf"), float("-inf")):
+        return refuse("is not a finite number")
+    if unit == "fraction_annualized" and not 0 <= number < 5:
+        return refuse("is not a fraction of 1 - a percentage written "
+                      "here reads a hundred times too large")
+    if unit == "fraction_of_price" and not 0 <= number <= 1:
+        return refuse("is not a fall between nothing and the whole "
+                      "price, counted downward as a positive depth")
+    if unit == "USD_per_day" and number < 0:
+        return refuse("is negative, and a day's traded value cannot be")
+    return []
+
+
+FRACTION_UNITS = ("fraction_annualized", "fraction_of_price")
+
+
+def _is_percent_unit(unit):
+    """The project's own test for a unit that says percent, reused
+    verbatim from the anchorless bar (council/engine/ladder.py)."""
+    text = str(unit or "")
+    return "percent" in text.lower() or "%" in text
+
+
+def _restated_percent(entry, fact, pinned):
+    """Whether a single-cited pinned row is THE ONE restatement the
+    contract allows: a percentage carried in the pack, published as the
+    fraction the row's id is pinned to.
+
+    It exists because two ruled requirements meet on one fact. The
+    anchorless bar reads the five-year volatility as a PERCENTAGE and
+    refuses any other unit, precisely so the bar cannot be wrong by a
+    hundred (ladder._percent_fact); the hand-off publishes the same
+    reading as a FRACTION (AB23(6)), for exactly the same reason.
+    Without this the capture would have to carry one measurement twice,
+    in two units, for two readers - and two copies of one number are a
+    disagreement waiting to happen.
+
+    Nothing here is taken on trust: the machine does the arithmetic. A
+    fall recorded as a negative percentage publishes as the positive
+    depth the ruling defines, in the same sentence
+    briefs.SIZING_UNIT_MEANINGS carries.
+
+    Returns None when the row is not a restatement at all (the ordinary
+    exact quote applies), True when it restates its fact correctly, and
+    False when it was meant as one and the arithmetic does not hold."""
+    if pinned not in FRACTION_UNITS or entry.get("unit") != pinned:
+        return None
+    if not _is_percent_unit(fact.get("unit")):
+        return None
+    import decimal
+    # EVERY decimal operation sits inside the guard, comparison
+    # included. `Decimal("sNaN")` constructs happily and signals on the
+    # comparison instead, so a chairman writing that one word raised
+    # out of this checker, past _ingest_answers, and left the run in a
+    # state no event explained - wedged again on every retry (audit
+    # finding r3-1). A value this cannot read is a refused value, never
+    # a crash.
+    try:
+        stated = decimal.Decimal(str(entry.get("value")).strip())
+        published = decimal.Decimal(str(fact.get("value")).strip()) / 100
+        if pinned == "fraction_of_price":
+            published = abs(published)
+        return stated == published
+    except (ArithmeticError, ValueError):
+        return False
+
+
+def _sizing_unit_reasons(entry):
+    """AB23(6): ONE unit per sizing-input id, so an automated reader can
+    never take a fraction for a percentage. The ids were stable across
+    all seven published sittings; the units were not.
+
+    A row with no figure carries no unit and is left alone - a stated
+    gap has nothing in it to misread. A row that HAS a figure carries
+    the pinned unit and a value that means what the unit says. An id
+    the ruling does not pin must declare its own unit, and the hand-off
+    flags it."""
+    sizing_id = entry.get("id")
+    unit = entry.get("unit")
+    value = entry.get("value")
+    pinned = briefs.pinned_sizing_unit(sizing_id)
+    if pinned is None:
+        if _visible(unit):
+            return []
+        return ["sizing input %r is not one of the ids the ruling pins a "
+                "unit to, so it must DECLARE its own unit - the hand-off "
+                "flags an unknown id and the portfolio system refuses to "
+                "guess what it is measured in. The pinned ids are: %s"
+                % (sizing_id, ", ".join(sorted(briefs.SIZING_UNITS)))]
+    if unit is None:
+        if value is None:
+            return []
+        return ["sizing input %r carries a value with no unit; it must "
+                "carry %r (%s)"
+                % (sizing_id, pinned, briefs.SIZING_UNIT_MEANINGS[pinned])]
+    if unit != pinned:
+        return ["sizing input %r must be stated in %r (%s); it is stated "
+                "in %r. The unit is pinned one per id, so quote a pack "
+                "fact already in that unit, or compute the reading into "
+                "it citing every operand, or set the value to null with "
+                "the gap explained in the detail."
+                % (sizing_id, pinned,
+                   briefs.SIZING_UNIT_MEANINGS[pinned], unit)]
+    if value is None:
+        return []
+    return _sizing_value_reasons(sizing_id, pinned, value)
+
+
 def check_draft_verdict(draft, pack, schemas):
     """Every reason this draft verdict is refused, in plain words.
     Empty list = the draft stands."""
@@ -401,7 +544,19 @@ def check_draft_verdict(draft, pack, schemas):
                        "missing: %s" % ", ".join(missing))
     tier1_by_id = {fact["id"]: fact for fact in capture.get("tier1", [])}
     for entry in draft["sizing_inputs"]:
+        reasons.extend(_sizing_unit_reasons(entry))
         cited = entry.get("pack_fact_ids", [])
+        # A row rests on each fact ONCE. Citing one fact twice made the
+        # row look computed to every check below - the exact-quote test
+        # is `len(cited) == 1` - so any figure at all could ride one
+        # real fact id, and the publisher read the same length and
+        # dropped the fact's bound tag (audit finding r1-3).
+        if len(set(cited)) != len(cited):
+            reasons.append(
+                "sizing input %r cites the same pack fact more than "
+                "once - a row rests on each fact once, and a row "
+                "resting on one fact quotes it exactly"
+                % entry.get("id"))
         for rid in cited:
             if rid not in pack_ids:
                 reasons.append("sizing input %r rests on %r, which is not "
@@ -426,7 +581,23 @@ def check_draft_verdict(draft, pack, schemas):
         elif value is not None and len(cited) == 1:
             if cited[0] in tier1_by_id:
                 fact = tier1_by_id[cited[0]]
-                for field in ("value", "unit", "as_of"):
+                # A pinned row may restate a percentage as its own
+                # fraction and nothing else; the machine checks that
+                # arithmetic, and the date still quotes the fact.
+                restated = _restated_percent(
+                    entry, fact, briefs.pinned_sizing_unit(entry.get("id")))
+                checked = (("value", "unit", "as_of") if restated is None
+                           else ("as_of",))
+                if restated is False:
+                    reasons.append(
+                        "sizing input %r restates the pack's %r (%s %s) "
+                        "as %s, but %r is not that reading as a "
+                        "fraction - a restatement moves the decimal "
+                        "point and changes nothing else"
+                        % (entry.get("id"), cited[0], fact.get("value"),
+                           fact.get("unit"), entry.get("unit"),
+                           entry.get("value")))
+                for field in checked:
                     if entry.get(field) != fact.get(field):
                         reasons.append(
                             "sizing input %r cites only %r but its %s "

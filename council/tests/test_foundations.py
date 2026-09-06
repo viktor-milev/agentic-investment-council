@@ -122,10 +122,14 @@ class TestContractSchemas(unittest.TestCase):
             else:
                 validate.check_schema(doc, os.path.basename(path))
 
-    def test_verdict_schema_is_version_1_2_0(self):
+    def test_verdict_schema_is_version_1_3_0(self):
+        # Bumped by unit ENVELOPE-ATLAS (owner ruling AB23): the
+        # hand-off gained identity, audit state, bound tags and
+        # pinned sizing units. Runs already published keep the
+        # version they were written under and are never rewritten.
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.2.0")
+        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.3.0")
 
     def test_rating_scale_is_the_owners_five_words(self):
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:

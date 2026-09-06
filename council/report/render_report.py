@@ -1796,6 +1796,92 @@ def _challenger_section(page, run):
 
 # --- 11. What the portfolio system receives ----------------------------------------------------
 
+def _envelope_identity(envelope):
+    """The subject as the package itself names it (owner ruling
+    AB23(1)) - the name, and whichever of ticker, listing and currency
+    the subject actually has. An anchorless subject carries no ticker
+    and none is invented here."""
+    parts = [part for part in (envelope.get("subject_ticker"),
+                               envelope.get("subject_listing"),
+                               envelope.get("subject_currency"))
+             if part]
+    name = envelope.get("subject_name") or ""
+    if not parts:
+        return name
+    return "%s (%s)" % (name, ", ".join(str(part) for part in parts))
+
+
+def _atlas_audit_state(page, envelope):
+    """What the package says about the outside audit (owner ruling
+    AB23(2)). The portfolio system computes its effective rating FROM
+    the auditor's ceiling, and until this the package carried a bare
+    rating: a reader had to open the verdict to learn a buy was
+    capped."""
+    if "challenge_status" not in envelope:
+        # A package published under contract 1.2.0 or earlier carries no
+        # audit state at all. Absence is not a negative finding: saying
+        # the audit did not run, or that the auditor endorsed no
+        # ceiling, would be false on every one of the sittings on record
+        # (audit finding r1-4). What the audit did is above, in the
+        # challenge round - it is simply not in the package.
+        page.add('<div class="card">This package predates the '
+                 "audit-state fields, so it carries a bare rating. What "
+                 "the outside audit did, and how high it would go, is "
+                 "in the challenge round above &mdash; not inside the "
+                 "package.</div>")
+        return
+    status = envelope.get("challenge_status")
+    if status == "success":
+        told = "The outside audit ran, and the package says so."
+    else:
+        told = ("The outside audit did NOT run (%s), and the package "
+                "says so."
+                % esc(CHALLENGE_STATUS_WORDS.get(
+                    status, status or "no status recorded")))
+    ceiling = envelope.get("endorsement_highest_rating_supported")
+    if ceiling is not None:
+        told += (" The highest rating the auditor said the record "
+                 "supports is <strong>%s</strong>."
+                 % esc(RATING_WORDS.get(ceiling, ceiling)))
+    elif status == "success":
+        told += (" The auditor endorsed no ceiling, so the package "
+                 "carries none.")
+    else:
+        # The ceiling is null on EVERY failed audit because none was
+        # ACCEPTED - not because anybody declined to set one. Saying
+        # "the auditor endorsed no ceiling" there draws a conclusion
+        # from an audit that never happened (audit finding r3-3); and
+        # saying nobody answered is false on two of the six statuses,
+        # where the challenger did answer and the machine threw the
+        # answer away - _challenger_section says exactly that a few
+        # sections up (audit finding r4-1). One sentence is true in
+        # every case: nothing was accepted.
+        told += (" The audit did not complete, so no ceiling was "
+                 "accepted and the package carries none &mdash; a gap, "
+                 "not the auditor&#x27;s blessing.")
+    carried = len(envelope.get("warnings") or [])
+    told += (" Every warning on this verdict travels inside the package "
+             "too &mdash; %d of them, the same ones shown at the top of "
+             "this page." % carried)
+    page.add('<div class="card">%s</div>' % told)
+
+
+def _bound_cell(row):
+    """The bound tag on one hand-off row, in the same words the case
+    files and the evidence table use - or nothing, where the row is a
+    plain measurement (owner ruling AB23(4))."""
+    words = _bound_words(row.get("bound"))
+    if not words:
+        return ""
+    tag = row.get("bound") or {}
+    cell = '<div class="muted small">%s</div>' % esc(words)
+    if tag.get("published_line"):
+        cell += ('<div class="muted small">The published line, as the '
+                 "capture names it: %s</div>"
+                 % esc(" ".join(str(tag["published_line"]).split())))
+    return cell
+
+
 def _atlas_section(page, run):
     envelope = run["verdict"].get("atlas_envelope") or {}
     page.section("atlas", "What the portfolio system receives")
@@ -1823,20 +1909,36 @@ def _atlas_section(page, run):
     if vehicle:
         subject_rows += ('<tr><th class="nowrap">Vehicle</th>'
                          "<td>%s</td></tr>" % esc(_member_words(vehicle)))
+    # Owner ruling AB23: the package names its own subject and carries
+    # the audit state, so the portfolio system never has to open a
+    # second file to learn what was judged or whether a rating was
+    # capped. The page shows the package as it travels.
+    identity_rows = ""
+    if envelope.get("subject_name"):
+        identity_rows += ('<tr><th class="nowrap">Subject</th>'
+                          "<td>%s</td></tr>"
+                          % esc(_envelope_identity(envelope)))
+    if envelope.get("run_id"):
+        identity_rows += ('<tr><th class="nowrap">Sitting</th>'
+                          "<td><code>%s</code></td></tr>"
+                          % esc(envelope["run_id"]))
     page.add("<table>"
+             "%s"
              '<tr><th class="nowrap">Rating</th><td>%s</td></tr>'
              "%s"
              '<tr><th class="nowrap">Hash of the frozen evidence pack &mdash; a fingerprint no '
              "other file shares</th><td><code>%s</code></td></tr></table>"
-             % (esc(RATING_WORDS.get(rating, rating or "")), subject_rows,
-                esc(envelope.get("pack_hash", ""))))
+             % (identity_rows, esc(RATING_WORDS.get(rating, rating or "")),
+                subject_rows, esc(envelope.get("pack_hash", ""))))
+    _atlas_audit_state(page, envelope)
     proportions = envelope.get("thesis_proportions") or []
     if proportions:
         _proportions_card(page, proportions)
     key_numbers = envelope.get("key_numbers") or []
     if key_numbers:
-        rows = "".join('<tr><td>%s</td><td class="nowrap">%s %s</td><td class="nowrap">%s</td></tr>'
-                       % (esc(k.get("name", "")), esc(format_number(k.get("value"), k.get("unit"))),
+        rows = "".join('<tr><td>%s%s</td><td class="nowrap">%s %s</td><td class="nowrap">%s</td></tr>'
+                       % (esc(k.get("name", "")), _bound_cell(k),
+                          esc(format_number(k.get("value"), k.get("unit"))),
                           esc(_unit_words(k.get("unit")) or ""), esc(k.get("as_of", "")))
                        for k in key_numbers)
         page.add('<table><tr><th>key number</th><th class="nowrap">value</th>'
@@ -1854,15 +1956,23 @@ def _atlas_section(page, run):
             else:
                 cell = "%s %s" % (format_number(value, entry.get("unit")),
                                   _unit_words(entry.get("unit")) or "")
-            rows.append('<tr><td>%s%s</td><td class="nowrap">%s</td>'
+            rows.append('<tr><td>%s%s%s</td><td class="nowrap">%s</td>'
                         '<td class="nowrap">%s</td></tr>'
                         % (_constituent_tag(entry),
-                           esc(entry.get("detail", "")), esc(cell.strip()),
+                           esc(entry.get("detail", "")),
+                           _bound_cell(entry), esc(cell.strip()),
                            esc(entry.get("as_of") or "")))
         page.add('<table><tr><th>sizing fact about the asset</th>'
                  '<th class="nowrap">value</th>'
                  '<th class="nowrap">as of</th></tr>%s</table>'
                  % "".join(rows))
+    unknown = envelope.get("unknown_sizing_ids") or []
+    if unknown:
+        page.add('<div class="muted small">Sizing facts whose meaning is '
+                 "not fixed by the council&#x27;s own list, so the "
+                 "portfolio system reads the unit each one states rather "
+                 "than assuming one: %s.</div>"
+                 % esc(", ".join(unknown)))
     if envelope.get("for_atlas_note") is not None:
         page.add('<div class="card prominent"><span class="lead">The owner&#x27;s note for the '
                  'portfolio system, verbatim</span><div class="verbatim">%s</div></div>'

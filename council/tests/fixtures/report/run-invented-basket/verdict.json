@@ -1,5 +1,7 @@
 {
  "atlas_envelope": {
+  "asset_class": "equity",
+  "challenge_status": "success",
   "constituents": [
    {
     "currency": "USD",
@@ -14,10 +16,12 @@
     "ticker": "BGRD"
    }
   ],
+  "endorsement_highest_rating_supported": null,
   "for_atlas_note": null,
   "key_numbers": [
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "name": "Alpha Chips last price",
     "pack_fact_id": "price_last__achp",
     "unit": "USD",
@@ -25,6 +29,7 @@
    },
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "name": "Beta Grid last price",
     "pack_fact_id": "price_last__bgrd",
     "unit": "USD",
@@ -32,10 +37,14 @@
    }
   ],
   "pack_hash": "98b0d64f8c2f33d17192ac3086c68affbaad4b4af15d87644c425b81eb725ca5",
+  "product": null,
   "rating": "buy",
+  "run_id": "report-fixture-invented-basket",
+  "scenario_rating": null,
   "sizing_inputs": [
    {
     "as_of": null,
+    "bound": null,
     "detail": "INVENTED - the pack carries no realized volatility series; the gap is stated here.",
     "id": "realized_volatility",
     "pack_fact_ids": [],
@@ -44,6 +53,7 @@
    },
    {
     "as_of": null,
+    "bound": null,
     "detail": "INVENTED - the pack carries no liquidity series; the gap is stated here.",
     "id": "liquidity",
     "pack_fact_ids": [],
@@ -52,6 +62,7 @@
    },
    {
     "as_of": null,
+    "bound": null,
     "detail": "INVENTED - the pack carries no event dates series; the gap is stated here.",
     "id": "event_dates",
     "pack_fact_ids": [],
@@ -60,6 +71,7 @@
    },
    {
     "as_of": null,
+    "bound": null,
     "detail": "INVENTED - the pack carries no drawdown shape series; the gap is stated here.",
     "id": "drawdown_shape",
     "pack_fact_ids": [],
@@ -68,6 +80,7 @@
    },
    {
     "as_of": null,
+    "bound": null,
     "constituent": "ACHP",
     "detail": "INVENTED - the average value changing hands daily in one leg of the pair; the pack carries no such series, so the gap is stated here.",
     "id": "average_daily_value_traded__achp",
@@ -76,7 +89,11 @@
     "value": null
    }
   ],
+  "subject_currency": "USD",
   "subject_kind": "basket",
+  "subject_listing": null,
+  "subject_name": "AI Infrastructure Pair (INVENTED BASKET)",
+  "subject_ticker": null,
   "thesis_proportions": [
    {
     "constituent": "ACHP",
@@ -122,8 +139,12 @@
     }
    ]
   },
+  "unknown_sizing_ids": [
+   "average_daily_value_traded__achp"
+  ],
   "vehicle": null,
-  "verdict_hash": null
+  "verdict_hash": null,
+  "warnings": []
  },
  "challenge": {
   "change_appendix": [],
@@ -204,7 +225,7 @@
  "rating": "buy",
  "run_id": "report-fixture-invented-basket",
  "scenario_rating": null,
- "schema_version": "1.2.0",
+ "schema_version": "1.3.0",
  "sizing_inputs": [
   {
    "as_of": null,

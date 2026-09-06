@@ -79,19 +79,19 @@
      "next_results_date_checked",
      "events_calendar_check"
     ],
-    "unit": "date",
+    "unit": "iso_date",
     "value": "2026-10-22"
    },
    {
     "as_of": "2026-08-28",
-    "detail": "The year's range ran 150.20 down to 80.10 - a 47 percent peak-to-trough swing, with the floor tested twice; expect deep drawdowns without news.",
+    "detail": "The year's range ran 150.20 down to 80.10 - a fall of 0.47 of the peak, with the floor tested twice; expect deep drawdowns without news.",
     "id": "drawdown_shape",
     "pack_fact_ids": [
      "range_52w_low",
      "range_52w_high"
     ],
-    "unit": "%",
-    "value": "47"
+    "unit": "fraction_of_price",
+    "value": "0.47"
    }
   ],
   "tripwires": {

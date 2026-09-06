@@ -56,8 +56,8 @@
       {
         "id": "realized_volatility",
         "detail": "Ninety-day realized volatility, annualized.",
-        "value": "34",
-        "unit": "percent annualized",
+        "value": "0.34",
+        "unit": "fraction_annualized",
         "as_of": "2026-08-28",
         "pack_fact_ids": [
           "realized_vol_90d"
@@ -67,7 +67,7 @@
         "id": "liquidity",
         "detail": "Average daily traded value; an exit of size takes days on this tape.",
         "value": "18000000",
-        "unit": "USD per day",
+        "unit": "USD_per_day",
         "as_of": "2026-08-28",
         "pack_fact_ids": [
           "avg_daily_dollar_volume"
@@ -77,7 +77,7 @@
         "id": "event_dates",
         "detail": "Third-quarter results, the one scheduled gap event on the record.",
         "value": "2026-10-20",
-        "unit": "date",
+        "unit": "iso_date",
         "as_of": "2026-08-25",
         "pack_fact_ids": [
           "next_results_date_checked"
@@ -86,8 +86,8 @@
       {
         "id": "drawdown_shape",
         "detail": "Demonstrated worst fall over five years; the price has fallen by more than a third before and can again.",
-        "value": "38",
-        "unit": "percent",
+        "value": "0.38",
+        "unit": "fraction_of_price",
         "as_of": "2026-08-28",
         "pack_fact_ids": [
           "max_drawdown_5y"

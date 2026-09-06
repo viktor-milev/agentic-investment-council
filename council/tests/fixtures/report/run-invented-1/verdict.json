@@ -1,10 +1,14 @@
 {
  "atlas_envelope": {
+  "asset_class": "equity",
+  "challenge_status": "success",
   "constituents": null,
+  "endorsement_highest_rating_supported": "hold",
   "for_atlas_note": "Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
   "key_numbers": [
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "name": "last price",
     "pack_fact_id": "last_price",
     "unit": "USD",
@@ -12,6 +16,7 @@
    },
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "name": "realized volatility, 90 days",
     "pack_fact_id": "realized_vol_90d",
     "unit": "%",
@@ -19,10 +24,14 @@
    }
   ],
   "pack_hash": "ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12ab12",
+  "product": null,
   "rating": "monitor",
+  "run_id": "report-fixture-invented-1",
+  "scenario_rating": null,
   "sizing_inputs": [
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "detail": "Realized volatility over the last 90 days.",
     "id": "realized_vol_90d",
     "pack_fact_ids": [
@@ -33,6 +42,7 @@
    },
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "detail": "Average daily turnover in the shares, three-month reading.",
     "id": "avg_daily_turnover",
     "pack_fact_ids": [
@@ -43,6 +53,7 @@
    },
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "detail": "The deepest peak-to-trough fall in the last five years.",
     "id": "deepest_drawdown_5y",
     "pack_fact_ids": [],
@@ -51,6 +62,7 @@
    },
    {
     "as_of": "2026-08-28",
+    "bound": null,
     "detail": "The next scheduled results date.",
     "id": "next_results_date",
     "pack_fact_ids": [],
@@ -58,7 +70,11 @@
     "value": "2026-11-05"
    }
   ],
+  "subject_currency": "USD",
   "subject_kind": "single_stock",
+  "subject_listing": "INVENTED-X",
+  "subject_name": "Specimen Works",
+  "subject_ticker": "SPWK",
   "thesis_proportions": null,
   "tripwires": {
    "falsifiers": [
@@ -93,8 +109,18 @@
     }
    ]
   },
+  "unknown_sizing_ids": [
+   "realized_vol_90d",
+   "avg_daily_turnover",
+   "deepest_drawdown_5y",
+   "next_results_date"
+  ],
   "vehicle": null,
-  "verdict_hash": null
+  "verdict_hash": null,
+  "warnings": [
+   "The rating moved after the outside audit. The outside auditor did not see this rating.",
+   "One frozen fact is older than its own freshness rule. The council reasoned over it knowingly."
+  ]
  },
  "challenge": {
   "change_appendix": [
@@ -164,7 +190,6 @@
   "magnitude": "about a fifth above the subject's own five-year rating",
   "read": "rich"
  },
- "scenario_rating": null,
  "provenance": {
   "challenger_model_requested": "gpt-5.6-sol",
   "models_per_seat": {
@@ -203,7 +228,8 @@
  "question_verbatim": "Is Specimen Works still cheap at this price, or has the market caught up with the growth story? Separately, on my side: plan the follow-on tranche timing for me once the council has a view.",
  "rating": "monitor",
  "run_id": "report-fixture-invented-1",
- "schema_version": "1.2.0",
+ "scenario_rating": null,
+ "schema_version": "1.3.0",
  "sizing_inputs": [
   {
    "as_of": "2026-08-28",
@@ -243,9 +269,9 @@
   }
  ],
  "subject": {
+  "asset_class": "equity",
   "currency": "USD",
   "kind": "single_stock",
-  "asset_class": "equity",
   "listing": "INVENTED-X",
   "name": "Specimen Works",
   "ticker": "SPWK"

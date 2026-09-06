@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Council verdict 1.2.0 - the published document (REBUILD-SPEC section 8)",
-  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope. No field for what the owner owns exists anywhere in this contract.",
+  "title": "Council verdict 1.3.0 - the published document (REBUILD-SPEC section 8)",
+  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). No field for what the owner owns exists anywhere in this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.2.0"
+      "const": "1.3.0"
     },
     "run_id": {
       "type": "string",
@@ -769,7 +769,8 @@
             ]
           }
         }
-      }
+      },
+      "description": "The unit of each row is PINNED one per id (owner ruling AB23(6)), so a reader can never take a fraction for a percentage: realized_volatility and implied_volatility are fraction_annualized (0.52 means 52% a year); beta_vs_market is ratio; liquidity is USD_per_day; event_dates is iso_date (a date, or several, never a sentence); drawdown_shape is fraction_of_price (0.35 means a 35% fall). A per-member id inherits its base id's unit. Any other id must declare its own unit and is named in the envelope's unknown_sizing_ids. Enforced by the chairman's mechanical checks (council/engine/host.py), which this validator's subset of JSON Schema cannot express per id. Published runs keep the units they were written under: the pin applies from this version onward."
     },
     "constituent_notes": {
       "type": [
@@ -1000,7 +1001,19 @@
         "thesis_proportions",
         "for_atlas_note",
         "pack_hash",
-        "verdict_hash"
+        "verdict_hash",
+        "asset_class",
+        "product",
+        "scenario_rating",
+        "run_id",
+        "subject_name",
+        "subject_ticker",
+        "subject_listing",
+        "subject_currency",
+        "challenge_status",
+        "endorsement_highest_rating_supported",
+        "warnings",
+        "unknown_sizing_ids"
       ],
       "properties": {
         "rating": {
@@ -1022,7 +1035,8 @@
               "value",
               "unit",
               "as_of",
-              "pack_fact_id"
+              "pack_fact_id",
+              "bound"
             ],
             "properties": {
               "name": {
@@ -1046,6 +1060,33 @@
                   "string",
                   "null"
                 ]
+              },
+              "bound": {
+                "description": "Copied by the publisher from the frozen pack fact this row quotes (owner rulings AB19/AB20/AB22): a figure standing in for one the filer never published is a ceiling or a floor, not a measurement. Null where the row was computed by the council rather than quoted from one tagged fact. Never chair-authored.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "published_line"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "ceiling",
+                      "floor"
+                    ]
+                  },
+                  "published_line": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                  }
+                }
               }
             }
           }
@@ -1054,7 +1095,90 @@
           "type": "object"
         },
         "sizing_inputs": {
-          "type": "array"
+          "description": "The unit of each row is PINNED one per id (owner ruling AB23(6)), so a reader can never take a fraction for a percentage: realized_volatility and implied_volatility are fraction_annualized (0.52 means 52% a year); beta_vs_market is ratio; liquidity is USD_per_day; event_dates is iso_date (a date, or several, never a sentence); drawdown_shape is fraction_of_price (0.35 means a 35% fall). A per-member id inherits its base id's unit. Any other id must declare its own unit and is named in the envelope's unknown_sizing_ids. Enforced by the chairman's mechanical checks (council/engine/host.py), which this validator's subset of JSON Schema cannot express per id. Published runs keep the units they were written under: the pin applies from this version onward. Each row here also carries the bound tag the publisher resolved for it.",
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "detail",
+              "value",
+              "unit",
+              "as_of",
+              "pack_fact_ids",
+              "bound"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "as_of": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "pack_fact_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "constituent": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "bound": {
+                "description": "Copied by the publisher from the frozen pack fact this row quotes (owner rulings AB19/AB20/AB22): a figure standing in for one the filer never published is a ceiling or a floor, not a measurement. Null where the row was computed by the council rather than quoted from one tagged fact. Never chair-authored.",
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "published_line"
+                ],
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "ceiling",
+                      "floor"
+                    ]
+                  },
+                  "published_line": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                  }
+                }
+              }
+            }
+          }
         },
         "scenario_rating": {
           "type": [
@@ -1120,8 +1244,81 @@
             "string",
             "null"
           ]
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "[a-z0-9][a-z0-9-]*",
+          "description": "The run this package belongs to, copied from the invocation."
+        },
+        "subject_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The subject's identity, copied from the verdict's own subject - never chair-authored - so the standalone package can be verified without opening a second file (owner ruling AB23(1))."
+        },
+        "subject_ticker": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+        },
+        "subject_listing": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subject_currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "challenge_status": {
+          "enum": [
+            "success",
+            "launch_failure",
+            "timeout",
+            "malformed_output",
+            "schema_failure",
+            "binding_failure",
+            "internal_failure"
+          ],
+          "description": "The outside audit's outcome, copied from the verdict's challenge record (owner ruling AB23(2))."
+        },
+        "endorsement_highest_rating_supported": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "strong_buy",
+            "buy",
+            "hold",
+            "sell",
+            "monitor",
+            null
+          ],
+          "description": "The highest rating the outside auditor said the record supports, or null where the auditor endorsed no ceiling. The portfolio system computes its effective rating FROM this and must never act on a bare rating (owner ruling AB23(2))."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "The verdict's complete warnings list, copied whole - including the note that fires whenever the published rating and the auditor's ceiling differ in either direction (owner rulings AB16(5), AB23(2))."
+        },
+        "unknown_sizing_ids": {
+          "description": "Every sizing-input id in this package whose unit the ruling does not pin, in the order the rows appear. Such a row declares its own unit; a reader that does not know the id refuses its bound rather than guessing (owner ruling AB23(6)).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
-      }
+      },
+      "description": "The machine hand-off, duplicated field for field inside the verdict and written standalone as atlas-envelope.json; only verdict_hash differs, being null in the verdict's own copy. Since 1.3.0 the package stands alone: it names its subject, states the audit state the portfolio system computes its effective rating from, and tags every row resting on a declared bound (owner ruling AB23)."
     },
     "provenance": {
       "type": "object",
