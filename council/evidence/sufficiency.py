@@ -42,6 +42,16 @@ condition a machine still cannot know is unchanged by the tag: whether
 the line chosen really is the NARROWEST one published stays with the
 sitting host, and nothing here checks it.
 
+Owner ruling AC1 adds the last stage this check was missing: the pack
+must SAY WHAT THE BUSINESS IS. The cold read of 2026-09-08 found that
+the checklist below is written by the capturing session itself, so the
+single number that decides a case can simply be left off it and nothing
+notices - a miner converting to data-centre leasing cleared every floor
+and every canonical test while contracted capacity and rent per unit
+were demanded by nothing. A priced business now carries a business
+frame, and each of its three to five decisive numbers resolves here to
+a present, in-rule fact or to an honest gap, before a seat is paid.
+
 CLI:
     python -m council.evidence.sufficiency <pack.json>
         [--floors <floors.json>] [--out <sufficiency-result.json>]
@@ -52,6 +62,7 @@ import os
 import sys
 from datetime import datetime
 
+from council.evidence import gate
 from council.lib import canonical, subjects
 
 _REPO_ROOT = os.path.abspath(
@@ -92,6 +103,88 @@ _CANONICAL_GUIDE = {
 # own last price (THEMES-BASKETS-SPEC section 4: the same 3-day
 # ceiling the floors give the subject-level price).
 _MEMBER_PRICE_CEILING_DAYS = 3
+
+# Owner ruling AC1: a priced business states the three to five numbers
+# that decide THIS question. Below three there is no set to argue over
+# - one number is a thesis and two are a preference.
+_DECISIVE_METRIC_MINIMUM = 3
+
+# The fact class a capture declares when it carries no honest peer set
+# (the same class the gate names). Owner ruling AC15 (P2): a declared
+# peer gap lifts the requirement that the rating measure be computable
+# for every peer.
+_PEER_GAP_CLASS = "peer_"
+
+# The plain words a rating-measure component fails on, keyed by the fault
+# measure_component_fault returns. Owner ruling AC15 (P2); architect
+# ruling 2026-09-20: the peer half of a ratio is brought to the same bar as
+# the subject's - a tier-1 reading, fresh, and a number.
+_FAULT_WORDS = {
+    "absent": "is nowhere in the pack as a tier-1 reading",
+    "stale": "is present but stale at capture",
+    "nan": "is present but its value is not a number",
+    "zero": "is zero, and a ratio cannot be divided by zero",
+}
+
+# The ruled sentence a pack without a business frame is refused with
+# (UPGRADE-2 spec section U1.2). It is quoted, not paraphrased: the
+# owner ruled the words.
+FRAME_REFUSAL = ("the pack does not say what this business is or which "
+                 "numbers decide the case")
+
+_FRAME_LIKELY_SOURCE = (
+    "the capturer's own reading, written BEFORE the filings are "
+    "gathered (council/RUNBOOK.md section 1): the business description "
+    "and segment note of the latest annual report, the last results "
+    "call, and a peer screen of the closest listed comparables")
+
+# Owner ruling AC2, spec section U2.3: every point the outside auditor
+# raised is answered on the record before sufficiency passes, and a
+# point that the capture session simply disagrees with is answered in at
+# least twenty-five words. Twenty-five words is what it takes to say why
+# a specific objection is wrong; "disagree" is not an answer, it is a
+# refusal to give one. (Architect ruling, 2026-09-08: the bar is section
+# U2.3's own DEFINITION of an overrule, so it governs every severity -
+# the refusal clause named the blocking one as an instance of it.)
+_OVERRULE_WORDS = 25
+
+# Architect ruling, 2026-09-08, reading AC2: the auditor "audits the
+# evidence before any seat is paid" and "every finding is resolved on
+# record before sufficiency passes". A sitting that simply never made
+# the call has neither a success nor a recorded failure to show, so the
+# block is REQUIRED here - while the capture GATE stays tolerant of its
+# absence, because the capture is written and checked before the call is
+# made.
+_UNCHECKED_LIKELY_SOURCE = (
+    "the outside auditor itself: 'python -m council.bridge.codex_bridge "
+    "evidence <capture.json> <out_dir>' makes the call, and "
+    "'evidence-record' writes its answer - or the failure it returned - "
+    "into the capture (council/RUNBOOK.md section 1a)")
+
+_CHANGES_LIKELY_SOURCE = (
+    "'python -m council.bridge.codex_bridge evidence-record', which "
+    "holds both readings of the evidence and writes the list itself: "
+    "record the audit AFTER the gathering it sent you to do, and every "
+    "figure that moved is listed for you (council/RUNBOOK.md section 1a)")
+
+_RESOLUTION_LIKELY_SOURCE = (
+    "the capture session's own answer, written into "
+    "evidence/challenge-resolution.json and recorded with 'python -m "
+    "council.bridge.codex_bridge evidence-record': capture what the "
+    "auditor asked for, declare an honest gap, or say in your own words "
+    "why the auditor is wrong")
+
+# Owner ruling AC15 (P8): a user correction that only NARROWS a claim
+# needs no outside re-audit, but one that REBUILDS what the seats reason
+# from is sent back to the auditor as a delta before the council may sit.
+# The correction command classifies each and the delta re-audit clears
+# it; this is where an un-re-audited rebuilding correction stops.
+_REBUILDING_LIKELY_SOURCE = (
+    "a delta re-audit: 'python -m council.bridge.codex_bridge evidence "
+    "--delta <capture.json> <run>/evidence/challenge' shows the outside "
+    "auditor only what the correction changed and the prior findings, "
+    "then 'evidence-record' writes its answer back and clears the "
+    "correction (council/RUNBOOK.md section 1a)")
 
 
 def _arithmetic_mismatch(entry, fact):
@@ -750,6 +843,38 @@ def check(pack, floors):
                                   stale_words(second))
                 else:
                     satisfied.append("%s with %s" % (first, second))
+        elif floor_kind == "prefix_pairs":
+            # A family that only means anything in pairs: what
+            # management guided for a quarter, beside what it actually
+            # delivered (owner ruling AC1). Either half alone says
+            # nothing about whether management hits its own numbers, so
+            # the family must be there - or declared absent - and every
+            # member of it must carry its companion.
+            prefix = entry["prefix"]
+            companion = entry["companion_prefix"]
+            matches = [i for i in tier1_order if i.startswith(prefix)]
+            if not matches:
+                enforce_absence(
+                    entry,
+                    "a fact whose id starts with '%s', with its '%s' "
+                    "companion" % (prefix, companion),
+                    prefix)
+                return
+            for fact_id in matches:
+                partner = companion + fact_id[len(prefix):]
+                if partner not in tier1_rules:
+                    enforce_absence(entry,
+                                    "%s (the companion figure beside %s)"
+                                    % (partner, fact_id), partner)
+                elif not fresh(partner):
+                    enforce_stale(entry,
+                                  "%s (the companion figure beside %s)"
+                                  % (partner, fact_id),
+                                  stale_words(partner))
+                elif not fresh(fact_id):
+                    enforce_stale(entry, fact_id, stale_words(fact_id))
+                else:
+                    satisfied.append("%s with %s" % (fact_id, partner))
         elif floor_kind == "parallel_prefixes":
             # A repeated structure - one row per cycle, one per venue -
             # is complete or it is not there. Each prefix must be
@@ -833,7 +958,8 @@ def check(pack, floors):
             raise ValueError(
                 "the floors file carries an entry of kind %r, which "
                 "this gate cannot evaluate (it knows id, one_of, "
-                "prefix, pairs, parallel_prefixes) - the ruled minimum "
+                "prefix, pairs, prefix_pairs, parallel_prefixes) - the "
+                "ruled minimum "
                 "that entry encodes would be silently skipped, so the "
                 "floors file must be fixed before any pack is judged "
                 "against it" % floor_kind)
@@ -963,6 +1089,615 @@ def check(pack, floors):
                        "this one is not declared so, which reads as a "
                        "gathering failure (%s)" % description,
                        hint)
+
+    # ---------- the business frame (owner ruling AC1) ----------
+    # The cold read of 2026-09-08 found the hole this closes: the pack's
+    # own checklist is written by the capturing session, so the one
+    # number that decides a case can be left off it and nothing notices
+    # (findings E3, E6). A priced business must now SAY what it is, how
+    # it earns, what is changing, and the three to five numbers the
+    # question turns on - and each of those numbers resolves here, to a
+    # present, in-rule fact or to an honest gap, before a seat is paid.
+    frames = capture.get("business_frame") or {}
+    required_frames = gate.frame_tickers(subject)[0]
+
+    def frame_words(ticker):
+        return ("the business frame for %s" % ticker
+                if len(required_frames) > 1 or ticker != subject.get("ticker")
+                else "the business frame")
+
+    for ticker in required_frames:
+        if frames.get(ticker):
+            continue
+        refuse(frame_words(ticker),
+               "%s. The parts a frame carries, and this capture carries "
+               "none of them: %s"
+               % (FRAME_REFUSAL,
+                  "; ".join(words for _, words in gate.FRAME_PARTS)),
+               _FRAME_LIKELY_SOURCE)
+
+    for ticker in sorted(frames):
+        frame = frames[ticker]
+        metrics = frame["decisive_metrics"]
+        if (ticker in required_frames
+                and len(metrics) < _DECISIVE_METRIC_MINIMUM):
+            refuse("at least %d decisive metrics in %s"
+                   % (_DECISIVE_METRIC_MINIMUM, frame_words(ticker)),
+                   "the frame names %d of the three to five numbers that "
+                   "decide this question; below three there is no set to "
+                   "argue over - one number is a thesis and two are a "
+                   "preference" % len(metrics),
+                   _FRAME_LIKELY_SOURCE)
+        for row in metrics:
+            if row["gap"]:
+                continue
+            for fact_id in row["answered_by"]:
+                if fact_id in tier1_rules:
+                    offender = stale_dependency(fact_id)
+                    if offender is None:
+                        satisfied.append(fact_id)
+                        continue
+                    record = freshness.get(offender, {})
+                    rests = ("" if offender == fact_id
+                             else "'%s' rests on it and " % fact_id)
+                    refuse("the decisive metric '%s' in %s"
+                           % (row["name"], frame_words(ticker)),
+                           "'%s' is present but stale - %s days old "
+                           "against its %s-day rule - %sso the number "
+                           "this question turns on cannot be read from "
+                           "the pack"
+                           % (offender, record.get("age_days"),
+                              record.get("rule_days"), rests),
+                           "a fresher reading of '%s' from the source "
+                           "that produced it" % offender)
+                elif fact_id not in tier2_ids:
+                    refuse("the decisive metric '%s' in %s"
+                           % (row["name"], frame_words(ticker)),
+                           "it claims to be answered by '%s', which is "
+                           "nowhere in the pack" % fact_id,
+                           _FRAME_LIKELY_SOURCE)
+
+    def measure_component_fault(fact_id):
+        """Why a rating-measure component - a numerator or a denominator,
+        on the subject or a peer - is not a reading the ratio can be
+        struck from, or None when it can. The same bar for every part of
+        the ratio on both sides (owner ruling AC15 P2; architect ruling
+        2026-09-20): a tier-1 fact - a tier-2 passage alone is a mention,
+        not a reading a ratio can rest on - fresh against its own rule,
+        and a finite number."""
+        if fact_id not in tier1_rules:
+            return "absent"
+        if stale_dependency(fact_id) is not None:
+            return "stale"
+        if gate._decimal_or_none(facts_by_id[fact_id]["value"]) is None:
+            return "nan"
+        return None
+
+    def denominator_fault(fact_id):
+        """Why a DENOMINATOR cannot be divided into: the numerator's own
+        bar (measure_component_fault) AND a value that is not zero. A ratio
+        with a zero denominator is undefined, so a rating divided by it is
+        not computable (owner ruling AC15 P2; finding r2-3). A numerator
+        may be zero; a denominator may not, so this bar is the
+        denominators' alone."""
+        fault = measure_component_fault(fact_id)
+        if fault:
+            return fault
+        if gate._decimal_or_none(facts_by_id[fact_id]["value"]) == 0:
+            return "zero"
+        return None
+
+    # ---- the rating measure follows the archetype, and the cycle a
+    #      single name depends on (owner ruling AC15, P2 and P4, U3e) ----
+    # These two meaning changes bind a SINGLE NAME only - a basket, a
+    # theme, a fund and an asset with no earnings carry none. The third
+    # canonical test declares the subject's archetype and the rating
+    # measure that archetype calls for; the measure must MATCH the
+    # archetype (the table is data in floors.json), rest on the measure's
+    # own numerator for the subject, be computable for every peer on the
+    # shared numerator AND on each denominator the row names (or the peer
+    # half a declared gap - a ratio is not computable from its numerator
+    # alone), and never rate a business changing its model on the
+    # trailing revenue of
+    # the business it is exiting. A single name whose thesis rests on an
+    # identifiable cycle carries dated series for it or declares the gap,
+    # and a series is judged fresh against the class's own price rule.
+    # This never asks whether the archetype is TRUE - no machine reads a
+    # filing - only that the capture is self-consistent against the rule.
+    archetype_data = floors.get("archetype_measures") or {}
+    single_frame = frames.get(subject.get("ticker"))
+    if (subject["kind"] == "single_stock" and single_frame
+            and archetype_data):
+        frame = single_frame
+        table = archetype_data.get("table") or {}
+        archetype = frame.get("archetype")
+        entry = table.get(archetype) if archetype else None
+        rating = requirements_by_id.get("rating_vs_history_or_peers")
+        measure = (rating or {}).get("measure")
+        if not measure:
+            refuse("the rating measure the third canonical test uses",
+                   "owner ruling AC15 (P2): a single name's third "
+                   "canonical test declares the rating measure its "
+                   "archetype calls for, and this one names none - so "
+                   "nothing binds the rating to the kind of business it is",
+                   "the 'measure' field on the rating_vs_history_or_peers "
+                   "row: one of the four the contract names")
+        if entry is not None:
+            if measure and measure != entry["measure"]:
+                refuse("a rating measure that fits the declared archetype",
+                       "owner ruling AC15 (P2): the frame calls this a "
+                       "'%s', which is rated on '%s', but the third "
+                       "canonical test declares '%s' - the rating basis "
+                       "follows the kind of business, not a free choice"
+                       % (archetype, entry["measure"], measure),
+                       "either the archetype in the business frame or the "
+                       "measure on the rating_vs_history_or_peers row, so "
+                       "the two agree")
+            if (entry.get("anchorless_only")
+                    and not subjects.is_anchorless(subject)):
+                refuse("an archetype legal for a priced single name",
+                       "owner ruling AC15 (P2): '%s' keeps the anchorless "
+                       "ladder and is legal only for an asset with no "
+                       "earnings; this subject is a priced equity, rated "
+                       "on one of the three earning archetypes" % archetype,
+                       "the archetype in the business frame")
+            numerator = entry.get("subject_numerator")
+            if numerator and not entry.get("anchorless_only"):
+                fault = measure_component_fault(numerator)
+                if fault == "absent":
+                    refuse("the rating measure's own numerator '%s'"
+                           % numerator,
+                           "owner ruling AC15 (P2): the '%s' measure rests "
+                           "on '%s' for the subject, and the pack carries "
+                           "no such fact - the measure cannot be struck at "
+                           "all" % (entry["measure"], numerator),
+                           "the subject's own market-data or filing facts")
+                elif fault == "stale":
+                    offender = stale_dependency(numerator)
+                    record = freshness.get(offender, {})
+                    refuse("the rating measure's own numerator '%s'"
+                           % numerator,
+                           "'%s' is present but stale - %s days old against "
+                           "its %s-day rule - so the '%s' measure cannot be "
+                           "struck from a reading the pack can trust"
+                           % (offender, record.get("age_days"),
+                              record.get("rule_days"), entry["measure"]),
+                           "a fresher reading of '%s'" % offender)
+                elif fault == "nan":
+                    refuse("the rating measure's own numerator '%s'"
+                           % numerator,
+                           "owner ruling AC15 (P2): '%s' is present and "
+                           "fresh but its value is not a number, so the "
+                           "'%s' measure has no numerator to strike a ratio "
+                           "from" % (numerator, entry["measure"]),
+                           "a numeric reading of '%s' for the subject"
+                           % numerator)
+            # A ratio is computable only if BOTH halves are, on BOTH sides
+            # (owner ruling AC15 P2; architect ruling 2026-09-20, closing
+            # r1-1/r1-3). The measure's own denominators_required count is
+            # data; the row names that many subject_denominator_facts, each
+            # brought to the numerator's bar, and that many peer_denominator_
+            # metrics (the peer half below). The subject side is never
+            # lifted - only the peer half is, by a declared 'peer_' gap.
+            required = entry.get("denominators_required")
+            if required is not None and not entry.get("anchorless_only"):
+                subject_denoms = ((rating or {}).get(
+                    "subject_denominator_facts") or [])
+                if len(subject_denoms) != required:
+                    refuse("the subject-side denominators the rating measure "
+                           "divides by",
+                           "owner ruling AC15 (P2), architect ruling "
+                           "2026-09-20: '%s' divides its numerator by %d "
+                           "denominator(s) on the subject's own side, and the "
+                           "row names %d - a ratio is not computable from its "
+                           "numerator alone"
+                           % (entry["measure"], required,
+                              len(subject_denoms)),
+                           "the 'subject_denominator_facts' list on the "
+                           "rating_vs_history_or_peers row: exactly %d tier-1 "
+                           "fact id(s)" % required)
+                if len(set(subject_denoms)) != len(subject_denoms):
+                    refuse("distinct subject-side denominators for the "
+                           "rating measure",
+                           "owner ruling AC15 (P2): the '%s' measure divides "
+                           "its numerator by %d different denominator(s), and "
+                           "the row names the same one more than once - one "
+                           "denominator repeated is not the ratio the measure "
+                           "needs" % (entry["measure"], required),
+                           "%d distinct 'subject_denominator_facts' the "
+                           "measure divides the numerator by" % required)
+                for den in subject_denoms:
+                    den_fault = denominator_fault(den)
+                    if den_fault:
+                        refuse("the rating measure's subject denominator '%s'"
+                               % den,
+                               "owner ruling AC15 (P2): the '%s' measure "
+                               "divides the numerator by '%s' for the subject, "
+                               "and '%s' %s - so the measure cannot be struck "
+                               "for the subject, its numerator read alone"
+                               % (entry["measure"], den, den,
+                                  _FAULT_WORDS[den_fault]),
+                               "a dated numeric reading of '%s' for the "
+                               "subject" % den)
+                # P-U3e-2 (architect ruling 2026-09-20): the data table's
+                # own note fixes it - the subject's own denominators ARE
+                # the frame's decisive metrics. A denominator no decisive
+                # metric rests on can pass the count, the distinctness and
+                # the numeric bar yet not be a number the rating turns on
+                # (a cash rate standing in for contracted capacity), so it
+                # is refused here, naming the fact and the measure. This
+                # never reads whether a fact is TRULY contracted capacity;
+                # it holds the capturer to his own decisive metrics, which
+                # the evidence auditor and the owner see on the first page.
+                decisive_ids = set()
+                for metric_row in frame["decisive_metrics"]:
+                    decisive_ids.update(metric_row.get("answered_by") or [])
+                for den in subject_denoms:
+                    if den not in decisive_ids:
+                        refuse("a subject denominator that is one of the "
+                               "frame's decisive metrics",
+                               "owner ruling AC15 (P2), architect ruling "
+                               "2026-09-20: the '%s' measure divides by '%s' "
+                               "on the subject's side, but no decisive metric "
+                               "in the business frame rests on '%s' - the "
+                               "subject's own denominators ARE the frame's "
+                               "decisive metrics, so a denominator no "
+                               "decisive metric answers is not a number the "
+                               "rating turns on" % (entry["measure"], den, den),
+                               "either name '%s' in the 'answered_by' of a "
+                               "decisive metric, or make the decisive metric "
+                               "the '%s' measure divides by the subject "
+                               "denominator" % (den, entry["measure"]))
+            peer_metric = entry.get("peer_numerator_metric")
+            if (peer_metric and not entry.get("anchorless_only")
+                    and _PEER_GAP_CLASS not in gap_kinds):
+                peers = frame.get("peers") or []
+                # A ratio is not computable from its numerator alone
+                # (owner ruling AC15 P2; architect ruling 2026-09-20).
+                # With a real peer set and no declared peer gap, the
+                # rating row names the peer-side denominator metric(s) the
+                # measure divides by, and every peer carries the numerator
+                # AND each named denominator under the peer_<metric>__
+                # <ticker> convention - or the 'peer_' gap is declared,
+                # which lifts the whole peer half exactly as it does for
+                # the numerator today.
+                denom_metrics = ((rating or {}).get(
+                    "peer_denominator_metrics") or [])
+                if peers and len(denom_metrics) != (required or 0):
+                    refuse("the peer-side denominator the rating measure "
+                           "divides by",
+                           "owner ruling AC15 (P2), architect ruling "
+                           "2026-09-20: '%s' divides its numerator by %d "
+                           "denominator(s), and a ratio is not computable "
+                           "from its numerator alone - the row names %d "
+                           "peer-side denominator metric(s), so a peer "
+                           "cannot be set beside the subject on the measure"
+                           % (entry["measure"], (required or 0),
+                              len(denom_metrics)),
+                           "the 'peer_denominator_metrics' list on the "
+                           "rating_vs_history_or_peers row: exactly %d "
+                           "metric(s) the measure divides the numerator by"
+                           % (required or 0))
+                if peers and len(set(denom_metrics)) != len(denom_metrics):
+                    refuse("distinct peer-side denominators for the rating "
+                           "measure",
+                           "owner ruling AC15 (P2): the '%s' measure divides "
+                           "its numerator by %d different denominator(s), and "
+                           "the row names the same peer metric more than once "
+                           "- one denominator repeated is not the ratio the "
+                           "measure needs" % (entry["measure"], (required or 0)),
+                           "%d distinct 'peer_denominator_metrics'"
+                           % (required or 0))
+                for peer in peers:
+                    slug = subjects.slug(peer["ticker"])
+                    peer_id = "peer_%s__%s" % (peer_metric, slug)
+                    fault = measure_component_fault(peer_id)
+                    if fault:
+                        refuse("the rating measure's numerator for peer %s"
+                               % peer["ticker"],
+                               "owner ruling AC15 (P2): the '%s' measure is "
+                               "computable for the subject AND every peer, or "
+                               "the peer half is a declared gap - and '%s' %s, "
+                               "so this peer cannot be set beside the subject "
+                               "on the measure at all"
+                               % (entry["measure"], peer_id,
+                                  _FAULT_WORDS[fault]),
+                               "a dated numeric reading of '%s' for %s, or a "
+                               "declared gap for the fact class '%s'"
+                               % (peer_id, peer["ticker"], _PEER_GAP_CLASS))
+                    for metric in denom_metrics:
+                        den_id = "peer_%s__%s" % (metric, slug)
+                        den_fault = denominator_fault(den_id)
+                        if not den_fault:
+                            continue
+                        refuse("the rating measure's denominator '%s' for "
+                               "peer %s" % (metric, peer["ticker"]),
+                               "owner ruling AC15 (P2): the '%s' measure "
+                               "divides the numerator by '%s', and '%s' %s - "
+                               "so the measure cannot be struck for this peer, "
+                               "its numerator read alone"
+                               % (entry["measure"], metric, den_id,
+                                  _FAULT_WORDS[den_fault]),
+                               "a dated numeric reading of '%s' for %s, or a "
+                               "declared gap for the fact class '%s'"
+                               % (den_id, peer["ticker"], _PEER_GAP_CLASS))
+        changing = (frame.get("what_is_changing") or {}).get("kind")
+        forbidden = ((archetype_data.get("forbidden_on_model_transition")
+                      or {}).get("trailing_revenue_fact_ids") or [])
+
+        def rests_on_forbidden(fact_id, seen=None):
+            """The first forbidden trailing-revenue fact this rating fact
+            rests on - itself or an operand, transitively - or None. A
+            derived fact struck from the exited business's revenue is that
+            revenue, however many operands deep (owner ruling AC15 P2; the
+            same operand walk stale_dependency does)."""
+            if seen is None:
+                seen = set()
+            if fact_id in seen:
+                return None
+            seen.add(fact_id)
+            if fact_id in forbidden:
+                return fact_id
+            derived = (facts_by_id.get(fact_id) or {}).get("derived")
+            if derived:
+                for operand in derived["operands"]:
+                    reference = operand.get("fact_id")
+                    if reference is not None and reference in facts_by_id:
+                        hit = rests_on_forbidden(reference, seen)
+                        if hit is not None:
+                            return hit
+            return None
+
+        if changing == "model_transition" and rating:
+            # The ban walks every fact the rating rests on, not only
+            # answered_by: the measure's own numerator and each subject
+            # denominator are rating components too (the round-1 fix added
+            # subject_denominator_facts), and a forbidden trailing-revenue
+            # fact placed in either escaped the answered_by-only walk
+            # (finding r2-5).
+            components = list(rating.get("answered_by") or [])
+            components.extend(rating.get("subject_denominator_facts") or [])
+            if entry:
+                num = entry.get("subject_numerator")
+                if num:
+                    components.append(num)
+            offenders = []
+            for fid in components:
+                hit = rests_on_forbidden(fid)
+                if hit is not None and hit not in offenders:
+                    offenders.append(hit)
+            if offenders:
+                refuse("a rating measure that is not the exited business's "
+                       "trailing revenue",
+                       "owner ruling AC15 (P2): this business is changing "
+                       "its model, and the third canonical test rests on "
+                       "%s - trailing revenue drawn from the business it is "
+                       "exiting, which the ruling forbids because the "
+                       "headline revenue is mostly the segment being closed"
+                       % ", ".join("'%s'" % o for o in offenders),
+                       "rate a model transition on what the NEW business "
+                       "sells - contracted capacity and revenue per unit - "
+                       "never the revenue of the business being exited")
+        cycle_dep = frame.get("cycle_dependence")
+        cycle = capture.get("cycle")
+        if cycle_dep == "identified" and not cycle:
+            refuse("the cycle series a single name depending on one carries",
+                   "owner ruling AC15 (P4): the frame says this name's "
+                   "thesis rests on an identifiable cycle, and the pack "
+                   "carries no cycle block - three to five dated series for "
+                   "it, or a declared gap with the reason",
+                   "the top-level 'cycle' block: name the cycle, then carry "
+                   "its dated series or declare why none is in hand")
+        elif cycle_dep == "none" and cycle:
+            refuse("agreement between the cycle declaration and the pack",
+                   "owner ruling AC15 (P4): the frame says this name "
+                   "depends on no identifiable cycle, yet the pack carries "
+                   "a cycle block - one of the two is wrong",
+                   "either declare cycle_dependence 'identified', or drop "
+                   "the cycle block")
+        if cycle and cycle.get("series"):
+            multiple = ((archetype_data.get("cycle") or {})
+                        .get("series_freshness_price_multiple"))
+            price_days = None
+            for floor_entry in class_config.get("floors") or []:
+                if (floor_entry.get("id") == "price_last"
+                        and floor_entry.get("max_freshness_days")):
+                    price_days = floor_entry["max_freshness_days"]
+                    break
+            if multiple and price_days:
+                ceiling = price_days * multiple
+                sat = _as_of_moment(capture["captured_at"])
+                for series in cycle["series"]:
+                    series_moment = _as_of_moment(series["as_of"])
+                    # Strict, and no clock-skew tolerance: as_of and the
+                    # capture time are both written by the same capturer at
+                    # capture, so a series after the capture is from the
+                    # future exactly as the ordinary fact-date check reads
+                    # it (gate._check_dates). A skew window let a series
+                    # minutes after the capture through, its negative age
+                    # read as fresh (finding r2-6).
+                    if series_moment > sat:
+                        refuse("a cycle series dated no later than the "
+                               "capture '%s'" % series["id"],
+                               "owner ruling AC15 (P4): '%s' is as-of %s, "
+                               "later than the capture taken %s - a series "
+                               "from the future is not a fresh reading, and "
+                               "its negative age would otherwise pass the "
+                               "freshness rule unseen"
+                               % (series["id"], series["as_of"],
+                                  capture["captured_at"]),
+                               "a cycle series as-of at or before the capture "
+                               "time")
+                        continue
+                    age = (sat - series_moment).days
+                    if age > ceiling:
+                        refuse("a fresh reading of the cycle series '%s'"
+                               % series["id"],
+                               "owner ruling AC15 (P4): a cycle series is "
+                               "judged against the class's price-freshness "
+                               "rule times %d - %d days - and '%s' is %d "
+                               "days old, so the cycle the thesis rests on "
+                               "is read from a series gone stale"
+                               % (multiple, ceiling, series["id"], age),
+                               "a fresher reading of '%s' from %s"
+                               % (series["id"],
+                                  series.get("refetch_url_or_source_line")))
+
+    # ---- the outside auditor's findings (owner ruling AC2) ----
+    # A second model read this evidence before any seat was paid, and
+    # said what it thought was missing, wrong or misread. Every point it
+    # raised is answered here - captured, declared a gap, or overruled
+    # in the capture session's own words - before the council may sit.
+    # An unanswered finding is the whole ruling undone: the call was
+    # paid for, the answer was read, and nothing came of it. A call that
+    # was never made undoes it more quietly still, which is why the
+    # absence of the block refuses here as well.
+    challenge = capture.get("evidence_challenge") or {}
+    status = challenge.get("status")
+    if status not in ("success", "failed"):
+        refuse("the outside auditor's reading of the evidence",
+               "the outside auditor has not checked the evidence and no "
+               "failure is recorded - a call nobody made is neither a "
+               "success nor a recorded failure, and no seat is paid "
+               "until one of the two stands on the record",
+               _UNCHECKED_LIKELY_SOURCE)
+    else:
+        # ---- the record points at an actual attempt (owner ruling
+        # AC13.3, register item P-U2-5) ----
+        # A block written by hand read exactly like one the bridge
+        # wrote, and it reaches nine seat prompts and the owner's page
+        # as the word of a model outside this family. Nothing can PROVE
+        # a paid call happened - the capture session writes every file
+        # in that folder - so this raises the cost of inventing one: the
+        # block must carry the one-time token the bridge issued for the
+        # call and the hash of the evidence it sent. Recorded as a
+        # cost-raiser, in the owner's own words, and not as a proof.
+        for field, words in (
+                ("nonce", "the one-time token this council's own bridge "
+                          "issues for each call"),
+                ("evidence_sha256", "the hash of the evidence the "
+                                    "auditor was sent")):
+            if str(challenge.get(field) or "").strip():
+                continue
+            refuse("the outside auditor's reading of the evidence",
+                   "the record of the audit carries no %s, so nothing "
+                   "ties it to a call this council made - and the seats "
+                   "and the owner's page are told an outside model read "
+                   "these figures. The bridge writes both into its own "
+                   "result and 'evidence-record' copies them across; a "
+                   "block that carries neither was written by hand"
+                   % words,
+                   _UNCHECKED_LIKELY_SOURCE)
+        # ---- what moved after the auditor read it (owner ruling
+        # AC13.2, register item P-U2-4) ----
+        # The capture MAY change what the auditor never asked about; the
+        # rule is that every such change is LISTED, so the seats and the
+        # owner see which figures the outside model did not read. This
+        # is where an unlisted change stops the sitting: the recorded
+        # hash is of the evidence as sent, and the pack's own hash is of
+        # the evidence the council would sit on.
+        sent = str(challenge.get("evidence_sha256") or "").strip()
+        listed = str(challenge.get("post_audit_sha256") or "").strip()
+        changes = challenge.get("post_audit_changes")
+        body = gate.evidence_body_sha256(capture)
+        if sent and body != sent and not changes:
+            refuse("a list of what changed after the outside auditor read "
+                   "the evidence",
+                   "the evidence moved between the audit and this pack, "
+                   "and nothing on the record says what moved: the "
+                   "auditor was sent %s and the council would sit on %s. "
+                   "A figure no outside model read would reach every seat "
+                   "and the owner's page under a record saying one did"
+                   % (sent, body),
+                   _CHANGES_LIKELY_SOURCE)
+        elif sent and body != sent and listed != body:
+            # The list is written FOR one reading of the evidence, and
+            # says nothing about any other. A capture edited after the
+            # recording leaves the list standing and non-empty, so the
+            # test above passes it - and the figure changed since is on
+            # no record at all (audit round 1, r1-3).
+            refuse("a list written for the evidence the council would "
+                   "sit on",
+                   "the record lists %d change(s) after the audit and it "
+                   "was written for other evidence than this: the list "
+                   "was made for %s and the council would sit on %s, so "
+                   "whatever moved since it was written is on no record "
+                   "at all. Nothing needs putting back - record the audit "
+                   "again over the pack you mean to sit on, and the list "
+                   "is written afresh for it"
+                   % (len(changes), listed or "nothing", body),
+                   _CHANGES_LIKELY_SOURCE)
+    if status == "success":
+        resolutions = challenge.get("resolutions") or {}
+        for finding in challenge.get("findings") or []:
+            finding_id = finding.get("id")
+            resolution = resolutions.get(finding_id)
+            if not resolution or not resolution.get("disposition"):
+                refuse("an answer to the outside auditor's finding '%s'"
+                       % finding_id,
+                       "the outside auditor raised it before any seat was "
+                       "paid (%s, %s) and the record answers it nowhere: "
+                       "%s"
+                       % (finding.get("kind"), finding.get("severity"),
+                          finding.get("detail")),
+                       _RESOLUTION_LIKELY_SOURCE)
+                continue
+            if resolution.get("disposition") == "gap_declared":
+                # The same sentence of section U2.3 that fixes an
+                # overrule at twenty-five words defines this answer as
+                # `gap_declared (reason, weakened test)`. A disposition
+                # word with neither of its two parts is the shape of an
+                # answer and not an answer (audit round 1, r1-4).
+                for field, words in (("reason", "a reason"),
+                                     ("weakened_test",
+                                      "the test it weakens")):
+                    if str(resolution.get(field) or "").strip():
+                        continue
+                    refuse("the gap the record declares against the "
+                           "outside auditor's %s finding '%s'"
+                           % (finding.get("severity"), finding_id),
+                           "a declared gap names %s and this one names no "
+                           "%s: an absence nobody explains is not an "
+                           "answer to the point that was raised - %s"
+                           % (words, field.replace("_", " "),
+                              finding.get("detail")),
+                           _RESOLUTION_LIKELY_SOURCE)
+                continue
+            if resolution.get("disposition") != "overruled":
+                continue
+            words = len(str(resolution.get("reason") or "").split())
+            if words < _OVERRULE_WORDS:
+                refuse("a reason for overruling the outside auditor's "
+                       "%s finding '%s'"
+                       % (finding.get("severity"), finding_id),
+                       "the council may set the auditor's point aside, "
+                       "but only in its own words - and the record does "
+                       "it in %d word(s) where at least %d are required: "
+                       "%s"
+                       % (words, _OVERRULE_WORDS, finding.get("detail")),
+                       _RESOLUTION_LIKELY_SOURCE)
+
+    # ---- a rebuilding correction must be re-audited (owner ruling AC15,
+    # P8) ----
+    # A user correction that only narrows a claim goes to no auditor; one
+    # that rebuilds what the seats reason from - a fact the frame's
+    # reading rests on, a headline pair - goes back as a delta before the
+    # council sits, because the act of fixing can create a fresh error the
+    # seats would otherwise never see (the debrief's $409m case). The
+    # correction command records which it is; the delta re-audit clears
+    # it. An un-re-audited rebuilding correction stops here.
+    for correction in capture.get("corrections") or []:
+        if (correction.get("classification") == "rebuilding"
+                and not correction.get("reaudited")):
+            refuse("a delta re-audit of the correction to '%s'"
+                   % correction.get("fact_id"),
+                   "'%s' was corrected after the outside auditor read the "
+                   "evidence, and it is a figure the seats reason from, so "
+                   "the correction rebuilds the case rather than narrowing "
+                   "it - and no outside model has seen the change. A fix "
+                   "can create a fresh error the seats would never catch"
+                   % correction.get("fact_id"),
+                   _REBUILDING_LIKELY_SOURCE)
 
     # ------- per-kind enforcement (THEMES-BASKETS-SPEC section 4) -------
 

@@ -22,24 +22,58 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 ---
 
+## What changed since the last snapshot
+
+This snapshot adds several stages and rules to the pipeline. In plain terms:
+
+- **The business comes before the numbers.** Every pack now opens with a short description of what
+  the business is and the handful of metrics the decision actually turns on, so a seat reasons
+  about a company, not a column of figures.
+- **The evidence itself is challenged, not just the verdict.** The outside model now also reviews
+  the frozen facts before the council sits. If a correction changes what the seats would reason
+  from, the run is held until the evidence is re-checked and re-approved.
+- **A one-page brief and a full evidence document, with an approval step.** The gathered evidence
+  is written up twice — a one-page summary and a complete document — and the run cannot proceed
+  until the corrected evidence is explicitly approved.
+- **Untraced numbers are marked, never silently dropped.** A figure in the plain-English business
+  description that cannot be traced to a sourced fact is flagged as untraced rather than refusing
+  the whole capture.
+- **The rating bar depends on the kind of business.** Different business archetypes are measured
+  against different standards, so a fragile turnaround and a cash compounder are not judged the
+  same way.
+- **A house rule against mannered writing.** The chairman's rationale is measured for over-styled
+  prose — showy dashes, rhetorical questions, artificial contrasts — and is given one measured
+  chance to rewrite before it stands.
+- **A verdict ledger scored against outcomes.** Each verdict is recorded as a row and later scored
+  against what actually happened to the price and to its own named falsifiers, so the council's
+  hit rate can be measured over time.
+- **A redesigned report.** The published page was rebuilt as an executive-summary-first document:
+  the rating, the decisive numbers and the chairman's rationale in full sit at the top, with the
+  ladders, the calendar and the evidence folding beneath.
+
+---
+
 ## The pipeline
 
 Each stage writes files the next stage reads. Every stage is a script you can run and inspect.
 
 | Stage | What happens | Why it exists |
 |---|---|---|
-| **Evidence** | A hosting session researches the question live and writes one capture file. Every figure carries a stable id, the exact string observed, a unit, an as-of date, a named source, and the arithmetic written out where the figure is derived. | Bad answers were traced to a starved supply line, not to bad reasoning. |
-| **Gate** | A script validates the capture and refuses with plain reasons: incomplete provenance, arithmetic that does not recompute, a figure a passage never actually states, a stale fact, a source that reads the owner's book. | Nothing unverified reaches a seat. |
+| **Evidence** | A hosting session researches the question live and writes one capture file. Every figure carries a stable id, the exact string observed, a unit, an as-of date, a named source, and the arithmetic written out where the figure is derived. The capture also states, in plain words, what the business is and the metrics the decision turns on. | Bad answers were traced to a starved supply line, not to bad reasoning. |
+| **Gate** | A script validates the capture and refuses with plain reasons: incomplete provenance, arithmetic that does not recompute, a figure a passage never actually states, a stale fact, a source that reads the owner's book. A number in the business description that no sourced fact backs is marked *untraced* rather than refused. | Nothing unverified reaches a seat; the business story stays honest about what it can and cannot prove. |
+| **Evidence challenge** | The frozen facts go to a model from another family, which challenges the evidence itself. A correction that changes what the seats would reason from forces a re-check and a fresh approval before the run may continue. | The supply line is audited by a different mind before a verdict is ever written. |
+| **Brief & approval** | The accepted evidence is written up as a one-page brief and as a full document. The run cannot proceed until the corrected evidence is explicitly approved. | A human sees the exact evidence the council will use, and signs off on it. |
 | **Freeze** | The accepted capture is built into a pack **twice, into two separate directories**. The two builds must be byte-identical, and the hash is recorded. | Anyone can later prove the pack the council saw is the pack on disk. |
 | **Sufficiency** | A script checks that every derived requirement resolves to a present, in-rule fact. Failure **refuses the run before any seat is paid**, listing what is missing and where it likely lives. | A refusal costs one capture. Discovering the same gap after deliberation costs the whole sitting. |
 | **Frame** | The question is split: the thesis half goes to the council, any sentence referencing the asker's own holdings is routed verbatim to a note no seat ever sees. | The book-blindness seam, enforced mechanically and by judgment. |
 | **Advisors ×5** | Five tool-less seats — bear, bull, base-rate skeptic, market-structure, risk — dispatched in parallel over the one frozen pack. Each reads one brief and writes one answer. Nothing else. | One frozen baseline; measurable isolation. |
 | **Review ×1** | One blind reviewer reads all five under an anonymised mapping and produces the cross-examination and a synopsis. A seat that identifies itself or another is re-run. | Peer review without knowing whose work it is. |
-| **Chair** | The chairman synthesises a verdict on a five-word scale — `strong_buy`, `buy`, `hold`, `sell`, `monitor` — with a priced mispricing read, invalidation levels, reopening triggers, and at least one falsifier scoreable against a named figure on a named date. | A verdict you can be proven wrong about. |
+| **Chair** | The chairman synthesises a verdict on a five-word scale — `strong_buy`, `buy`, `hold`, `sell`, `monitor` — with a priced mispricing read, invalidation levels, reopening triggers, and at least one falsifier scoreable against a named figure on a named date. The rating bar is set by the business archetype, and the rationale is measured for mannered prose, with one chance to rewrite. | A verdict you can be proven wrong about, judged against a standard fit to the business, in plain writing. |
 | **Challenge ×1** | The full unredacted case file goes to a model from another family (via the `codex` CLI), briefed as an investment critic, not a compliance auditor. It may endorse the highest rating it would support. | The audit is not the same mind marking its own homework. |
 | **Publish** | The chairman answers every finding by name, then publishes. A publisher diffs the final document against the challenged draft field by field and writes a **change appendix**. A rating raised beyond what the auditor saw publishes with a prominent warning. | Transparency instead of a gate: the reader sees what the audit moved. |
 | **Read-back** | A separate entry point re-verifies: publication was authorised, the verdict still hashes to the recorded value, the hand-off envelope names the same hashes, and the run actually finished. | A verdict nobody can quietly rewrite afterwards. |
-| **Report** | One self-contained HTML page, opening with a two-page decision front: the rating, the numbers it turns on, the downside ladder, the dated calendar, the tripwires, and what would change the rating. | Everything else folds behind it as appendices. |
+| **Ledger** | The verdict is recorded as one row — rating, price, benchmark, horizons, falsifiers, tripwires — and later scored against what the price and the named falsifiers actually did. | The council's calls can be measured against outcomes, not just admired at the time. |
+| **Report** | One self-contained HTML page, opening as an executive summary: the rating, the numbers it turns on, and the chairman's rationale in full, with the scenario and downside ladders, the dated calendar, the tripwires and the evidence folding beneath. | The reader gets the decision first and dives deeper by scrolling. |
 
 **Assets with no earnings** (Bitcoin, gold, commodities) are rated differently: the seats and the
 chairman build a scenario ladder with their own stated probabilities, the expected result is
@@ -66,30 +100,30 @@ Python 3.14, **standard library only** — no dependencies, no package install, 
 
 Run from the repository root. **The exit code is the authority: 0 is green.**
 
-```bash
-PYTHONIOENCODING=utf-8 python council/tests/test_foundations.py
-```
+The seven suites, what each covers, and the command to run it:
 
-The six suites, and what each covers:
+| Suite | Tests | Covers | Run |
+|---|---|---|---|
+| `test_foundations` | 32 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python council/tests/test_foundations.py` |
+| `test_evidence` | 676 | the provenance gate, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python council/tests/test_evidence.py` |
+| `test_engine` | 466 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python council/tests/test_engine.py` |
+| `test_bridge` | 92 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_bridge.py` |
+| `test_report` | 297 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the executive-summary front | `PYTHONIOENCODING=utf-8 python council/tests/test_report.py` |
+| `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_e2e_rehearsal.py` |
+| `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python council/tests/test_ledger.py` |
 
-| Suite | Tests | Covers |
-|---|---|---|
-| `council/tests/test_foundations.py` | 19 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file |
-| `council/tests/test_evidence.py` | 217 | the provenance gate, the byte-identical freeze, sufficiency pass and refusal paths per subject kind and per asset class |
-| `council/tests/test_engine.py` | 299 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the scenario-earned rating, the publisher's change appendix |
-| `council/tests/test_bridge.py` | 29 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** |
-| `council/tests/test_report.py` | 175 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the decision front |
-| `council/tests/test_e2e_rehearsal.py` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → nine canned seats → canned challenge → publish → read-back → rendered report, with **zero model calls** |
+1631 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
 
-746 tests at this snapshot; all six suites are green standalone in this tree (exit code 0).
-**Six tests skip here and only here**, all for the same reason — they read *live run records*,
-which are among the material this copy does not publish. `test_evidence.py` reports four: one
-test class (`TestLiveCapturesStillClearEveryStage`) re-runs the gate over two live captures.
-`test_engine.py` reports two: `TestEveryPublishedRunStillReadsBack` re-verifies every published
-sitting against its own record. Each skips only when *no* live run exists at all — a checkout
-holding any record still runs them, so a record that went missing fails loudly rather than
-skipping quietly (`TestThePublicSkipIsAllOrNothing` pins that). Both files are byte-identical to
-the private tree — see *What is deliberately absent* below.
+**Clean skips.** Nineteen tests skip here and only here, each with its reason printed, because they
+read material this copy does not publish. Seventeen read *live run records*: `test_evidence` skips
+fourteen (the live-capture and archetype-acceptance classes re-run the gate over real captures),
+`test_engine` skips two (`TestEveryPublishedRunStillReadsBack` re-verifies every published sitting
+against its record), and `test_ledger` skips one (scoring rows built from real verdicts). The
+other two are in `test_foundations`: they check the mannered-prose measure against the chairman's
+own rationales from two real sittings, a fixture withheld here (see *What is deliberately absent*).
+Each skip fires only when the material is absent — a checkout holding it runs the test — so an
+omission stays visible rather than papered over, and the prose measure itself is fully exercised by
+the rest of its suite.
 
 **`test_e2e_rehearsal.py` is the demonstration to run first.** It exercises the entire pipeline
 with real artifacts and no model, no network, and no API key — the fastest honest way to see what
@@ -108,25 +142,24 @@ This is an extraction, not a fork. Each omission below has one reason.
 - **All git history.** The private repository's history is saturated with the owner's personal
   financial material. This copy begins at a single initial commit and has no ancestry.
 - **`council/runs/**` — every live run record.** Each sitting carries the owner's own verbatim
-  question and dated personal records. Nothing from a real sitting travels. Invented fixtures
-  under `council/tests/fixtures/` replace them almost everywhere — but not quite: the four
-  `TestLiveCapturesStillClearEveryStage` tests in `council/tests/test_evidence.py` open two run
-  records directly (`council-btc-2026-09-01` and `council-coin-2026-09-04`), and the two
-  `TestEveryPublishedRunStillReadsBack` tests in `council/tests/test_engine.py` re-verify every
-  published sitting against its record. All six therefore **skip** in this copy, with the reason
+  question and dated personal records. Nothing from a real sitting travels. Invented fixtures under
+  `council/tests/fixtures/` replace them almost everywhere — but not quite: the live-capture and
+  read-back tests open real records directly and therefore **skip** in this copy, with the reason
   printed. A skip fires only when no live run exists at all, so the omission stays visible rather
   than papered over.
+- **The chairman's own rationales from real sittings**
+  (`council/tests/fixtures/prose/chair_rationales.txt`). This fixture is the chairman's verbatim
+  writing from two live runs, quoting the owner's own theses. It is withheld, which is why the two
+  `test_foundations` prose comparisons noted above skip here.
 - **The owner's rulings ledger** (`docs/OWNER-RULINGS.md`). It is a private decision log that
-  quotes him throughout. The specs here cite its ruling ids (`AB13`, `W2.5`, `§X` and so on) and
+  quotes him throughout. The specs here cite its ruling ids (`AB13`, `AC16`, `§X` and so on) and
   those citations are left intact, so the reasoning stays traceable even though the source is not
   published.
 - **The build log and the whole audit trail** (build history, adversarial review transcripts,
   finding dispositions). They quote run material and internal review at length.
-- **The superseded PowerShell implementation** (`schemas/`, `control/`, `workflow/`, `bridge/`,
-  `hooks/`, `tools/`) and its captures. It is the first build of this system, frozen rather than
-  deleted, and its captures are the owner's. Consequence: the "old stack's eleven checks" section
-  at the end of `council/CHECKS.md` names commands that are not in this copy. The six Python
-  suites above are the whole battery here.
+- **The superseded PowerShell implementation** and its captures. It was the first build of this
+  system, since retired, and its captures are the owner's. The seven Python suites above are the
+  whole check battery here.
 - **Local session configuration** (`.claude/`). Machine-specific, of no use to a reader.
 - **One example sentence, altered.** `docs/ANCHORLESS-SPEC.md` §11 and the matching regression
   test constant in `council/tests/test_engine.py` originally quoted the owner's own sentence
@@ -134,7 +167,7 @@ This is an extraction, not a fork. Each omission below has one reason.
   mechanism and the ruling are unchanged.
 
 Because the run records are absent, a few documents point at paths that do not exist here —
-`docs/ATLAS-ENVELOPE-CONTRACT.md` cites a live Bitcoin run as its worked example, and
+`docs/ATLAS-ENVELOPE-CONTRACT.md` cites a live run as its worked example, and
 `docs/ANCHORLESS-SPEC.md` cites another as the failure it was written to fix. The citations are
 left verbatim rather than rewritten; read them as references to material that was not published.
 

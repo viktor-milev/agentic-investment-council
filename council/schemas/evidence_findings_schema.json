@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evidence findings 1.0.0 - what the outside auditor returns about the evidence",
+  "description": "The second outside-model call of a sitting (owner ruling AC2). A genuinely different model reads the evidence BEFORE any seat is paid and names what is missing, what looks wrong and what is misread. It AUDITS: it never gathers and it never authors the frame. No field here can carry a fact for the pack or a line of the frame's own prose, and a figure named inside a finding is a DOUBT for the capture session to chase to its source, never a fact that enters the record. The two echo fields bind the response to the exact evidence brief that was sent.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["nonce_echo", "capture_sha256_echo", "authored_frame", "findings", "overall"],
+  "properties": {
+    "nonce_echo": {
+      "type": "string",
+      "description": "The one-time token printed in the brief's header, echoed back verbatim."
+    },
+    "capture_sha256_echo": {
+      "type": "string",
+      "description": "The evidence hash printed in the brief's header, echoed back verbatim."
+    },
+    "authored_frame": {
+      "type": "boolean",
+      "enum": [false],
+      "description": "Always false: the auditor audits the frame, it never writes one."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Every point against the evidence, each one self-contained. An empty list is a legitimate answer and means the evidence stands as it is.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "severity", "detail", "fact_ids", "where_it_likely_lives", "source_url", "figure_at_source"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short stable id, unique in this response, e.g. E1."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["missing_decisive_fact", "suspect_figure", "framing_error", "missing_checklist_row", "source_doubt"],
+            "description": "The five kinds, and nothing else: a decisive fact the pack does not carry; a value inconsistent, stale, mis-united or implausible; a frame that reads the business wrongly; a requirement the checklist should carry and does not; a figure read at its source that differs from the pack's."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["blocking", "material", "minor"],
+            "description": "blocking: the council cannot honestly sit until this is answered. material: the answer could change. minor: worth recording."
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The point itself, at most 60 words, in plain English an investment manager reads without a glossary."
+          },
+          "fact_ids": {
+            "type": "array",
+            "description": "The ids in the pack this finding is about. Empty where the point is that no such fact exists.",
+            "items": {"type": "string", "minLength": 1}
+          },
+          "where_it_likely_lives": {
+            "type": ["string", "null"],
+            "description": "For a missing fact: where it would be found - a named filing, an exhibit, an investor-relations page, a data vendor. Null otherwise."
+          },
+          "source_url": {
+            "type": ["string", "null"],
+            "description": "For a source_doubt only: the one public page actually read. Null otherwise."
+          },
+          "figure_at_source": {
+            "type": ["string", "null"],
+            "description": "For a source_doubt only: the figure as that page prints it, copied exactly. It is a doubt to be chased, never a fact; the capture session must capture it with its own source before it enters the record. Null otherwise."
+          }
+        }
+      }
+    },
+    "overall": {
+      "type": ["string", "null"],
+      "description": "One paragraph on the evidence as a whole, rendered verbatim and attributed in the report. Null where the findings say everything."
+    }
+  }
+}

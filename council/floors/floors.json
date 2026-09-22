@@ -1,15 +1,22 @@
 {
-  "floors_version": "1.2.0",
-  "authority": "Evidence floors per docs/REBUILD-SPEC.md Appendix A, carrying OWNER-RULINGS W1/W2 (generic core), W4 (Apple), W5+W8.1 (Galaxy), W6/W8.3 (Bitcoin) and the AB2 mandate additions, plus the etf/basket/theme classes per docs/THEMES-BASKETS-SPEC.md section 4 (the W2.5 vehicle floor; AB12 thematic vehicles; basket tests at the thesis level). Floors are minimums for these subjects, never the ceiling: the evidence stage still derives what THIS question needs. Version 1.1.0 adds the ANCHORLESS registry per docs/ANCHORLESS-SPEC.md sections 2-4 (owner rulings AB13.4 and AB15): the gold and commodity subject SHAPES, the asset_classes anchor sets that decide sufficiency for an asset without earnings, and the anchorless_rating constants that fix the rating bar and its bands in data. Version 1.1.1 adds the `substitute` terms on the single_stock capital-spending floor, carrying owner ruling AB19: a filer that publishes no capital-spending line does not stop the council, but the stand-in must declare itself and be labelled, and this data is what the sufficiency gate enforces it against.",
+  "floors_version": "1.4.1",
+  "authority": "Evidence floors per docs/REBUILD-SPEC.md Appendix A, carrying OWNER-RULINGS W1/W2 (generic core), W4 (Apple), W5+W8.1 (Galaxy), W6/W8.3 (Bitcoin) and the AB2 mandate additions, plus the etf/basket/theme classes per docs/THEMES-BASKETS-SPEC.md section 4 (the W2.5 vehicle floor; AB12 thematic vehicles; basket tests at the thesis level). Floors are minimums for these subjects, never the ceiling: the evidence stage still derives what THIS question needs. Version 1.1.0 adds the ANCHORLESS registry per docs/ANCHORLESS-SPEC.md sections 2-4 (owner rulings AB13.4 and AB15): the gold and commodity subject SHAPES, the asset_classes anchor sets that decide sufficiency for an asset without earnings, and the anchorless_rating constants that fix the rating bar and its bands in data. Version 1.1.1 adds the `substitute` terms on the single_stock capital-spending floor, carrying owner ruling AB19: a filer that publishes no capital-spending line does not stop the council, but the stand-in must declare itself and be labelled, and this data is what the sufficiency gate enforces it against. Version 1.3.0 carries owner ruling AC1 into the single_stock class: segment revenue, the guided figure beside the delivered one, a peer set, and what management owns are conditional minimums - present, or declared absent with a reason - and how long the chief executive has been in the job and what the published consensus expects are advisory. The third canonical test, rating against own history or peers, keeps its id and its meaning; the runbook now says peers are expected wherever a peer set exists. Version 1.3.1 carries owner ruling AC12.3: `revenue_families` below names, as data rather than as code, the fact families a business frame's revenue line may point at - the whole-business revenue figures, any segment revenue line, and their prior-year pairs - so a seat cannot be shown the mix of the business argued from a number that is not revenue. A derived fact struck from facts in those families counts as one of them; the provenance gate reads this entry and enforces it. Version 1.4.0 carries owner ruling AC15 (P2 and P4), unit U3e: `archetype_measures` below is the rule, as data, that a subject's rating measure follows its business archetype; and `cycle` below carries the one data constant that scales a cycle series' freshness to the class's own price-freshness rule. Version 1.4.1 carries owner ruling AC19, unit U3f: `prose_figure_marks` below holds, as data rather than as code, the tolerances and the exemption list the render-time scanner uses to trace every number in a business frame's prose to a recorded fact - the relative tolerance, the year range, the plain-count ceiling, the ordinal suffixes, the scale words, the percent words, the month words, and the units that count as percent, as fraction, and as a currency scale. A number that traces to no fact is MARKED where the prose is shown and the pack is never refused for it.",
   "entry_kinds": {
     "id": "the exact fact id must be present in tier1",
     "one_of": "at least one of the listed fact ids must be present in tier1",
     "prefix": "at least one tier1 fact id starting with the prefix must be present",
     "pairs": "where the first id of a pair is present in tier1, the second must be too",
+    "prefix_pairs": "a family that only means anything in pairs: at least one tier1 fact id starting with `prefix` must be present, and every one of them must carry its companion - the same id with `companion_prefix` in place of `prefix`. What management guided for a quarter says nothing on its own; beside what it delivered it says whether management hits its own numbers",
     "parallel_prefixes": "every listed prefix must be present in tier1 AND the suffixes after the prefixes must be the SAME SET across all of them - a repeated structure (one row per cycle, one row per venue) is complete or it is not there; an optional min_members says how many members the structure needs before it is a structure at all",
     "requires_arithmetic": "the fact IS built from other facts in the pack, so it must declare its arithmetic and the gate recomputes it - a claimed difference is asserted, not shown. The companion `arithmetic` names the operation and the operand fact ids IN ORDER, because a capture that adds where the anchor subtracts would otherwise have its own wrong sum faithfully verified",
     "substitute": "AB19 as AB20 reshapes it, capital spending ONLY: where the capture declares the named gap class as absent by design, the fact is a stand-in for a line the filer does not publish, and the ruling's machine-knowable terms bind - both years TAGGED as ceilings naming the SAME published line, struck by the same operation over the same number of operands, every operand of both a reading the capture actually carries, and each named free-cash-flow fact BOTH struck against its own year's ceiling AND tagged as a floor. The declaration is the capture's own bound tag, never words hunted out of a source sentence. Undeclared, the entry behaves as its level alone says - and a stand-in tag on the fact with no declared gap is itself refused, because AB19 requires the gap row alongside",
     "levels": "required = missing refuses; conditional = missing refuses unless a gap is declared with the stated reason; advisory = recorded, never refuses"
+  },
+  "revenue_families": {
+    "why": "AC12.3 (owner, 2026-09-08): a revenue line in the business frame may point ONLY at revenue. Before this rule a line could cite any fact the pack carried - the last price included - and the case file printed that id under the heading 'Facts that carry it', so a seat could argue the mix of the business from a number that is not revenue. Named here as DATA so the families can be widened by a ruling without touching code. A member of a basket or a theme carries the same ids under its own '__<ticker>' suffix; the gate strips that suffix before it reads this list.",
+    "ids": ["revenue_q", "revenue_prior_year_q"],
+    "prefixes": ["segment_revenue_"],
+    "derived": "a derived fact counts as revenue where every operand it is struck from is itself revenue by this list, however many steps down - the share of the period a line carries is exactly such a fact"
   },
   "classes": {
     "single_stock": {
@@ -28,7 +35,13 @@
         {"kind": "id", "id": "next_results_date_checked", "level": "required", "likely_source": "the company's investor-relations events page, checked at the sitting", "why": "W2.3: a confirmed date or a verified 'none announced' - only an unchecked calendar is a failure"},
         {"kind": "id", "id": "events_calendar_check", "level": "required", "likely_source": "the company's investor-relations events page and dated news at the sitting", "why": "AB2: the dated events calendar, or a verified 'none scheduled'"},
         {"kind": "prefix", "prefix": "guidance_", "level": "conditional", "condition": "where management has published guidance; declare the gap where none is published", "likely_source": "the latest results call transcript or press release", "why": "AB2: the company's own outlook"},
-        {"kind": "prefix", "prefix": "risk_free_rate", "level": "required", "likely_source": "the Federal Reserve H.15 release (or the question's own convention)", "why": "AB2/DIAG-3: the yield test needs the rate the question names; default one-month US Treasury bill"}
+        {"kind": "prefix", "prefix": "risk_free_rate", "level": "required", "likely_source": "the Federal Reserve H.15 release (or the question's own convention)", "why": "AB2/DIAG-3: the yield test needs the rate the question names; default one-month US Treasury bill"},
+        {"kind": "prefix", "prefix": "segment_revenue_", "level": "conditional", "condition": "where the filer reports segments; declare the gap absent-by-design where it reports one business only", "likely_source": "the segment note of the latest report, with the prior-year comparative column", "why": "AC1: how the business earns, line by line - the frame's revenue lines point at these facts, and a mix shift is invisible without them"},
+        {"kind": "prefix_pairs", "prefix": "guided_", "companion_prefix": "delivered_", "level": "conditional", "condition": "where management guided a quarter that has since been reported; declare the gap where it publishes no guidance", "likely_source": "the guidance in each quarter's own release, beside the figure the following release delivered", "why": "AC1: whether management hits its own numbers is evidence about management, and it can only be read as a pair"},
+        {"kind": "prefix", "prefix": "peer_", "level": "conditional", "condition": "where an honest peer set exists; declare the gap naming why none does", "likely_source": "a dated market-data page for each named peer", "why": "AC1: the third canonical test is read against peers wherever a peer set exists - the subject's own history alone cannot say whether the whole industry re-rated"},
+        {"kind": "id", "id": "insider_ownership_pct", "level": "conditional", "condition": "where the jurisdiction publishes it; declare the gap where it does not", "likely_source": "the latest proxy statement or the exchange's own disclosure", "why": "AC1: what the people running the business own of it"},
+        {"kind": "id", "id": "ceo_tenure_years", "level": "advisory", "likely_source": "the company's leadership page or the latest proxy statement", "why": "AC1: how long the current management has had to deliver what it promises"},
+        {"kind": "prefix", "prefix": "analyst_consensus_", "level": "advisory", "likely_source": "a dated market-data page carrying the published consensus", "why": "AC1: what the market already expects, as context for the variant view - never as the council's own view"}
       ]
     },
     "bitcoin": {
@@ -270,5 +283,94 @@
         {"kind": "id", "id": "datacentre_capacity_contracted_mw", "level": "required", "likely_source": "the data-centre segment disclosure or contracted-capacity statement", "why": "W5.4"}
       ]
     }
+  },
+  "correction_reaudit": {
+    "authority": "Owner ruling AC15 (P8), unit U3d. A user correction that only NARROWS a claim needs no outside re-audit; a REBUILDING correction - one that changes what the seats reason from - requires a delta re-audit before the sufficiency gate passes. A correction is rebuilding when the corrected fact, or any figure struck from it, is one the business frame's reading rests on (cited in any section named below) or a headline pair (revenue, net income or operating cash flow against its prior-year pair). It narrows otherwise. A correction that brought a new fact or a new derived chain into the pack would also rebuild, but the correction command sets an existing, non-derived fact's value only and can produce neither. This list is DATA so a ruling can widen or narrow it without a code change - the discipline the revenue families already live under (owner ruling AC12.3).",
+    "rebuilding_frame_sections": ["decisive_metrics", "headline_decline_read", "what_is_changing", "how_it_earns"],
+    "rebuilding_on_headline_pair": true
+  },
+  "period_basis": {
+    "authority": "Owner ruling AC15 (P3), unit U3d. An average must not be published as an annual figure. A derived fact that PRESENTS itself as an annual, per-year or run-rate figure - its id or label carries one of the signal words below - must declare which period it covers, and one that declares a multi-year or lifetime average basis while calling itself annual is refused: that is the conflation the owner flagged, a multi-decade average run rate read as the first twelve months' billing. The signal words and the average bases are DATA so a ruling can widen them without a code change. The set of legal bases is the capture contract's own period_basis enum; a fact struck by dividing a total by a term declares its basis by naming itself for what it is, which is what makes it, or keeps it from being, presented as annual.",
+    "annual_signal_words": ["annual", "annually", "annualize", "annualise", "annualizes", "annualises", "annualizing", "annualising", "annualized", "annualised", "annualization", "annualisation", "annualizations", "annualisations", "per year", "peryear", "run rate", "run rates", "runrate", "runrates", "a year", "yearly"],
+    "average_bases": ["per_year_average_over_term", "lifetime_total"]
+  },
+  "archetype_measures": {
+    "authority": "Owner ruling AC15 (P2), unit U3e. The third canonical test declares the subject's ARCHETYPE - what kind of business it is - and the rating MEASURE that archetype calls for. This table is that rule as DATA, so a ruling can widen it without a code change - the discipline the revenue families and the correction re-audit rules already live under. The sufficiency gate enforces it for a single name only, and it never reads whether the declared archetype is TRUE (no machine can read a filing); it checks only that the measure matches the archetype, that the measure's numerator is present for the subject, and that the rating is computable for every peer - the peer numerator AND each denominator metric the rating_vs_history_or_peers row names in 'peer_denominator_metrics', all under the peer_<metric>__<ticker> convention - or the peer half is the declared 'peer_' gap (architect ruling 2026-09-20: a ratio is not computable from its numerator alone, so requiring only the peer numerator was too weak - a peer that carries enterprise value but no contracted capacity cannot be set beside the subject on enterprise value per contracted megawatt). The peer-side denominator ids differ by subject, so the capturer names them on the row rather than this table fixing them; for a profitable_operator the denominator is the earnings comparator (the price/earnings figure). The subject's own denominators are the frame's decisive metrics, whose ids differ by subject and so are not named here. Architect ruling 2026-09-20 (unit U3e, closing round-1 findings r1-1 and r1-3): 'computable' means BOTH halves of the ratio on BOTH sides, so each measure carries a 'denominators_required' count as DATA, and the rating_vs_history_or_peers row names that many 'subject_denominator_facts' (tier-1 fact ids) beside that many 'peer_denominator_metrics' (metric names). The sufficiency gate refuses a count that does not match the measure's, and holds each named subject denominator to the same bar as the numerator - a tier-1 reading, fresh, and a finite number; the peer half (its metric count and the per-peer denominators) is required only when no 'peer_' gap is declared. The capturer still names the facts; this table fixes only how many the measure needs.",
+    "table": {
+      "profitable_operator": {
+        "measure": "earnings_vs_history_and_peers",
+        "subject_numerator": "market_cap",
+        "peer_numerator_metric": "market_cap",
+        "denominators_required": 1,
+        "note": "A business earning money, rated on earnings against its own history and its peers. The market value is the always-present anchor of an earnings multiple; the earnings side is the first canonical test's own facts (profit_growth), already required. denominators_required is 1: the earnings comparator (the price/earnings figure) is the one denominator the market value is divided by, named on the row's subject_denominator_facts for the subject and peer_denominator_metrics for the peers."
+      },
+      "ramping_infrastructure_builder": {
+        "measure": "ev_per_contracted_capacity_and_contracted_revenue_per_unit",
+        "subject_numerator": "enterprise_value",
+        "peer_numerator_metric": "enterprise_value",
+        "denominators_required": 2,
+        "note": "A business whose revenue has not arrived yet, rated on enterprise value per unit of contracted capacity and contracted revenue per unit - the TeraWulf finding. The contracted-capacity and rent-per-unit denominators are the frame's decisive metrics; their ids differ by subject. denominators_required is 2: both the contracted capacity and the contracted revenue per unit are named on the row's subject_denominator_facts for the subject and peer_denominator_metrics for the peers."
+      },
+      "stabilised_lessor": {
+        "measure": "ev_to_operating_income",
+        "subject_numerator": "enterprise_value",
+        "peer_numerator_metric": "enterprise_value",
+        "denominators_required": 1,
+        "note": "A business earning steady rent on built-out capacity, rated on enterprise value to operating income. Operating income is the denominator, the frame's own decisive metric. denominators_required is 1: operating income is the one denominator enterprise value is divided by, named on the row's subject_denominator_facts for the subject and peer_denominator_metrics for the peers."
+      },
+      "no_earnings_asset": {
+        "measure": "anchorless_ladder",
+        "anchorless_only": true,
+        "denominators_required": 0,
+        "note": "An asset with no earnings - it keeps the AB13/AB15 anchorless ladder untouched, and this archetype is legal only for an anchorless subject. denominators_required is 0: the ladder is not a ratio and names no denominators; the subject_denominator_facts and peer_denominator_metrics checks do not run for an anchorless archetype."
+      }
+    },
+    "forbidden_on_model_transition": {
+      "why": "Owner ruling AC15 (P2): rating a business that is CHANGING its model on trailing revenue drawn from the business it is exiting is explicitly forbidden - the WULF finding, where the headline revenue is mostly the segment being closed. Where the frame's what_is_changing.kind is 'model_transition' and the rating row rests on any fact id named here, the sufficiency gate refuses. Named as DATA so a ruling can widen the list without a code change: revenue_q and its prior-year pair are the whole-business trailing revenue; an EV-to-revenue multiple a capture strikes for the exited business is added here by id.",
+      "trailing_revenue_fact_ids": ["revenue_q", "revenue_prior_year_q", "ev_to_revenue", "ev_to_trailing_revenue", "ev_to_sales", "price_to_sales"]
+    },
+    "cycle": {
+      "why": "Owner ruling AC15 (P4), unit U3e. A single name whose thesis rests on an identifiable capital or commodity cycle carries three to five dated series for it, or declares the gap. Each series' as-of freshness is judged against the subject class's own price-freshness rule times the multiple below - a data constant - so a cycle series is measured against a rule scaled from the price the sitting turns on, never a number invented on its own.",
+      "series_freshness_price_multiple": 10
+    }
+  },
+  "prose_figure_marks": {
+    "why": "Owner ruling AC19, unit U3f. The render-time scanner (council/evidence/trace.py) traces every number written into a business frame's prose to a recorded fact of the pack, allowing for rounding and for a change of scale or unit wording; a number that traces to nothing is MARKED where the prose is shown and the pack is NEVER refused for it. Every tolerance and every exemption the scanner uses lives here as data, not as a constant in the code (AC19(4)).",
+    "relative_tolerance": "0.005",
+    "relative_tolerance_note": "The fallback match when the prose number and a fact value do not agree to the prose's own significant figures: they still match when they are within this fraction of each other.",
+    "year_min": 1900,
+    "year_max": 2100,
+    "year_note": "A four-digit integer in this range, standing on its own, is a year and is never marked.",
+    "day_min": 1,
+    "day_max": 31,
+    "day_note": "A plain integer in this range sitting directly beside a month word is the day of a written date and is never marked, with one exception: a day written AFTER its month ('September 30') is only a date's day when nothing that could be its unit follows it (see date_day_closers) - a following unit word ('September 30 MW') makes it a measured figure that is still marked (architect ruling closing register item P-U3f-2, audit UPGRADE2-U3f r3-1). A percent, currency or scaled figure that merely follows a month name is a figure of the prose and is still marked; a month-year is caught by the year rule (audit UPGRADE2-U3f r2-2).",
+    "plain_count_max": 12,
+    "plain_count_note": "A plain integer from 0 to this ceiling, with no currency sign, percent or scale, is a count and is never marked.",
+    "ordinal_suffixes": ["st", "nd", "rd", "th"],
+    "date_day_closers": [",", ".", ";", ":", ")"],
+    "date_day_closers_note": "For a day written AFTER its month ('September 30'), the day is a written date's day only when the next non-space character after it (and any ordinal suffix) is the end of the text, one of these closers, or the first digit of a four-digit year. Any other following word makes the number a measured figure that is still marked (architect ruling closing register item P-U3f-2, audit UPGRADE2-U3f r3-1). The day-before-month order ('30 September') is unaffected: the month word itself follows the number.",
+    "scale_words": {
+      "thousand": 3, "thousands": 3,
+      "million": 6, "millions": 6,
+      "billion": 9, "billions": 9,
+      "trillion": 12, "trillions": 12,
+      "bn": 9, "K": 3, "M": 6, "B": 9, "m": 6
+    },
+    "scale_words_note": "The power of ten a scale word or letter written directly after a number multiplies it by. Read case-sensitively for the single letters (M is millions) and case-insensitively for the words.",
+    "percent_words": ["percent", "pct"],
+    "percent_words_note": "Words after a number that make it a percentage (the percent SIGN and the two words 'per cent' are read by the scanner directly). A percentage matches a percent-unit or fraction-unit fact, never a plain one.",
+    "month_words": ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"],
+    "month_words_note": "A plain day-of-month integer (see day_min/day_max) sitting directly beside one of these is the day of a written date and is never marked; the year of a month-year is caught by the year rule. For the day-after-month order ('September 30') a following unit word lifts the exemption - see date_day_closers_note.",
+    "percent_units": ["%", "percent", "percent_per_year"],
+    "fraction_units": ["fraction_annualized", "fraction_of_price", "share of the segment total"],
+    "currency_scale_units": {
+      "USD_thousand": 3,
+      "USD_m": 6,
+      "USD_million": 6,
+      "USD_b": 9,
+      "USD_bn": 9,
+      "USD_billion": 9
+    },
+    "currency_scale_units_note": "A recorded fact whose unit states a currency scale is read in base units by this power of ten before it is compared to a prose number; a unit not listed here (USD, USD_per_share, MW, years, x) is read at its face value."
   }
 }

@@ -1,6 +1,6 @@
 {
  "draft_verdict": {
-  "conviction_rationale": "The record supports paying today's price: profit grew 12 percent on the year, the derived quarterly free cash flow of 1,000.0 million dollars is shown with its arithmetic, and the current rating of 18.4 times profit sits below the company's own five-year average of 22.1. The declared gaps (no crowding series, no volatility series) weaken sizing, not the case itself.",
+  "conviction_rationale": "The record supports paying today's price. Reported profit grew 12% on 7% revenue growth in the June 2026 quarter. Net cash stands at $2.62B, per the balance sheet. Free cash flow ran $410M for the year. At $50 the price sits below the $62 the record supports. The rating is buy, with a dated test at the 20 Oct 2026 results.",
   "evidence_dependencies": [
    "price_last",
    "pe_ratio_current",
@@ -37,7 +37,7 @@
   ],
   "mispricing": {
    "arithmetic": "18.4 times profit today against the company's own five-year average of 22.1: on unchanged profits, the average rating implies roughly 148 dollars against the 123.45 asked. The cash check agrees: the pack's derived free-cash-flow yield reading of 0.02 per quarter is about 8 percent a year, roughly 3.7 points above the 4.35 percent one-month bill.",
-   "magnitude": "roughly a sixth below the company's own five-year rating",
+   "magnitude": "about $12 below a defensible value near $62.",
    "read": "cheap"
   },
   "rating": "buy",

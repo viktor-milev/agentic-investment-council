@@ -1,5 +1,5 @@
 {
- "capture_version": "1.3.0",
+ "capture_version": "1.6.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [],
  "market_state": {
@@ -288,5 +288,18 @@
    "source": "INVENTED FIXTURE - the gold council's free published file and a named analyst house's note",
    "text": "INVENTED FIXTURE - The official sector bought 244 tonnes in the latest published quarter, the gold council's file states, and the reported Chinese figure of 5.1 tonnes for July sits below a market estimate of 23.4 tonnes for the same month."
   }
- ]
+ ],
+ "evidence_challenge": {
+  "status": "success",
+  "model": "gpt-5.6-sol",
+  "failure_status": null,
+  "findings": [],
+  "overall": null,
+  "resolutions": {},
+  "failure_reason": null,
+  "nonce": "a1b2c3d4e5f60718676f6c642d706173",
+  "evidence_sha256": "3d9ceed53235bb16b43041660e6624f5adf0b22143cfc4db8d49ed82f13050fc",
+  "post_audit_changes": [],
+  "post_audit_sha256": "3d9ceed53235bb16b43041660e6624f5adf0b22143cfc4db8d49ed82f13050fc"
+ }
 }

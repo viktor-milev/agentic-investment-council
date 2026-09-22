@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Council verdict 1.3.0 - the published document (REBUILD-SPEC section 8)",
-  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). No field for what the owner owns exists anywhere in this contract.",
+  "title": "Council verdict 1.4.0 - the published document (REBUILD-SPEC section 8)",
+  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). Since 1.4.0 (UPGRADE-2 U7, owner ruling AC7) the provenance names the ledger row this verdict is recorded under, so the sitting can be judged against what happened. No field for what the owner owns exists anywhere in this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -25,7 +25,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.3.0"
+      "const": "1.4.0"
     },
     "run_id": {
       "type": "string",
@@ -1325,16 +1325,23 @@
       "additionalProperties": false,
       "required": [
         "pack_hash",
+        "ledger_row_id",
         "models_per_seat",
         "challenger_model_requested",
         "timestamps",
         "tokens",
-        "prompt_bytes_total"
+        "prompt_bytes_total",
+        "evidence"
       ],
       "properties": {
         "pack_hash": {
           "type": "string",
           "pattern": "[0-9a-f]{64}"
+        },
+        "ledger_row_id": {
+          "type": "string",
+          "pattern": "[a-z0-9][a-z0-9-]*",
+          "description": "The append-only ledger row this verdict is recorded under (owner ruling AC7, spec U7.1), so the sitting can be judged against what happened. Keyed to the run id: one sitting, one verdict, one row. The publisher writes the row and records its hash; read-back proves the row on file is the row this run wrote."
         },
         "models_per_seat": {
           "type": "object",
@@ -1399,9 +1406,146 @@
             }
           }
         },
+        "seat_cost": {
+          "description": "Owner ruling AC15, architect ruling (5)(a): the seat-cost measure AC8's cap is revisited on - tokens per tool turn and brief bytes per seat. The dispatch harness returns one token figure per seat, not the input/output split spec U5.5 named, so those two fields stay null with the note that says why. Optional: a verdict published before this ruling carries none.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "note",
+            "per_seat"
+          ],
+          "properties": {
+            "note": {
+              "type": "string",
+              "minLength": 1
+            },
+            "per_seat": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tokens",
+                  "tool_calls",
+                  "tokens_per_tool_call",
+                  "brief_bytes",
+                  "input_tokens",
+                  "output_tokens"
+                ],
+                "properties": {
+                  "tokens": {"type": ["integer", "null"]},
+                  "tool_calls": {"type": ["integer", "null"]},
+                  "tokens_per_tool_call": {"type": ["number", "null"]},
+                  "brief_bytes": {"type": ["integer", "null"]},
+                  "input_tokens": {"type": ["integer", "null"]},
+                  "output_tokens": {"type": ["integer", "null"]}
+                }
+              }
+            }
+          }
+        },
         "prompt_bytes_total": {
           "type": "integer",
           "minimum": 0
+        },
+        "evidence": {
+          "description": "Owner ruling AC3, added in 1.3.1: what the sitting decided and spent before a seat was paid. The mode is chosen ONCE, at the very start; the approval - where a person gave one - is taken on the one-page evidence brief; the capture stage's own minutes and tokens are recorded beside the sitting's clock, never inside it. clock_started is where the 1.5-hour wall clock begins: the approval in the reviewed mode, the run itself in auto-mode.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "chosen_by",
+            "chosen_at",
+            "approved_by",
+            "approved_at",
+            "approval_note",
+            "clock_started",
+            "capture"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "reviewed",
+                "unattended"
+              ]
+            },
+            "chosen_by": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chosen_at": {
+              "type": "string",
+              "minLength": 1
+            },
+            "approved_by": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "approved_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "approval_note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "clock_started": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capture": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "tokens",
+                "minutes",
+                "model",
+                "evidence_challenge_tokens",
+                "evidence_challenge_prompt_bytes"
+              ],
+              "properties": {
+                "tokens": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "minutes": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "estimated": {
+                  "description": "Owner ruling AC15 (P5(b)): whether the capture-stage token and minute figures are an estimate. The report prints 'estimated' beside them where it is true. Optional: a verdict published before this ruling carries none.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "evidence_challenge_tokens": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "evidence_challenge_prompt_bytes": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
         }
       }
     }

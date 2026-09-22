@@ -1,348 +1,756 @@
 {
-  "capture_version": "1.3.0",
-  "subject": {
-    "kind": "single_stock",
-    "asset_class": "equity",
-    "name": "Apple Inc.",
-    "ticker": "AAPL",
-    "listing": "NASDAQ",
-    "currency": "USD"
+ "capture_version": "1.6.0",
+ "subject": {
+  "kind": "single_stock",
+  "asset_class": "equity",
+  "name": "Apple Inc.",
+  "ticker": "AAPL",
+  "listing": "NASDAQ",
+  "currency": "USD"
+ },
+ "question_verbatim": "Would you buy Apple at today's price? (INVENTED FIXTURE)",
+ "captured_at": "2026-08-28T15:30Z",
+ "market_state": {
+  "state": "open",
+  "disclosure": null
+ },
+ "tier1": [
+  {
+   "id": "price_last",
+   "value": "200.00",
+   "unit": "USD",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - broker price snapshot at the sitting",
+   "freshness_rule_days": 3,
+   "derived": null
   },
-  "question_verbatim": "Would you buy Apple at today's price? (INVENTED FIXTURE)",
-  "captured_at": "2026-08-28T15:30Z",
-  "market_state": {
-    "state": "open",
-    "disclosure": null
+  {
+   "id": "range_52w_low",
+   "value": "160.00",
+   "unit": "USD",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - broker one-year price history",
+   "freshness_rule_days": 30,
+   "derived": null
   },
-  "tier1": [
-    {
-      "id": "price_last",
-      "value": "200.00",
-      "unit": "USD",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - broker price snapshot at the sitting",
-      "freshness_rule_days": 3,
-      "derived": null
-    },
-    {
-      "id": "range_52w_low",
-      "value": "160.00",
-      "unit": "USD",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - broker one-year price history",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "range_52w_high",
-      "value": "240.00",
-      "unit": "USD",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - broker one-year price history",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "market_cap",
-      "value": "2900000",
-      "unit": "USD_m",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - market-data page dated at the sitting",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "latest_required_report_period",
-      "value": "Q3 FY2026, quarter ended 2026-06-27, 10-Q filed 2026-08-01",
-      "unit": "period",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - investor-relations filings page",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "revenue_q",
-      "value": "90000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q income statement, filed 2026-08-01",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "revenue_prior_year_q",
-      "value": "85000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - comparative column of the same 10-Q, dated by the filing that republishes it (DIAG-1)",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "net_income_q",
-      "value": "22000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q income statement, filed 2026-08-01",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "net_income_prior_year_q",
-      "value": "20000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - comparative column of the same 10-Q (DIAG-1)",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "operating_cash_flow_q",
+  {
+   "id": "range_52w_high",
+   "value": "240.00",
+   "unit": "USD",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - broker one-year price history",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "market_cap",
+   "value": "2900000",
+   "unit": "USD_m",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "latest_required_report_period",
+   "value": "Q3 FY2026, quarter ended 2026-06-27, 10-Q filed 2026-08-01",
+   "unit": "period",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - investor-relations filings page",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "revenue_q",
+   "value": "90000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q income statement, filed 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "revenue_prior_year_q",
+   "value": "85000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q, dated by the filing that republishes it (DIAG-1)",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "net_income_q",
+   "value": "22000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q income statement, filed 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "net_income_prior_year_q",
+   "value": "20000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q (DIAG-1)",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "operating_cash_flow_q",
+   "value": "26000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - condensed cash-flow statement of the 10-Q; a single quarter is the difference of two cumulative statements",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "operating_cash_flow_prior_year_q",
+   "value": "25000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "capital_expenditure_q",
+   "value": "3000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q cash-flow statement, filed 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "capital_expenditure_prior_year_q",
+   "value": "2800",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "free_cash_flow_q",
+   "value": "23000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - derived inside the pack from the two 10-Q cash-flow facts",
+   "freshness_rule_days": 120,
+   "derived": {
+    "operation": "subtract",
+    "operands": [
+     {
+      "label": "operating cash flow, quarter",
       "value": "26000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - condensed cash-flow statement of the 10-Q; a single quarter is the difference of two cumulative statements",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "operating_cash_flow_prior_year_q",
-      "value": "25000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "capital_expenditure_q",
+      "fact_id": "operating_cash_flow_q"
+     },
+     {
+      "label": "capital spending, quarter",
       "value": "3000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q cash-flow statement, filed 2026-08-01",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "capital_expenditure_prior_year_q",
-      "value": "2800",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - comparative column of the same 10-Q cash-flow statement (DIAG-1)",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "free_cash_flow_q",
-      "value": "23000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - derived inside the pack from the two 10-Q cash-flow facts",
-      "freshness_rule_days": 120,
-      "derived": {
-        "operation": "subtract",
-        "operands": [
-          {
-            "label": "operating cash flow, quarter",
-            "value": "26000",
-            "fact_id": "operating_cash_flow_q"
-          },
-          {
-            "label": "capital spending, quarter",
-            "value": "3000",
-            "fact_id": "capital_expenditure_q"
-          }
-        ]
-      }
-    },
-    {
-      "id": "free_cash_flow_prior_year_q",
-      "value": "22200",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - derived inside the pack from the two prior-year cash-flow facts",
-      "freshness_rule_days": 120,
-      "derived": {
-        "operation": "subtract",
-        "operands": [
-          {
-            "label": "operating cash flow, prior-year quarter",
-            "value": "25000",
-            "fact_id": "operating_cash_flow_prior_year_q"
-          },
-          {
-            "label": "capital spending, prior-year quarter",
-            "value": "2800",
-            "fact_id": "capital_expenditure_prior_year_q"
-          }
-        ]
-      }
-    },
-    {
-      "id": "cash_and_investments_mrq_end",
-      "value": "150000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q balance sheet, two separate facts, never a netted figure (W4.2)",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "total_debt_mrq_end",
-      "value": "95000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q balance sheet, filed 2026-08-01",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "buyback_spend_q",
-      "value": "25000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q cash-flow statement, repurchases in the quarter",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "diluted_shares_q",
-      "value": "15000",
-      "unit": "millions_of_shares",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q income statement, diluted share count",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "buyback_authorisation_remaining",
-      "value": "60000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - 10-Q note on the board's repurchase authorisation",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "revenue_greater_china_q",
-      "value": "15000",
-      "unit": "USD_m",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - segment note of the 10-Q, filed 2026-08-01",
-      "freshness_rule_days": 120,
-      "derived": null
-    },
-    {
-      "id": "short_interest_shares",
-      "value": "120.5",
-      "unit": "millions_of_shares",
-      "as_of": "2026-08-15",
-      "source": "INVENTED FIXTURE - exchange short-interest series via a dated market-data page",
-      "freshness_rule_days": 45,
-      "derived": null
-    },
-    {
-      "id": "pe_ratio_current",
-      "value": "30.0",
-      "unit": "x",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - market-data page dated at the sitting",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "pe_ratio_5y_average",
-      "value": "25.0",
-      "unit": "x",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - market-data page, five-year record",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "guidance_gross_margin_q",
-      "value": "46.5",
-      "unit": "%",
-      "as_of": "2026-08-01",
-      "source": "INVENTED FIXTURE - management's outlook on the results call, 2026-08-01",
-      "freshness_rule_days": 200,
-      "derived": null
-    },
-    {
-      "id": "next_results_date_checked",
-      "value": "2026-10-30",
-      "unit": "date",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - investor-relations events page, checked at the sitting",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "events_calendar_check",
-      "value": "checked 2026-08-28: nothing scheduled before the 2026-10-30 results date",
-      "unit": "check",
-      "as_of": "2026-08-28",
-      "source": "INVENTED FIXTURE - investor-relations events page and dated news at the sitting",
-      "freshness_rule_days": 30,
-      "derived": null
-    },
-    {
-      "id": "risk_free_rate_1m_tbill",
-      "value": "4.35",
-      "unit": "%",
-      "as_of": "2026-08-27",
-      "source": "INVENTED FIXTURE - Federal Reserve H.15 release, one-month Treasury bill",
-      "freshness_rule_days": 7,
-      "derived": null
-    }
-  ],
-  "tier2": [
-    {
-      "id": "capital_return_note",
-      "text": "INVENTED FIXTURE - The board's remaining repurchase authorisation stood at 60000 million dollars at quarter end, the 10-Q notes, and the diluted share count fell again from a year earlier.",
-      "source": "INVENTED FIXTURE - 10-Q note on capital return, filed 2026-08-01",
-      "as_of": "2026-08-01",
-      "figures": ["60000"]
-    }
-  ],
-  "gaps": [],
-  "sufficiency": {
-    "requirements": [
-      {
-        "id": "profit_growth",
-        "description": "Is Apple earning more than a year ago? Net income this quarter against the same quarter last year. (INVENTED FIXTURE)",
-        "kind": "canonical_test",
-        "status": "answered",
-        "answered_by": ["net_income_q", "net_income_prior_year_q"]
-      },
-      {
-        "id": "free_cash_flow",
-        "description": "How much cash is generated after capital spending, this year against last. (INVENTED FIXTURE)",
-        "kind": "canonical_test",
-        "status": "answered",
-        "answered_by": ["free_cash_flow_q", "free_cash_flow_prior_year_q"]
-      },
-      {
-        "id": "rating_vs_history_or_peers",
-        "description": "Is today's rating expensive or cheap against Apple's own five-year record? (INVENTED FIXTURE)",
-        "kind": "canonical_test",
-        "status": "answered",
-        "answered_by": ["pe_ratio_current", "pe_ratio_5y_average"]
-      },
-      {
-        "id": "yield_vs_risk_free",
-        "description": "Does the earnings yield implied by today's rating beat the one-month Treasury bill? (INVENTED FIXTURE)",
-        "kind": "canonical_test",
-        "status": "answered",
-        "answered_by": ["pe_ratio_current", "risk_free_rate_1m_tbill"]
-      },
-      {
-        "id": "thesis_capital_return",
-        "description": "The stated thesis leans on the pace of capital return continuing. (INVENTED FIXTURE)",
-        "kind": "thesis_specific",
-        "status": "answered",
-        "answered_by": ["buyback_spend_q", "buyback_authorisation_remaining", "diluted_shares_q", "capital_return_note"]
-      }
+      "fact_id": "capital_expenditure_q"
+     }
     ]
+   }
+  },
+  {
+   "id": "free_cash_flow_prior_year_q",
+   "value": "22200",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - derived inside the pack from the two prior-year cash-flow facts",
+   "freshness_rule_days": 120,
+   "derived": {
+    "operation": "subtract",
+    "operands": [
+     {
+      "label": "operating cash flow, prior-year quarter",
+      "value": "25000",
+      "fact_id": "operating_cash_flow_prior_year_q"
+     },
+     {
+      "label": "capital spending, prior-year quarter",
+      "value": "2800",
+      "fact_id": "capital_expenditure_prior_year_q"
+     }
+    ]
+   }
+  },
+  {
+   "id": "cash_and_investments_mrq_end",
+   "value": "150000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q balance sheet, two separate facts, never a netted figure (W4.2)",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "total_debt_mrq_end",
+   "value": "95000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q balance sheet, filed 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "buyback_spend_q",
+   "value": "25000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q cash-flow statement, repurchases in the quarter",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "diluted_shares_q",
+   "value": "15000",
+   "unit": "millions_of_shares",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q income statement, diluted share count",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "buyback_authorisation_remaining",
+   "value": "60000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - 10-Q note on the board's repurchase authorisation",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "revenue_greater_china_q",
+   "value": "15000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - segment note of the 10-Q, filed 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "short_interest_shares",
+   "value": "120.5",
+   "unit": "millions_of_shares",
+   "as_of": "2026-08-15",
+   "source": "INVENTED FIXTURE - exchange short-interest series via a dated market-data page",
+   "freshness_rule_days": 45,
+   "derived": null
+  },
+  {
+   "id": "pe_ratio_current",
+   "value": "30.0",
+   "unit": "x",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "pe_ratio_5y_average",
+   "value": "25.0",
+   "unit": "x",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page, five-year record",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "guidance_gross_margin_q",
+   "value": "46.5",
+   "unit": "%",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - management's outlook on the results call, 2026-08-01",
+   "freshness_rule_days": 200,
+   "derived": null
+  },
+  {
+   "id": "next_results_date_checked",
+   "value": "2026-10-30",
+   "unit": "date",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - investor-relations events page, checked at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "events_calendar_check",
+   "value": "checked 2026-08-28: nothing scheduled before the 2026-10-30 results date",
+   "unit": "check",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - investor-relations events page and dated news at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "risk_free_rate_1m_tbill",
+   "value": "4.35",
+   "unit": "%",
+   "as_of": "2026-08-27",
+   "source": "INVENTED FIXTURE - Federal Reserve H.15 release, one-month Treasury bill",
+   "freshness_rule_days": 7,
+   "derived": null
+  },
+  {
+   "id": "segment_revenue_devices_q",
+   "value": "62100",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - the filer's 10-Q segment note, 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "segment_revenue_devices_prior_year_q",
+   "value": "60000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - the same segment note's comparative column",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "segment_revenue_services_q",
+   "value": "27900",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - the filer's 10-Q segment note, 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": null
+  },
+  {
+   "id": "segment_revenue_services_prior_year_q",
+   "value": "25000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - the same segment note's comparative column",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "peer_pe_ratio__pdev",
+   "value": "24.0",
+   "unit": "x",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page for Peer Devices Inc, dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "peer_market_cap__pdev",
+   "value": "1800000",
+   "unit": "USD_m",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page for Peer Devices Inc, dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "peer_pe_ratio__pnet",
+   "value": "27.5",
+   "unit": "x",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page for Peer Networks Corp, dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "peer_market_cap__pnet",
+   "value": "2100000",
+   "unit": "USD_m",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - market-data page for Peer Networks Corp, dated at the sitting",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "guided_gross_margin_q2_fy2026",
+   "value": "46.0",
+   "unit": "%",
+   "as_of": "2026-02-01",
+   "source": "INVENTED FIXTURE - the Q1 FY2026 results call, the Q2 outlook",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "delivered_gross_margin_q2_fy2026",
+   "value": "46.3",
+   "unit": "%",
+   "as_of": "2026-05-01",
+   "source": "INVENTED FIXTURE - the Q2 FY2026 results release",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "guided_gross_margin_q3_fy2026",
+   "value": "46.5",
+   "unit": "%",
+   "as_of": "2026-05-01",
+   "source": "INVENTED FIXTURE - the Q2 FY2026 results call, the Q3 outlook",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "delivered_gross_margin_q3_fy2026",
+   "value": "46.8",
+   "unit": "%",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - the Q3 FY2026 results release",
+   "freshness_rule_days": 500,
+   "derived": null
+  },
+  {
+   "id": "insider_ownership_pct",
+   "value": "0.09",
+   "unit": "%",
+   "as_of": "2026-01-10",
+   "source": "INVENTED FIXTURE - the latest proxy statement",
+   "freshness_rule_days": 400,
+   "derived": null
+  },
+  {
+   "id": "ceo_tenure_years",
+   "value": "15",
+   "unit": "years",
+   "as_of": "2026-08-28",
+   "source": "INVENTED FIXTURE - the filer's leadership page, read at the sitting",
+   "freshness_rule_days": 400,
+   "derived": null
+  },
+  {
+   "id": "analyst_consensus_revenue_next_q",
+   "value": "94000",
+   "unit": "USD_m",
+   "as_of": "2026-08-27",
+   "source": "INVENTED FIXTURE - market-data page carrying the published consensus",
+   "freshness_rule_days": 30,
+   "derived": null
+  },
+  {
+   "id": "segment_revenue_total_q",
+   "value": "90000",
+   "unit": "USD_m",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - struck at capture from the filer's 10-Q segment note, 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": {
+    "operation": "sum",
+    "operands": [
+     {
+      "label": "the devices line in the quarter",
+      "value": "62100",
+      "fact_id": "segment_revenue_devices_q"
+     },
+     {
+      "label": "the services line in the quarter",
+      "value": "27900",
+      "fact_id": "segment_revenue_services_q"
+     }
+    ]
+   }
+  },
+  {
+   "id": "segment_revenue_share_devices_q",
+   "value": "0.69",
+   "unit": "share of the segment total",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - struck at capture from the filer's 10-Q segment note, 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": {
+    "operation": "divide",
+    "operands": [
+     {
+      "label": "the devices line in the quarter",
+      "value": "62100",
+      "fact_id": "segment_revenue_devices_q"
+     },
+     {
+      "label": "every revenue line in the quarter",
+      "value": "90000",
+      "fact_id": "segment_revenue_total_q"
+     }
+    ]
+   }
+  },
+  {
+   "id": "segment_revenue_share_services_q",
+   "value": "0.31",
+   "unit": "share of the segment total",
+   "as_of": "2026-08-01",
+   "source": "INVENTED FIXTURE - struck at capture from the filer's 10-Q segment note, 2026-08-01",
+   "freshness_rule_days": 120,
+   "derived": {
+    "operation": "divide",
+    "operands": [
+     {
+      "label": "the services line in the quarter",
+      "value": "27900",
+      "fact_id": "segment_revenue_services_q"
+     },
+     {
+      "label": "every revenue line in the quarter",
+      "value": "90000",
+      "fact_id": "segment_revenue_total_q"
+     }
+    ]
+   }
   }
+ ],
+ "tier2": [
+  {
+   "id": "capital_return_note",
+   "text": "INVENTED FIXTURE - The board's remaining repurchase authorisation stood at 60000 million dollars at quarter end, the 10-Q notes, and the diluted share count fell again from a year earlier.",
+   "source": "INVENTED FIXTURE - 10-Q note on capital return, filed 2026-08-01",
+   "as_of": "2026-08-01",
+   "figures": [
+    "60000"
+   ]
+  },
+  {
+   "id": "t2_capital_allocation",
+   "text": "INVENTED FIXTURE - Over the three years to FY2026 the company spent 270000 million dollars buying back its own shares and paid 45000 million dollars of dividends, made no acquisition above 1000 million dollars, and cut the diluted share count by 8.5 percent.",
+   "source": "INVENTED FIXTURE - the filer's FY2024-FY2026 annual reports and the latest 10-Q",
+   "as_of": "2026-08-01",
+   "figures": [
+    "270000",
+    "45000",
+    "1000",
+    "8.5"
+   ]
+  },
+  {
+   "id": "t2_market_structure_and_share",
+   "text": "INVENTED FIXTURE - The premium end of this device market is an effective duopoly: the filer holds 55 percent of units above the 800 dollar price point and Peer Devices Inc holds 31 percent. The filer wins on the software its own devices run, which 92 percent of its customers keep when they replace a handset. A customer who buys nothing keeps a working device for about 4 years, and the replacement cycle is what every quarter's unit figure is priced against.",
+   "source": "INVENTED FIXTURE - the filer's FY2026 annual report and trade-body shipment data",
+   "as_of": "2026-08-01",
+   "figures": [
+    "55",
+    "800",
+    "31",
+    "92",
+    "4"
+   ]
+  }
+ ],
+ "gaps": [],
+ "sufficiency": {
+  "requirements": [
+   {
+    "id": "profit_growth",
+    "description": "Is Apple earning more than a year ago? Net income this quarter against the same quarter last year. (INVENTED FIXTURE)",
+    "kind": "canonical_test",
+    "status": "answered",
+    "answered_by": [
+     "net_income_q",
+     "net_income_prior_year_q"
+    ]
+   },
+   {
+    "id": "free_cash_flow",
+    "description": "How much cash is generated after capital spending, this year against last. (INVENTED FIXTURE)",
+    "kind": "canonical_test",
+    "status": "answered",
+    "answered_by": [
+     "free_cash_flow_q",
+     "free_cash_flow_prior_year_q"
+    ]
+   },
+   {
+    "id": "rating_vs_history_or_peers",
+    "description": "Is today's rating expensive or cheap against Apple's own five-year record? (INVENTED FIXTURE)",
+    "kind": "canonical_test",
+    "status": "answered",
+    "answered_by": [
+     "pe_ratio_current",
+     "pe_ratio_5y_average"
+    ],
+    "measure": "earnings_vs_history_and_peers",
+    "peer_denominator_metrics": ["pe_ratio"],
+    "subject_denominator_facts": ["pe_ratio_current"]
+   },
+   {
+    "id": "yield_vs_risk_free",
+    "description": "Does the earnings yield implied by today's rating beat the one-month Treasury bill? (INVENTED FIXTURE)",
+    "kind": "canonical_test",
+    "status": "answered",
+    "answered_by": [
+     "pe_ratio_current",
+     "risk_free_rate_1m_tbill"
+    ]
+   },
+   {
+    "id": "thesis_capital_return",
+    "description": "The stated thesis leans on the pace of capital return continuing. (INVENTED FIXTURE)",
+    "kind": "thesis_specific",
+    "status": "answered",
+    "answered_by": [
+     "buyback_spend_q",
+     "buyback_authorisation_remaining",
+     "diluted_shares_q",
+     "capital_return_note"
+    ]
+   }
+  ]
+ },
+ "business_frame": {
+  "AAPL": {
+   "what_it_does": "INVENTED FIXTURE - The company designs and sells premium consumer computing devices, and sells subscriptions and a payments service to the people who own them. Its customers are households and, increasingly, corporate fleets. If it vanished, a customer would lose the device and the software that carries their photographs, messages and payment credentials, and would have to move all of it to a rival system that does not read the same file formats.",
+   "how_it_earns": [
+    {
+     "line": "INVENTED FIXTURE - Devices",
+     "share_of_period": "0.69",
+     "facts": [
+      "segment_revenue_devices_q",
+      "segment_revenue_devices_prior_year_q",
+      "segment_revenue_total_q"
+     ],
+     "figures": []
+    },
+    {
+     "line": "INVENTED FIXTURE - Services and subscriptions",
+     "share_of_period": "0.31",
+     "facts": [
+      "segment_revenue_services_q",
+      "segment_revenue_services_prior_year_q",
+      "segment_revenue_total_q"
+     ],
+     "figures": []
+    }
+   ],
+   "what_is_changing": {
+    "kind": "mix_shift",
+    "statement": "INVENTED FIXTURE - Services grew from 25000 to 27900 million dollars while devices grew from 60000 to 62100. Services carry a higher margin and recur monthly, so the mix shift lifts the blended margin even when device units are flat. The question is whether services can keep growing at that rate on a device base that is no longer expanding.",
+    "facts": [
+     "segment_revenue_services_q",
+     "segment_revenue_services_prior_year_q",
+     "segment_revenue_devices_q",
+     "segment_revenue_devices_prior_year_q"
+    ],
+    "figures": []
+   },
+   "headline_decline_read": null,
+   "decisive_metrics": [
+    {
+     "name": "Services revenue against last year",
+     "kind": "growth",
+     "why_it_decides": "Services is the recurring, higher-margin half. Its growth rate is what carries the rating this question asks about.",
+     "answered_by": [
+      "segment_revenue_services_q",
+      "segment_revenue_services_prior_year_q"
+     ],
+     "gap": null,
+     "figures": []
+    },
+    {
+     "name": "Gross margin guided against delivered",
+     "kind": "margin",
+     "why_it_decides": "The mix shift is only real if it shows in the margin management guides to and then delivers.",
+     "answered_by": [
+      "guided_gross_margin_q3_fy2026",
+      "delivered_gross_margin_q3_fy2026"
+     ],
+     "gap": null,
+     "figures": []
+    },
+    {
+     "name": "Cash returned against cash generated",
+     "kind": "cash_conversion",
+     "why_it_decides": "Most of this company's return to an owner arrives as buybacks. Whether the cash covers them decides whether they continue.",
+     "answered_by": [
+      "buyback_spend_q",
+      "free_cash_flow_q"
+     ],
+     "gap": null,
+     "figures": []
+    },
+    {
+     "name": "Revenue from Greater China",
+     "kind": "share",
+     "why_it_decides": "The single largest concentration of demand risk, and the line that moves the whole rating when it turns.",
+     "answered_by": [
+      "revenue_greater_china_q"
+     ],
+     "gap": null,
+     "figures": []
+    },
+    {
+     "name": "Price/earnings, against its own history and peers",
+     "kind": "other",
+     "why_it_decides": "The business is rated on earnings against its own history and its peers, and this multiple is the number that rating divides the market value by.",
+     "answered_by": [
+      "pe_ratio_current"
+     ],
+     "gap": null,
+     "figures": []
+    }
+   ],
+   "peers": [
+    {
+     "name": "INVENTED FIXTURE - Peer Devices Inc",
+     "ticker": "PDEV",
+     "metrics": [
+      "peer_pe_ratio__pdev",
+      "peer_market_cap__pdev"
+     ],
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+    },
+    {
+     "name": "INVENTED FIXTURE - Peer Networks Corp",
+     "ticker": "PNET",
+     "metrics": [
+      "peer_pe_ratio__pnet",
+      "peer_market_cap__pnet"
+     ],
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+    }
+   ],
+   "management": {
+    "ceo_tenure_years": "ceo_tenure_years",
+    "cfo_tenure_years": null,
+    "insider_ownership_pct": "insider_ownership_pct",
+    "guidance_vs_delivery": [
+     {
+      "period": "Q2 FY2026",
+      "guided": [
+       "guided_gross_margin_q2_fy2026"
+      ],
+      "delivered": "delivered_gross_margin_q2_fy2026"
+     },
+     {
+      "period": "Q3 FY2026",
+      "guided": [
+       "guided_gross_margin_q3_fy2026"
+      ],
+      "delivered": "delivered_gross_margin_q3_fy2026"
+     }
+    ],
+    "capital_allocation": "t2_capital_allocation"
+   },
+   "competitive_position": "t2_market_structure_and_share",
+   "what_it_does_figures": [],
+   "archetype": "profitable_operator",
+   "archetype_because": "INVENTED FIXTURE - the business earns a net profit each quarter and is rated on earnings against its own history and its listed peers.",
+   "cycle_dependence": "none",
+   "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
+  }
+ },
+ "evidence_challenge": {
+  "status": "success",
+  "model": "gpt-5.6-sol",
+  "failure_status": null,
+  "findings": [],
+  "overall": null,
+  "resolutions": {},
+  "failure_reason": null,
+  "nonce": "a1b2c3d4e5f607186161706c2d706173",
+  "evidence_sha256": "5b5e2c7e048f430a86bd9baa9220559c723aea2d4016fad2bea356ae76abe94b",
+  "post_audit_changes": [],
+  "post_audit_sha256": "5b5e2c7e048f430a86bd9baa9220559c723aea2d4016fad2bea356ae76abe94b"
+ }
 }

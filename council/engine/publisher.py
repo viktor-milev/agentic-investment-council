@@ -39,6 +39,7 @@ sys.path.insert(0, os.path.abspath(
 
 from council.lib import canonical, subjects, validate  # noqa: E402
 from council.engine import briefs, ladder, runrecord  # noqa: E402
+from council.ledger import ledger  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCHEMA_DIR = os.path.join(ROOT, "council", "schemas")
@@ -62,6 +63,17 @@ DIFF_FIELDS = (
 
 SEAT_ORDER = ["frame"] + briefs.ADVISOR_SEATS + [
     "reviewer", "chair_draft", "chair_resolve"]
+
+# The chairman's ONE prose re-ask (owner ruling AC6) is written under its own
+# seat so the gate can dispatch and splice it, but its tokens are the chairman's
+# and count toward the owner's budget (AB6/AB11, discarded attempts included).
+# Fold each prose seat's request into the parent chair seat's per-seat sum, so
+# the published token total counts the re-ask exactly as the host's interim
+# figure does (audit finding r4-3). No new seat row: per_seat is keyed by
+# SEAT_ORDER, which the prose seats are deliberately not in. The names mirror
+# host._PROSE_REASK_SEATS - host imports publisher, so this cannot import back.
+_PROSE_REASK_CHAIR = {"chair_draft_prose": "chair_draft",
+                      "chair_resolve_prose": "chair_resolve"}
 
 
 class PublishRefusal(Exception):
@@ -235,14 +247,120 @@ def _usage_by_request(run_dir, events):
     return usage
 
 
+def _evidence_provenance(events, run_started):
+    """What the sitting decided and spent BEFORE the run existed (owner
+    ruling AC3, spec section U3.3), out of the run record and into the
+    published document.
+
+    The report's front page reads its mode sentence and the capture's own
+    clocks from here, so the page can never say less about who reviewed
+    the evidence than the record knows."""
+    mode = {}
+    approval = None
+    usage = {}
+    for event in events:
+        if event["event"] == "evidence_mode":
+            mode = event
+        elif event["event"] == "evidence_approved":
+            approval = event
+        elif event["event"] == "capture_usage_recorded":
+            usage = event
+    return {
+        "mode": mode.get("mode"),
+        "chosen_by": mode.get("chosen_by"),
+        "chosen_at": mode.get("at"),
+        "approved_by": None if approval is None else approval.get("by"),
+        "approved_at": None if approval is None else approval.get("at"),
+        "approval_note": None if approval is None else approval.get("note"),
+        "clock_started": runrecord.clock_start(events, run_started),
+        "capture": {
+            "tokens": usage.get("tokens"),
+            "minutes": usage.get("minutes"),
+            "model": usage.get("model"),
+            # Owner ruling AC15 (P5(b)): whether the capture-stage figures
+            # are an estimate. The report prints "estimated" beside them
+            # where it is true.
+            "estimated": usage.get("estimated"),
+            "evidence_challenge_tokens": usage.get(
+                "evidence_challenge_tokens"),
+            "evidence_challenge_prompt_bytes": usage.get(
+                "evidence_challenge_prompt_bytes"),
+        },
+    }
+
+
+def _complete_seat_sum(usage, numbers, key):
+    """Sum a per-request usage metric over every request a seat made, or
+    None where that total cannot be known to be COMPLETE. A request whose
+    usage sidecar is missing or unreadable, or whose metric is not a whole
+    number, leaves the seat only PARTLY measured - a retried seat whose paid
+    first attempt wrote no sidecar, say - and a partial cost must never be
+    published as the seat's whole cost (audit UPGRADE2-U3d-c r9). A seat that
+    recorded nothing at all is None as it always was, and is left out of the
+    run total exactly as an unmeasured seat always has been."""
+    total = None
+    for number in numbers:
+        entry = usage.get(number)
+        if entry is None:
+            return None
+        value = entry[1].get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        total = value if total is None else total + value
+    return total
+
+
+def _seat_cost(run_dir, events):
+    """The seat-cost measure AC8 is revisited on (owner ruling AC15,
+    architect ruling (5)(a)): tokens per tool turn and brief bytes, per
+    seat. Spec U5.5's input/output token split is unobtainable from the
+    dispatch harness - it returns one token figure, its tool turns and
+    its wall clock - so those two fields stay null with the note that
+    says why. Computed into the published record so the report's appendix
+    can print it."""
+    brief_bytes = {}
+    seat_numbers = {}
+    for event in events:
+        if event["event"] == "request_written":
+            seat = _PROSE_REASK_CHAIR.get(event["seat"], event["seat"])
+            brief_bytes[seat] = (brief_bytes.get(seat, 0)
+                                 + (event.get("brief_bytes") or 0))
+            seat_numbers.setdefault(seat, []).append(event["number"])
+    usage = _usage_by_request(run_dir, events)
+    per_seat = {}
+    for seat in SEAT_ORDER:
+        if seat not in seat_numbers:
+            continue
+        numbers = seat_numbers[seat]
+        tokens = _complete_seat_sum(usage, numbers, "tokens")
+        tool_calls = _complete_seat_sum(usage, numbers, "tool_calls")
+        ratio = None
+        if isinstance(tokens, int) and isinstance(tool_calls, int) \
+                and tool_calls > 0:
+            ratio = round(tokens / tool_calls, 1)
+        per_seat[seat] = {"tokens": tokens, "tool_calls": tool_calls,
+                          "tokens_per_tool_call": ratio,
+                          "brief_bytes": brief_bytes.get(seat),
+                          "input_tokens": None, "output_tokens": None}
+    return {
+        "note": "The dispatch harness returns one token figure per seat, "
+                "its tool turns and its wall clock - not the input/output "
+                "split spec U5.5 named, which is unobtainable here. The "
+                "seat-cost lever AC8's cap is revisited on is therefore "
+                "tokens per tool turn and brief bytes per seat; the "
+                "input and output token fields stay null (architect ruling "
+                "AC15(5)(a)).",
+        "per_seat": per_seat}
+
+
 def _provenance(run_dir, events, invocation, challenger_tokens,
                 challenger_model):
     accepted = {}
     seat_numbers = {}
     for event in events:
         if event["event"] == "request_written":
-            seat_numbers.setdefault(event["seat"], []).append(
-                event["number"])
+            seat = _PROSE_REASK_CHAIR.get(event["seat"], event["seat"])
+            seat_numbers.setdefault(seat, []).append(event["number"])
         elif event["event"] == "answer_accepted":
             accepted[event["seat"]] = event["number"]
     usage = _usage_by_request(run_dir, events)
@@ -254,26 +372,27 @@ def _provenance(run_dir, events, invocation, challenger_tokens,
         accepted_usage = usage.get(accepted[seat])
         model = accepted_usage[1].get("model") if accepted_usage else None
         models[seat] = model if isinstance(model, str) else None
-        total = None
-        for number in seat_numbers.get(seat, []):
-            entry = usage.get(number)
-            if entry is None:
-                continue
-            tokens = entry[1].get("tokens")
-            if isinstance(tokens, int):
-                total = tokens if total is None else total + tokens
-        per_seat[seat] = total
+        # The same completeness rule as the seat-cost appendix (fix checklist
+        # 8a): per_seat here and seat_cost[seat]["tokens"] are the one quantity
+        # and must agree, so a partly measured seat is None in both. seats_total
+        # then sums the seats known in full and leaves out a seat whose cost is
+        # unknown, exactly as it always has for a seat that recorded nothing.
+        per_seat[seat] = _complete_seat_sum(
+            usage, seat_numbers.get(seat, []), "tokens")
     known = [t for t in per_seat.values() if isinstance(t, int)]
     seats_total = sum(known) if known else None
     run_started = invocation["created_at"]
     return {"pack_hash": invocation["pack_sha256"],
+            "ledger_row_id": invocation["run_id"],
             "models_per_seat": models,
             "challenger_model_requested": challenger_model,
             "timestamps": {"run_started": run_started,
                            "published": _now_utc()},
             "tokens": {"per_seat": per_seat, "seats_total": seats_total,
                        "challenger": challenger_tokens},
-            "prompt_bytes_total": briefs.total_prompt_bytes(run_dir)}
+            "seat_cost": _seat_cost(run_dir, events),
+            "prompt_bytes_total": briefs.total_prompt_bytes(run_dir),
+            "evidence": _evidence_provenance(events, run_started)}
 
 
 def _accepted_answer(run_dir, events, seat):
@@ -471,7 +590,7 @@ def assemble_and_publish(run_dir):
         verdict_scenario_rating = degrade_scenario_rating(
             verdict_scenario_rating, degraded_from, final["rating"])
     verdict = {
-        "schema_version": "1.3.0",
+        "schema_version": "1.4.0",
         "run_id": invocation["run_id"],
         "subject": subject,
         "question_verbatim": invocation["question_verbatim"],
@@ -561,6 +680,15 @@ def assemble_and_publish(run_dir):
                              "schema:\n  " + "\n  ".join(errors))
     canonical.write_canonical_json(
         os.path.join(run_dir, "atlas-envelope.json"), envelope)
+    # The verdict is now judgeable: one append-only row into the shared
+    # ledger, its hash recorded so read-back proves the row is the row
+    # this run wrote (owner ruling AC7, spec U7.1). Book-blind - identity,
+    # never a size.
+    row = ledger.build_row(verdict)
+    ledger_row_hash, _written = ledger.append_row(row)
+    runrecord.append_event(run_dir, "ledger_row_appended",
+                           {"ledger_row_id": row["ledger_row_id"],
+                            "row_hash": ledger_row_hash})
     runrecord.append_event(run_dir, "published",
                            {"verdict_hash": verdict_hash,
                             "warnings": len(warnings),

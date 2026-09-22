@@ -1,5 +1,5 @@
 {
- "capture_version": "1.3.0",
+ "capture_version": "1.6.0",
  "captured_at": "2026-08-30T06:00Z",
  "gaps": [],
  "market_state": {
@@ -454,5 +454,18 @@
    "source": "INVENTED FIXTURE - Farside Investors daily flow table, read 2026-08-30",
    "text": "INVENTED FIXTURE - Farside's table shows a net inflow of 125.5 million dollars across the US spot funds on 2026-08-29, the fourth straight day of inflows."
   }
- ]
+ ],
+ "evidence_challenge": {
+  "status": "success",
+  "model": "gpt-5.6-sol",
+  "failure_status": null,
+  "findings": [],
+  "overall": null,
+  "resolutions": {},
+  "failure_reason": null,
+  "nonce": "a1b2c3d4e5f607186274632d70617373",
+  "evidence_sha256": "bfb18928ca7c13a50ab816237b7a85a52b4f708c20d7b0789a34fa508136fb5a",
+  "post_audit_changes": [],
+  "post_audit_sha256": "bfb18928ca7c13a50ab816237b7a85a52b4f708c20d7b0789a34fa508136fb5a"
+ }
 }

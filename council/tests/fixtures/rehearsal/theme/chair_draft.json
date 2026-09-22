@@ -19,7 +19,7 @@
    "storage_installs_q",
    "storage_installs_prior_year_q",
    "price_last__gsta",
-   "storage_revenue_q__gstb"
+   "segment_revenue_storage_q__gstb"
   ],
   "key_numbers": [
    {

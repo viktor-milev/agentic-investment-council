@@ -122,14 +122,63 @@ class TestContractSchemas(unittest.TestCase):
             else:
                 validate.check_schema(doc, os.path.basename(path))
 
-    def test_verdict_schema_is_version_1_3_0(self):
-        # Bumped by unit ENVELOPE-ATLAS (owner ruling AB23): the
-        # hand-off gained identity, audit state, bound tags and
-        # pinned sizing units. Runs already published keep the
-        # version they were written under and are never rewritten.
+    def test_verdict_schema_is_version_1_4_0(self):
+        # 1.3.0 was unit ENVELOPE-ATLAS (owner ruling AB23): the hand-off
+        # gained identity, audit state, bound tags and pinned sizing
+        # units. 1.3.1 is UPGRADE-2 U3 (owner ruling AC3): the
+        # provenance gained what the sitting decided and spent before a
+        # seat was paid. 1.4.0 is UPGRADE-2 U7 (owner ruling AC7): the
+        # provenance names the ledger row this verdict is recorded under.
+        # Runs already published keep the version they were written under
+        # and are never rewritten.
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.3.0")
+        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.4.0")
+
+    def test_the_evidence_finding_shape_is_written_once_in_two_files(self):
+        """The auditor's answer and the capture's record of it carry the
+        SAME finding (owner ruling AC2). The validator subset has no
+        $ref, so the shape is written in both contracts - and pinned
+        equal here, because two copies that drift are one contract
+        nobody can trust."""
+        with open(os.path.join(SCHEMA_DIR, "evidence_findings_schema.json"),
+                  "rb") as f:
+            answer = json.loads(f.read().decode("utf-8"))
+        with open(os.path.join(SCHEMA_DIR, "capture_schema.json"),
+                  "rb") as f:
+            capture = json.loads(f.read().decode("utf-8"))
+        recorded = (capture["properties"]["evidence_challenge"]
+                    ["properties"]["findings"]["items"])
+        declared = answer["properties"]["findings"]["items"]
+
+        def bare(schema):
+            """The shape, without the prose: a description belongs to
+            its reader, and the auditor's reader is not the pack's."""
+            if isinstance(schema, dict):
+                return dict((key, bare(value))
+                            for key, value in schema.items()
+                            if key != "description")
+            if isinstance(schema, list):
+                return [bare(item) for item in schema]
+            return schema
+
+        self.assertEqual(bare(recorded), bare(declared))
+
+    def test_capture_contract_is_version_1_6_0(self):
+        # Bumped by unit UPGRADE-2 U3e (owner ruling AC15, P2 and P4): the
+        # business frame gains the subject's archetype and why, and whether
+        # its thesis rests on an identifiable cycle and why; the third
+        # canonical test gains the rating measure that archetype calls for;
+        # and an optional top-level cycle block carries three to five dated
+        # series for that cycle, or the declared gap. Every addition is
+        # optional in the contract and enforced for a single name only, so a
+        # pack that carries none is still valid. Runs already on record keep
+        # the version they were written under and are never rewritten.
+        with open(os.path.join(SCHEMA_DIR, "capture_schema.json"),
+                  "rb") as f:
+            doc = json.loads(f.read().decode("utf-8"))
+        self.assertEqual(doc["properties"]["capture_version"]["const"],
+                         "1.6.0")
 
     def test_rating_scale_is_the_owners_five_words(self):
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
@@ -201,6 +250,177 @@ class TestLanguageRule(unittest.TestCase):
         self.assertEqual(offenders, [],
                          "the split bans these words from the council tree:\n"
                          + "\n".join(offenders))
+
+
+PROSE_FIX = os.path.join(ROOT, "council", "tests", "fixtures", "prose")
+
+
+def _chair_rationales_present():
+    return os.path.exists(os.path.join(PROSE_FIX, "chair_rationales.txt"))
+
+
+class TestProseMeasure(unittest.TestCase):
+    """The deterministic prose measure (spec U6.2/U6.3, owner ruling AC6).
+    The two fixtures are the chairman's own rationale copied verbatim out of
+    the runs on record - the runs themselves are never edited."""
+
+    @classmethod
+    def setUpClass(cls):
+        from council.lib import prose
+        cls.prose = prose
+        cls.rules = prose.load_rules()
+
+    def _fixture(self, which):
+        # The two chair rationales, copied verbatim out of the runs on record
+        # into one fixture file under named headers; the runs are never edited.
+        path = os.path.join(PROSE_FIX, "chair_rationales.txt")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        blocks = {}
+        current = None
+        for line in text.splitlines():
+            if line.startswith("===== ") and " chair " in line:
+                current = "lulu" if line.split()[1] == "LULU" else "goog"
+                blocks[current] = []
+            elif current is not None:
+                blocks[current].append(line)
+        return "\n".join(blocks[which]).strip()
+
+    @unittest.skipUnless(_chair_rationales_present(),
+                         "the chair rationales fixture is not published "
+                         "in the public copy")
+    def test_the_lulu_rationale_is_red(self):
+        score = self.prose.measure(self._fixture("lulu"), self.rules)
+        self.assertEqual(score["words"], 815)
+        self.assertEqual(score["dashes"], 11)
+        self.assertEqual(score["antithesis"], 1)
+        self.assertGreater(score["long_sentence_share"], 0.20)
+        self.assertTrue(self.prose.failures(score, self.rules, score["words"]))
+
+    @unittest.skipUnless(_chair_rationales_present(),
+                         "the chair rationales fixture is not published "
+                         "in the public copy")
+    def test_the_goog_rationale_is_green_on_dashes_red_on_length(self):
+        score = self.prose.measure(self._fixture("goog"), self.rules)
+        self.assertEqual(score["dashes"], 0)
+        self.assertEqual(score["dashes_per_1000_words"], 0.0)
+        self.assertEqual(score["antithesis"], 0)
+        self.assertGreater(score["long_sentence_share"], 0.20)
+
+    def test_empty_text_scores_zero_and_fails_nothing(self):
+        score = self.prose.measure("", self.rules)
+        self.assertEqual(score["words"], 0)
+        self.assertTrue(score["empty"])
+        self.assertIsNone(score["grounded_share"])
+        self.assertEqual(self.prose.failures(score, self.rules, 0), [])
+
+    def test_the_measure_never_raises_on_odd_text(self):
+        for text in (None, 12345, "?!.", "no terminator here",
+                     "— — — dashes only"):
+            self.prose.measure(text, self.rules)
+
+    def test_the_three_number_style_patterns_fire(self):
+        for text, want in (
+                ("it held 2,619,191 thousand dollars at quarter end",
+                 "thousand_dollars"),
+                ("revenue rose 12 percent over the year", "percent_in_words"),
+                ("as of 2026-06-30 the cash stood high", "iso_date")):
+            ids = [hit["id"]
+                   for hit in self.prose.measure(text, self.rules)["banned"]]
+            self.assertIn(want, ids)
+
+    def test_a_clean_analyst_line_passes_the_chair_thresholds(self):
+        text = ("Revenue rose to $108M in the June 2026 quarter, from $92M a "
+                "year earlier. The balance sheet carries $2.62B of cash as of "
+                "30 Jun 2026. Guidance holds at 15% margins. The thesis is "
+                "intact at this price.")
+        score = self.prose.measure(text, self.rules)
+        self.assertEqual(self.prose.failures(score, self.rules, score["words"]),
+                         [])
+
+    def test_describe_names_rhetorical_questions(self):
+        # Audit finding r1-5: a chair warned ONLY for rhetorical questions must
+        # be able to show that in the score the front warning and the appendix
+        # display. describe() had omitted the count, so a warned score could
+        # read as all-passing and never explain its own warning.
+        score = self.prose.measure("Is this cheap? I think not.", self.rules)
+        self.assertGreaterEqual(score["rhetorical_questions"], 1)
+        self.assertIn("rhetorical question", self.prose.describe(score))
+
+    def test_a_source_cue_matches_only_as_a_whole_word(self):
+        # Audit finding r1-4 (P-U6-4), architect ruled IN: source cues are
+        # matched as whole words, as month names already are, so "sec" no
+        # longer counts inside "sector". A cue found as a substring over-counts
+        # the grounded share and shows a wrong score. The cue list stays data.
+        crowded = self.prose.measure(
+            "The sector looks crowded to me now.", self.rules)
+        self.assertEqual(crowded["grounded_sentences"], 0)
+        # A real cue, whole word, still grounds the sentence.
+        cited = self.prose.measure(
+            "The SEC was clear on the point.", self.rules)
+        self.assertEqual(cited["grounded_sentences"], 1)
+
+
+class TestBriefsCarryTheVoice(unittest.TestCase):
+    """Owner ruling AC6 and spec U6.5: the mannered-prose block rides in EVERY
+    brief, so the council's voice does not depend on whose machine runs it."""
+
+    @classmethod
+    def setUpClass(cls):
+        from council.engine import briefs
+        cls.briefs = briefs
+
+    def _subject(self):
+        return {"kind": "single_stock", "asset_class": "equity",
+                "name": "Acme Corp", "ticker": "ACME"}
+
+    def test_the_manner_block_is_in_both_writing_rule_forms(self):
+        self.assertIn(self.briefs.MANNER_BLOCK, self.briefs.WRITING_RULES)
+        self.assertIn(self.briefs.MANNER_BLOCK, self.briefs.WRITING_RULES_SHORT)
+
+    def test_percentages_take_one_decimal_always(self):
+        # Owner ruling AC16(4) overrides the design audit's two-decimal draft:
+        # one decimal always, no two-decimal exception for yields or coupons.
+        for form in (self.briefs.WRITING_RULES, self.briefs.WRITING_RULES_SHORT):
+            self.assertIn("one decimal", form)
+            self.assertIn("always", form)
+            self.assertNotIn("two for yields", form)
+            self.assertNotIn("3.91%", form)
+        self.assertIn("3.9%", self.briefs.WRITING_RULES)
+
+    def test_every_seat_brief_carries_the_full_manner_block(self):
+        briefs = self.briefs
+        subject = self._subject()
+        answer_path = "/tmp/answer.json"
+        advisor_answers = {seat: "An answer citing $10M of cash."
+                           for seat in briefs.ADVISOR_SEATS}
+        ladders = {seat: None for seat in briefs.ADVISOR_SEATS}
+        mapping = dict(zip(briefs.BLIND_LETTERS, briefs.ADVISOR_SEATS))
+        built = {
+            "frame": briefs.build_brief(
+                "frame", "run", answer_path,
+                question_verbatim="Is Acme a buy at $50?"),
+            "advisor_bear": briefs.build_brief(
+                "advisor_bear", "run", answer_path, casefile="CASE",
+                subject=subject),
+            "reviewer": briefs.build_brief(
+                "reviewer", "run", answer_path, casefile="CASE",
+                advisor_answers=advisor_answers, blind_mapping=mapping,
+                subject=subject, advisor_ladders=ladders),
+            "chair_draft": briefs.build_brief(
+                "chair_draft", "run", answer_path, casefile="CASE",
+                advisor_answers=advisor_answers,
+                reviewer_answer={"markdown": "Review.", "synopsis": "Synopsis."},
+                subject=subject, advisor_ladders=ladders),
+            "chair_resolve": briefs.build_brief(
+                "chair_resolve", "run", answer_path, casefile="CASE",
+                draft_verdict={"rating": "hold"}, findings=[],
+                endorsement=None, challenger_model="gpt-5.6-sol",
+                subject=subject),
+        }
+        for kind, text in built.items():
+            self.assertIn(briefs.MANNER_BLOCK, text,
+                          "the %s brief does not carry the manner block" % kind)
 
 
 if __name__ == "__main__":

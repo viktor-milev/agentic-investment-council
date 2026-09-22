@@ -35,6 +35,23 @@ def read_events(run_dir):
     return canonical.read_jsonl(path)
 
 
+def clock_start(events, created_at):
+    """When the sitting's 1.5-hour clock starts (owner rulings AC3/AC8).
+
+    The clock excludes the human pause: in the reviewed mode it starts
+    the moment the person said go on the one-page evidence brief, which
+    is where the waiting ended and before this run was created. With no
+    human step there is no pause to exclude, so it starts at the run.
+
+    The rule lives here, beside the record it reads, because two readers
+    need it: the host, which warns when the budget is missed, and the
+    publisher, which stamps the start into the published document."""
+    for event in events:
+        if event["event"] == "evidence_approved" and event.get("at"):
+            return event["at"]
+    return created_at
+
+
 def append_event(run_dir, event, data):
     """Append one event row: {"seq", "ts", "event", **data}. Returns the row."""
     if not isinstance(data, dict):

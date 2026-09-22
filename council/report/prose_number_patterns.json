@@ -1,0 +1,16 @@
+{
+  "note": "The prose reformatter's regex table, as DATA (owner ruling AC16(1), U6b sub-charge a). Each row is a UNIT-WORD tail that follows a number in seat or chairman prose; the renderer prepends the number pattern, and rewrites <number><tail> into the market form the same formatter gives every other figure ($47.6M, 7.8%, 27.2M shares). The value never changes, only its spelling, and every substitution is logged beside the report in number-substitutions.json. Rows are tried in order; the more specific words come first so 'thousand dollars' is read before a bare 'dollars'. When a number carries no unit word here, the reformatter leaves it alone (a missed reformat is cosmetic; a changed value is a defect). Prose in code spans, quoted-source passages and the freeze's own printed equations is never reached (those are rendered outside the reformatted blocks). Multiplier is the factor from the written scale word to whole currency units, or from millions-of-shares to shares.",
+  "patterns": [
+    {"name": "money_billion_word", "tail": "\\s+billion\\s+dollars?\\b", "kind": "money", "multiplier": "1000000000"},
+    {"name": "money_million_word", "tail": "\\s+million\\s+dollars?\\b", "kind": "money", "multiplier": "1000000"},
+    {"name": "money_thousand_word", "tail": "\\s+thousand\\s+dollars?\\b", "kind": "money", "multiplier": "1000"},
+    {"name": "money_usd_billion", "tail": "\\s+USD\\s+billions?\\b", "kind": "money", "multiplier": "1000000000"},
+    {"name": "money_usd_million", "tail": "\\s+USD\\s+millions?\\b", "kind": "money", "multiplier": "1000000"},
+    {"name": "money_usd_thousand", "tail": "\\s+USD\\s+thousands?\\b", "kind": "money", "multiplier": "1000"},
+    {"name": "money_dollars", "tail": "\\s+dollars?\\b", "kind": "money", "multiplier": "1"},
+    {"name": "shares_million_word", "tail": "\\s+million\\s+shares\\b", "kind": "shares", "multiplier": "1000000"},
+    {"name": "shares_plain", "tail": "\\s+shares\\b", "kind": "shares", "multiplier": "1"},
+    {"name": "percent_words", "tail": "\\s*(?:per\\s+cent|percent)\\b", "kind": "percentage", "multiplier": "1"},
+    {"name": "percent_sign", "tail": "\\s*%", "kind": "percentage", "multiplier": "1"}
+  ]
+}

@@ -13,13 +13,18 @@ appears on hover (and on click/keyboard, for touch and accessibility), long refe
 folded shut until clicked, and one reading precision per unit. This file adapts those proven
 mechanisms to the verdict contract 1.0.0; the old renderer stays where it is, serving the old runs.
 
-IT WRITES EXACTLY ONE FILE AND READS EVERYTHING ELSE. `council/runs/**` is a record. Rendering
-adds `report.html` beside the archives and changes no existing byte.
+IT WRITES `report.html` AND ONE APPEND-ONLY ROW, AND READS EVERYTHING ELSE. `council/runs/**` is
+a record. Rendering adds `report.html` beside the archives and changes no existing byte; the FIRST
+rendering of a run also appends one `report_rendered` row to that run's own record, which is where
+this page reads its clock from ever after (register item P-U3-5) - written only once the page
+itself is on disk. In the runbook's order that happens inside the sitting, before the run
+directory is committed.
 
 Stdlib only, Python 3 - ruling X. Ruling Z binds every label and sentence this page authors:
 plain CIO-suitable English, short sentences, no unexplained internal identifiers (the field ids
 that appear inside tables are data, and their label columns say in plain words what they are).
 """
+import datetime
 import decimal
 import hashlib
 import html
@@ -27,11 +32,14 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from council.lib import subjects  # noqa: E402
+from council.engine import runrecord  # noqa: E402
+from council.evidence import gate  # noqa: E402
+from council.lib import prose, subjects  # noqa: E402
 
 
 class MissingInputError(Exception):
@@ -48,27 +56,54 @@ RENDERER_SIGNATURE = b"council/report/render_report.py"
 
 
 # ---------------------------------------------------------------------------------------------
-# NUMBER FORMATTING - AT RENDER TIME ONLY (ruling Y5; the 2026-08-28 formatting rulings)
+# NUMBER DISPLAY - AT RENDER TIME ONLY (ruling Y5; owner ruling AC16 items 1 and 4; the
+# report-design audit 2026-09-15 section C1)
 # ---------------------------------------------------------------------------------------------
 # The pack and the verdict carry every figure as the exact string that was captured; nothing is
-# rounded on disk. Rounding happens HERE, on the way to the page, and nothing writes a number
-# back. The rules, as ruled and as proven in the old renderer:
-#   * one reading precision per unit, so one column carries one number of decimals;
-#   * a whole number stays whole - no decimals are padded onto a figure that has none;
-#   * a figure the unit's precision would erase (print as 0.00) is never erased - it falls back
-#     to the exact text it arrived as;
-#   * text that is not a pure number - a date, a range, NOT AVAILABLE, a sentence - is never
-#     parsed and survives as the words it is;
-#   * a zero-padded bare integer is an identifier, not a quantity, and is never rounded.
+# rounded on disk and nothing is written back. The reader's form is chosen HERE, on the way to
+# the page: the market's own spelling of money - a currency sign BEFORE the figure and a scale
+# letter after it ($47.6M, $7.81B), never the word "dollars"; three significant figures for
+# money and counts; per-share prices to two decimals ($15.64); percentages to ONE decimal
+# (owner ruling AC16(4) - never two: 3.9%, not 3.91%); multiples with an x (3.08x); dates in
+# words (30 Jun 2026). A company's own reporting unit (USD_thousand, USD_m) is converted here
+# and never reaches the page. DISPLAY ONLY: the value is unchanged, only its spelling.
+#
+# The reader-safety rules ported from the old renderer and kept unchanged:
+#   * a figure a unit's precision would erase (print as 0) is NEVER erased - it falls back to
+#     the exact text it arrived as;
+#   * text that is not a pure number - NOT AVAILABLE, a sentence, a range - is never parsed,
+#     with the one new exception of a date-shaped string (audit C1 R9/R13);
+#   * a zero-padded bare integer is an identifier, not a quantity, and is never rounded;
+#   * a Bitcoin reward (3.125) or a block height is never rounded.
 
-UNIT_DECIMALS = {
-    "%": 2, "USD": 2, "USD_bn": 2, "USD_m": 2, "USD_m_per_MW": 2, "x": 2,
-    # `days` carries one decimal (owner, 2026-08-28): the only figure any run records in days
-    # is days-to-cover, and a whole number would state a different fact than the one captured.
-    "MW": 1, "MW_per_year": 1, "years": 1, "millions_of_shares": 1, "days": 1,
-    "shares": 0, "contracts": 0,
+# Currency sign placed before the figure. Everything not here - CHF, SEK, NOK, DKK and any
+# unmapped ISO code - is written as its code and a space (CHF 1.20B, audit C1 R2). A money unit
+# that names no currency, with none given beside it, falls back to today's plain spelling: the
+# formatter never GUESSES a currency (dispatch).
+CURRENCY_SIGNS = {
+    "USD": "$", "EUR": "€", "GBP": "£", "JPY": "¥",
+    "CAD": "C$", "AUD": "A$",
 }
-DEFAULT_DECIMALS = 2
+# The scale words a money unit may carry, as the factor to whole currency units.
+_SCALE_WORDS = {"thousand": decimal.Decimal(1000), "m": decimal.Decimal(10) ** 6,
+                "mn": decimal.Decimal(10) ** 6, "bn": decimal.Decimal(10) ** 9,
+                "b": decimal.Decimal(10) ** 9}
+_THOUSAND = decimal.Decimal(1000)
+_MILLION = decimal.Decimal(10) ** 6
+_BILLION = decimal.Decimal(10) ** 9
+_TRILLION = decimal.Decimal(10) ** 12
+# The scales, largest first. C1 names K/M/B; T (trillion) is the natural next step, needed
+# because this council rates companies whose market value passes a trillion dollars.
+_MONEY_SCALES = (("T", _TRILLION), ("B", _BILLION), ("M", _MILLION), ("K", _THOUSAND))
+# One step UP the money scale, for the rare figure that rounds to 1,000 of its own scale
+# (999.7M -> $1.00B): the third significant figure carries into the next scale (audit C1 R1).
+_NEXT_SCALE = {"": ("K", _THOUSAND), "K": ("M", _MILLION),
+               "M": ("B", _BILLION), "B": ("T", _TRILLION)}
+
+# The percentage unit token, named once (so it is one data literal, not prose) and reused.
+_PERCENT_PREFIX = "percent"
+_MULTIPLE_UNITS = frozenset(["x", "ratio", "multiple"])
+_DATE_UNITS = frozenset(["iso_date", "fiscal_quarter_end_date", "results_date_check", "date"])
 
 # Units that are never rounded at all: a Bitcoin block reward of 3.125 rounded to 3.13 states a
 # reward nobody has ever been paid, and a block height is an ordinal no rounding could improve.
@@ -84,72 +119,572 @@ MAX_FIGURE_DIGITS = 50
 NUMERIC_TEXT = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$")
 PADDED_IDENTIFIER = re.compile(r"^0\d+$")
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_DATE_LEAD = re.compile(r"^\d{4}-\d{2}-\d{2}")
+_TIMESTAMP = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
 
-def _unit_words(unit):
-    """The contract's unit identifiers as a reader reads them - `USD_m`, not a machine token."""
-    return str(unit).replace("_", " ") if unit else unit
+_HALF_UP = decimal.ROUND_HALF_UP
 
 
-def format_number(value, unit=None):
-    """A figure as a reader should see it, whether recorded as a number or as text.
-
-    Exact decimal arithmetic throughout, never binary: the page and the pack must answer the
-    same rounding question the same way, and `1.005` must round UP at two decimals. Ported from
-    the old renderer, where every branch below was audited in.
-    """
+def _coerce(value):
+    """(Decimal, fallback_text) for a figure to be formatted, or (None, text) where the value is
+    not a pure number and must survive as the text it is. Bool and None are not figures. Exact
+    decimal arithmetic throughout, never binary (ruling Y5): the page and the pack answer one
+    rounding question one way, and 1.005 rounds UP at two decimals."""
     if isinstance(value, bool) or value is None:
-        return str(value)
+        return None, str(value)
     if isinstance(value, int):
-        return str(value)
+        return decimal.Decimal(value), str(value)
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None, str(value)
+        return decimal.Decimal(value), repr(value)
     if isinstance(value, str):
         text = value.strip()
         if not NUMERIC_TEXT.match(text) or PADDED_IDENTIFIER.match(text):
-            return value
+            return None, value
         try:
             exact = decimal.Decimal(text)
         except decimal.InvalidOperation:
-            return value
+            return None, value
         if not exact.is_finite():
-            return text
-        fallback = text
-    elif isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
-            return str(value)
-        # The double's exact binary expansion is the number the machine actually holds;
-        # collapsing it to the reading precision is the whole point of ruling Y5.
-        exact = decimal.Decimal(value)
-        fallback = repr(value)
-    else:
-        return str(value)
+            return None, text
+        return exact, text
+    return None, str(value)
 
-    # Zero is answered first, before any reasoning about size or precision exists to get it
-    # wrong: every spelling of zero (-0.0, -0e50) has the one rendering.
-    if not exact:
+
+def _int_digits(scaled):
+    """How many digits stand before the point in a scaled figure (949.7 -> 3, 9.007 -> 1)."""
+    s = abs(scaled)
+    if s < 1:
+        return 1
+    return s.adjusted() + 1
+
+
+def _strip_trailing(number):
+    """A fixed-point Decimal without its trailing zeros (498.90 -> 498.9, 110.0 -> 110)."""
+    text = format(number, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
+
+
+def _currency_prefix(currency):
+    """The sign or ISO-code-and-space to place before a figure, or None to never guess one."""
+    if not currency:
+        return None
+    code = str(currency).split("_")[0]
+    if code in CURRENCY_SIGNS:
+        return CURRENCY_SIGNS[code]
+    if len(code) == 3 and code.isalpha() and code.isupper():
+        return code + " "
+    return None
+
+
+def _scale_money_number(magnitude):
+    """A positive figure in whole currency units as scale-and-three-significant-figures: the
+    number and its scale letter (10.4B, 950M, 1.00B, 78.0K, 500), or None where the precision
+    would erase it. Trailing zeros are KEPT to the third figure ($1.00B, $36.0M)."""
+    letter, div = "", decimal.Decimal(1)
+    for name, factor in _MONEY_SCALES:
+        if magnitude >= factor:
+            letter, div = name, factor
+            break
+    while True:
+        scaled = magnitude / div
+        # Three significant figures of the DISPLAYED scale, unscaled money included: a sub-1,000
+        # rate or scaled figure ($12.40/day) keeps its figures rather than rounding to whole
+        # currency ($12/day), which changed the value (round 3 finding r3-3).
+        decimals = max(0, min(2, 3 - _int_digits(scaled)))
+        rounded = scaled.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+        if rounded >= 1000 and letter in _NEXT_SCALE:
+            letter, div = _NEXT_SCALE[letter]
+            continue
+        if rounded == 0:
+            return None
+        return "{:.{}f}".format(rounded, decimals) + letter
+
+
+def _money_parse(unit):
+    """(currency_prefix, multiplier, suffix) if `unit` is a money unit, else None. The suffix is
+    '' or a rate tail ('/day', '/MW', '/year'); per-share is handled on its own (audit C1 R3)."""
+    head, per, tail = unit.partition("_per_")
+    if per and tail == "share":
+        return None
+    suffix = "/" + tail if tail else ""
+    parts = head.split("_")
+    prefix = _currency_prefix(parts[0])
+    if prefix is None:
+        return None
+    multiplier = decimal.Decimal(1)
+    for token in parts[1:]:
+        if token in _SCALE_WORDS:
+            multiplier *= _SCALE_WORDS[token]
+        else:
+            return None
+    return prefix, multiplier, suffix
+
+
+def _percent_number(exact, negate):
+    """A percentage to ONE decimal (owner ruling AC16(4)); a whole value shows no decimal.
+    `negate` prints a drawdown with a minus. Returns the body WITHOUT the % sign, or None where
+    one decimal would erase a live figure (the caller then keeps the exact text)."""
+    if exact == 0:
         return "0"
+    rounded = exact.quantize(decimal.Decimal("0.1"), rounding=_HALF_UP)
+    if rounded == 0:
+        # One decimal would print 0.0% for a live figure; the caller falls back to exact text.
+        return None
+    if negate:
+        rounded = -abs(rounded)
+    if rounded == rounded.to_integral_value():
+        return "{:d}".format(int(rounded.to_integral_value()))
+    return "{:.1f}".format(rounded)
+
+
+# Short forms a percent/fraction unit's basis is spelt out from, as DATA (P-U6b-4). Anything not
+# listed is printed as written with underscores turned to spaces ('per_year' -> 'per year',
+# 'annualised'/'annualized' as written, 'of_revenue' -> 'of revenue').
+_BASIS_ABBREVIATIONS = {"yoy": "year over year"}
+
+
+def _basis_words(tail):
+    """Whatever follows the leading percent/fraction token IS the basis, spelt for the page
+    (P-U6b-4): underscores become spaces and a known short form expands. An empty tail is no
+    basis."""
+    words = tail.replace("_", " ").strip()
+    if not words:
+        return None
+    return _BASIS_ABBREVIATIONS.get(words, words)
+
+
+def _percent_parts(unit):
+    """(to-percent multiplier, negate, basis words or None) if `unit` is a percent- or fraction-
+    family unit, else None. Whatever follows the leading token is the basis the figure keeps after
+    it ('per year', 'of revenue', 'year over year'); an exact 'percent'/'%'/'fraction' has no basis,
+    and fraction_of_price stays a signed drawdown percent with no basis (P-U6b-1, P-U6b-4)."""
+    for core, multiplier in ((_PERCENT_PREFIX, 1), ("pct", 1), ("%", 1), ("fraction", 100)):
+        if unit == core:
+            return decimal.Decimal(multiplier), False, None
+        for sep in ("_", " "):
+            if unit.startswith(core + sep):
+                if unit == "fraction_of_price":
+                    return decimal.Decimal(100), True, None
+                return decimal.Decimal(multiplier), False, _basis_words(unit[len(core) + 1:])
+    return None
+
+
+def _percent_body(exact, negate):
+    """The percent figure without its sign: one decimal, but for a small live value enough decimals
+    to show its first significant figure rather than erasing it to 0.0 (P-U6b-1 never-erase)."""
+    body = _percent_number(exact, negate)
+    if body is not None:
+        return body
+    value = -abs(exact) if negate else exact
+    decimals = max(1, -value.adjusted())
+    rounded = value.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    return _strip_trailing(rounded)
+
+
+def _multiple_number(exact, fallback):
+    """A multiple as two decimals with an x, one decimal from ten, none from a hundred (C1 R6)."""
+    if exact == 0:
+        return "0x"
+    magnitude = abs(exact)
+    decimals = 0 if magnitude >= 100 else (1 if magnitude >= 10 else 2)
+    rounded = exact.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    if rounded == 0:
+        # The precision would erase a live multiple to 0.00x; the exact text stands (round 3, r3-2).
+        return fallback
+    return "{:.{}f}".format(rounded, decimals) + "x"
+
+
+def _shares_string(exact):
+    """A share count scaled to millions or billions with three significant figures and the word
+    shares (498.9M shares); below a million it is grouped and whole (400 shares) (audit C1 R7)."""
+    if exact == 0:
+        return "0 shares"
+    sign = "-" if exact < 0 else ""
+    magnitude = abs(exact)
+    if magnitude < _MILLION:
+        whole = magnitude.quantize(decimal.Decimal(1), rounding=_HALF_UP)
+        return sign + "{:,.0f}".format(whole) + " shares"
+    letter, div = ("B", _BILLION) if magnitude >= _BILLION else ("M", _MILLION)
+    scaled = magnitude / div
+    decimals = 1 if scaled >= 10 else 2
+    rounded = scaled.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    if rounded >= 1000 and letter == "M":
+        letter, div = "B", _BILLION
+        scaled = magnitude / div
+        decimals = 1 if scaled >= 10 else 2
+        rounded = scaled.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    return sign + _strip_trailing(rounded) + letter + " shares"
+
+
+def _scaled_count(exact):
+    """A token count in millions, three significant figures, trailing zeros stripped, no noun -
+    the noun sits in the sentence (700000 tokens -> 0.7M). Token budgets are stated in millions
+    (the 1.8M-token cap), so a count is read against that scale (audit C1 R11). A count below a
+    thousand is grouped and whole."""
+    if exact == 0:
+        return "0"
+    sign = "-" if exact < 0 else ""
+    magnitude = abs(exact)
+    if magnitude < _THOUSAND:
+        return sign + "{:,.0f}".format(magnitude.quantize(decimal.Decimal(1), rounding=_HALF_UP))
+    scaled = magnitude / _MILLION
+    if scaled >= 100:
+        decimals = 0
+    elif scaled >= 10:
+        decimals = 1
+    elif scaled >= 1:
+        decimals = 2
+    else:
+        decimals = 3
+    rounded = scaled.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    return sign + _strip_trailing(rounded) + "M"
+
+
+def _fixed_unit(exact, decimals, noun, fallback):
+    """A figure kept to a fixed number of decimals, whole staying whole, with its noun after it
+    (20 years, 4 days). A figure the precision would erase falls back to its exact text."""
+    rounded = exact.quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+    if rounded == 0 and exact != 0:
+        return fallback + " " + noun if fallback is not None else noun
+    if rounded == rounded.to_integral_value():
+        body = "{:d}".format(int(rounded.to_integral_value()))
+    else:
+        body = "{:.{}f}".format(rounded, decimals)
+    return body + " " + noun
+
+
+def _plain_count(exact, fallback):
+    """A number with no unit: an integer grouped with thousands separators, a fraction to two
+    decimals (audit C1 R11). The count for stamps and cost tables (700000 -> 700,000)."""
+    if exact == 0:
+        return "0"
+    if exact == exact.to_integral_value():
+        return "{:,.0f}".format(exact.to_integral_value())
+    rounded = exact.quantize(decimal.Decimal("0.01"), rounding=_HALF_UP)
+    if rounded == 0:
+        return fallback
+    if rounded == rounded.to_integral_value():
+        return "{:,.0f}".format(rounded)
+    return "{:,.2f}".format(rounded)
+
+
+def _fallback_unit(exact, unit, fallback):
+    """Today's safe spelling for an unrecognised unit: two decimals, whole staying whole, and
+    the unit spelt as a reader reads it - never a guessed currency (dispatch)."""
+    noun = str(unit).replace("_", " ")
+    if exact == 0:
+        return "0 " + noun
+    rounded = exact.quantize(decimal.Decimal("0.01"), rounding=_HALF_UP)
+    if rounded == 0:
+        return fallback
+    if rounded == rounded.to_integral_value():
+        return "{:,.0f}".format(rounded) + " " + noun
+    return "{:,.2f}".format(rounded) + " " + noun
+
+
+def _one_date(text):
+    """`YYYY-MM-DD` as `D Mon YYYY`, or None where it is not that shape."""
+    match = _DATE.match(text)
+    if not match:
+        return None
+    year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    return "%d %s %d" % (day, _MONTHS[month - 1], year)
+
+
+def format_date(value):
+    """A date, a list of dates or a machine timestamp in words, day first (audit C1 R9). Any
+    other text - none_announced, a quarter reference - survives as the words it is."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    stamp = _TIMESTAMP.match(text)
+    if stamp:
+        month = int(stamp.group(2))
+        if 1 <= month <= 12:
+            return "%d %s %d, %s:%s UTC" % (int(stamp.group(3)), _MONTHS[month - 1],
+                                            int(stamp.group(1)), stamp.group(4), stamp.group(5))
+        return value if isinstance(value, str) else text
+    single = _one_date(text)
+    if single:
+        return single
+    if "; " in text:
+        formatted = [_one_date(part.strip()) for part in text.split("; ")]
+        if all(formatted):
+            return "; ".join(formatted)
+    return value if isinstance(value, str) else text
+
+
+def format_price(value, currency=None):
+    """A per-share or reference price: the currency sign and two decimals, never scaled, with
+    thousands separators above ten thousand (audit C1 R3). No currency, no guess - the plain
+    figure stands."""
+    exact, fallback = _coerce(value)
+    if exact is None:
+        return fallback
+    prefix = _currency_prefix(currency)
+    if prefix is None:
+        return fallback
+    sign = "-" if exact < 0 else ""
+    rounded = abs(exact).quantize(decimal.Decimal("0.01"), rounding=_HALF_UP)
+    if rounded == 0 and exact != 0:
+        # Two decimals would erase a live price to $0.00; the exact text stands (round 3, r3-2).
+        return fallback
+    return sign + prefix + "{:,.2f}".format(rounded)
+
+
+def format_operand(value, unit=None):
+    """An OPERAND of the arithmetic the freeze prints - the ladder's bar inputs, the cash rate and
+    the realized volatility - spelt EXACTLY as the engine spells it: two decimals, ROUND_HALF_UP,
+    no unit sign (council/engine/ladder.py `_pct`). The renderer prints these figures only where
+    it quotes the engine's own arithmetic, so the page and ladder.compute never show one number
+    two ways (audit finding c1-1). Unlike format_number, it never sniffs the recorded precision to
+    guess an operand - the CALL SITE decides an operand is an operand. `unit` is accepted for
+    call-site symmetry; an operand carries no scale."""
+    exact, fallback = _coerce(value)
+    if exact is None:
+        return fallback
+    return str(exact.quantize(decimal.Decimal("0.01"), rounding=_HALF_UP))
+
+
+def format_number(value, unit=None, currency=None):
+    """A figure as a CIO should see it: the market form for its unit (audit C1), value unchanged.
+
+    A recognised unit is converted and scaled; an unknown or missing unit falls back to today's
+    safe spelling, never a guessed currency. `currency` names the currency for a money or price
+    unit that does not name its own (audit C1 R2)."""
+    # A date-shaped string is the one text that is read rather than passed through (C1 R9/R13).
+    if isinstance(value, str) and _DATE_LEAD.match(value.strip()):
+        return format_date(value)
+    if unit in _DATE_UNITS:
+        return format_date(value)
+    if unit is None:
+        exact, fallback = _coerce(value)
+        if exact is None:
+            return fallback
+        if exact and exact.adjusted() >= MAX_FIGURE_DIGITS:
+            return fallback
+        return _plain_count(exact, fallback)
+    exact, fallback = _coerce(value)
+    if exact is None:
+        return fallback
     if unit in UNROUNDED_UNITS:
         return fallback
-    decimals = UNIT_DECIMALS.get(unit, DEFAULT_DECIMALS)
-    # Too big to be a figure, answered before the arithmetic is asked. `adjusted()` is the
-    # place of the leading digit, so this counts the digits before the point.
-    if exact.adjusted() >= MAX_FIGURE_DIGITS:
+    if exact and exact.adjusted() >= MAX_FIGURE_DIGITS:
         return fallback
+
+    money = _money_parse(unit)
+    if money:
+        prefix, multiplier, suffix = money
+        whole = exact * multiplier
+        if whole == 0:
+            return prefix + "0" + suffix
+        # A bare-currency figure under a thousand is a PRICE - a share price, a level, an index
+        # point - not an aggregate: no company's market value is $847, and a price keeps its
+        # cents. It takes the price form (audit C1 R3). An aggregate is at least a thousand, or
+        # carries a scale (USD_thousand) or a rate tail (USD_per_day), and is scaled instead.
+        if multiplier == 1 and suffix == "" and abs(whole) < 1000:
+            return format_price(value, unit)
+        body = _scale_money_number(abs(whole))
+        if body is None:
+            return fallback
+        return ("-" if whole < 0 else "") + prefix + body + suffix
+    if unit.endswith("_per_share"):
+        return format_price(value, currency or unit[:-len("_per_share")])
+    percent = _percent_parts(unit)
+    if percent is not None:
+        # One-decimal market display (AC16(4)); "percentage_points" is NOT a percent (r1-2); a
+        # rate/time basis stays visible after the figure, or the bare percent misleads (P-U6b-1).
+        multiplier, negate, basis = percent
+        if basis is None:
+            body = _percent_number(exact * multiplier, negate)
+            return fallback if body is None else body + "%"
+        return _percent_body(exact * multiplier, negate) + "% " + basis
+    if unit in _MULTIPLE_UNITS:
+        return _multiple_number(exact, fallback)
+    if unit == "shares":
+        return _shares_string(exact)
+    if unit == "millions_of_shares":
+        return _shares_string(exact * _MILLION)
+    if unit == "minutes":
+        return _plain_count(exact.quantize(decimal.Decimal(1), rounding=_HALF_UP), fallback)
+    if unit == "tokens":
+        return _scaled_count(exact)
+    if unit.startswith("MW"):
+        suffix = "MW/year" if unit.endswith("_per_year") else "MW"
+        if exact == exact.to_integral_value():
+            return "{:d}".format(int(exact.to_integral_value())) + " " + suffix
+        rounded = exact.quantize(decimal.Decimal("0.1"), rounding=_HALF_UP)
+        if rounded == 0:
+            # One decimal would erase a live figure to 0 MW; the exact text stands (round 3, r3-2).
+            return fallback + " " + suffix
+        return _strip_trailing(rounded) + " " + suffix
+    if unit in ("years", "days"):
+        return _fixed_unit(exact, 1, unit, fallback)
+    if unit == "contracts":
+        return _fixed_unit(exact, 0, "contracts", fallback)
+    return _fallback_unit(exact, unit, fallback)
+
+
+# ---------------------------------------------------------------------------------------------
+# THE PROSE REFORMATTER (owner ruling AC16(1), U6b sub-charge a)
+# ---------------------------------------------------------------------------------------------
+# Inside seat and chairman PROSE the renderer MAY rewrite a number that carries its unit in
+# words - "47,636 thousand dollars", "7.75 per cent", "27.161588 million shares" - into the same
+# market form every other figure takes, value unchanged, EVERY substitution logged beside the
+# report. The rule table is DATA (prose_number_patterns.json). When a number carries no unit
+# word here it is LEFT ALONE: a missed reformat is cosmetic, a changed value is a defect. Text
+# in code spans is never reached; the freeze's own printed equations are rendered outside the
+# reformatted blocks, and so are the untraced-figure marks and the quoted-source passages.
+# A leading boundary so a match cannot begin inside another token: a number glued to a preceding
+# word, decimal point, exponent, "$" sign or hyphen is left for that token, never half-rewritten
+# ($145 dollars stays put, 1.2e3 million dollars is left alone, a range like 1-2 million dollars is
+# left alone) (P-U6b-5, P-U6b-6). A leading minus that sits at a real boundary is still the number's
+# own sign, so a negative aggregate (-500 thousand dollars) still reformats.
+_PROSE_NUMBER = r"(?<![\w.$])(-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)"
+_CODE_SPAN = re.compile(r"```.*?```|`[^`]*`", re.DOTALL)
+# Carried register item P-U6b-7: the SECOND number of a range ("1 to 2 million dollars") or the
+# mantissa of a scientific figure ("1e+3 million dollars") must not be respelt on its own - that
+# leaves a half-converted range or exponent that MISLEADS, where a missed reformat is merely
+# cosmetic. The one-character lookbehind this replaces could see "1-2" but never "1 to 2" or
+# "1e+3", and was patched twice trying to. Instead, before substituting, the run of text
+# immediately before the match is read: if it ends in a number and a range connector (a hyphen,
+# en or em dash, "to" or "and" between two figures sharing one unit tail), or in an exponent
+# marker (a digit and e, e+ or e-), the whole thing is left alone and nothing is logged.
+_RANGE_BEFORE = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s*(?:[-–—]|\bto\b|\band\b)\s*$", re.IGNORECASE)
+_EXPONENT_BEFORE = re.compile(r"\d[eE][+-]?\s*$")
+
+
+def _load_prose_patterns():
+    path = os.path.join(os.path.dirname(__file__), "prose_number_patterns.json")
+    with open(path, encoding="utf-8") as handle:
+        table = json.load(handle)
+    compiled = []
+    for row in table["patterns"]:
+        compiled.append((re.compile(_PROSE_NUMBER + row["tail"]), row["kind"],
+                         decimal.Decimal(row.get("multiplier", "1"))))
+    return compiled
+
+
+_PROSE_PATTERNS = _load_prose_patterns()
+
+
+def _prose_value(number_text, kind, multiplier):
+    """The market form for a number found in prose, or None to leave the prose alone."""
     try:
-        with decimal.localcontext() as context:
-            # The figure's own digits, plus room for the unit's decimals and one to round on.
-            context.prec = MAX_FIGURE_DIGITS + decimals + 1
-            rounded = exact.quantize(decimal.Decimal(1).scaleb(-decimals),
-                                     rounding=decimal.ROUND_HALF_UP)
-    except (decimal.InvalidOperation, decimal.Overflow):
-        return fallback
-    if rounded == 0:
-        # The unit's precision would ERASE the figure - print 0.00 for a number that is not
-        # zero. That is the one rounding this must never do; the figure stands as it arrived.
-        return fallback
-    # One precision per unit means KEEPING the trailing zeroes on fractional figures; a whole
-    # number stays whole, and the wholeness test reads the ROUNDED value, so 39.996 % prints 40.
-    if rounded == rounded.to_integral_value():
-        return str(rounded.to_integral_value())
-    return str(rounded)
+        exact = decimal.Decimal(number_text.replace(",", ""))
+    except decimal.InvalidOperation:
+        return None
+    if kind == "money":
+        whole = exact * multiplier
+        if whole == 0:
+            return "$0"
+        # A share price written in prose keeps its cents (U6b ruling ii, extended for round 1
+        # finding r1-1): a bare-dollar amount under 1,000 with a fractional part is a price, not
+        # an aggregate, and a price keeps two decimals - "19.00 dollars" -> "$19.00" and
+        # "38.6 dollars" -> "$38.60", never "$39" (scaling a price to whole dollars changes the
+        # value). More than two decimals would round a price, so the text is left alone.
+        if multiplier == 1 and abs(whole) < 1000:
+            frac = number_text.partition(".")[2]
+            if 1 <= len(frac) <= 2:
+                return ("-$" if whole < 0 else "$") + "{:,.2f}".format(abs(whole))
+            if len(frac) > 2:
+                return None
+        body = _scale_money_number(abs(whole))
+        return None if body is None else ("-$" if whole < 0 else "$") + body
+    if kind == "percentage":
+        if exact != 0 and exact.quantize(decimal.Decimal("0.1"), rounding=_HALF_UP) == 0:
+            return None
+        body = _percent_number(exact, False)
+        return None if body is None else body + "%"
+    if kind == "shares":
+        return _shares_string(exact * multiplier)
+    return None
+
+
+def reformat_prose(text, location, log):
+    """Rewrite unit-worded numbers inside one prose block to their market form, logging each
+    substitution (original span, replacement, location). Code spans are copied untouched."""
+    if not text:
+        return text
+    out = []
+    last = 0
+    for span in _CODE_SPAN.finditer(text):
+        if span.start() > last:
+            out.append(_reformat_segment(text[last:span.start()], location, log))
+        out.append(span.group(0))
+        last = span.end()
+    if last < len(text):
+        out.append(_reformat_segment(text[last:], location, log))
+    return "".join(out)
+
+
+def _reformat_segment(segment, location, log):
+    for pattern, kind, multiplier in _PROSE_PATTERNS:
+        def replace(match, kind=kind, multiplier=multiplier):
+            before = match.string[:match.start()]
+            # A spaced range whose hyphen is glued to the second figure ("1 -2 million dollars")
+            # absorbs that hyphen into the match as a leading sign, so `before` ends "1 " and the
+            # range guard would miss the connector and half-respell the range (round 3, F-r3-1).
+            # Put a leading-sign hyphen back before the range check; a real boundary (no figure
+            # right before it) still leaves the number its own sign and reformats.
+            range_before = before + "-" if match.group(1).startswith("-") else before
+            if _RANGE_BEFORE.search(range_before) or _EXPONENT_BEFORE.search(before):
+                return match.group(0)
+            new = _prose_value(match.group(1), kind, multiplier)
+            if new is None or new == match.group(0):
+                return match.group(0)
+            log.append({"location": location, "original": match.group(0), "replacement": new})
+            return new
+        segment = pattern.sub(replace, segment)
+    return segment
+
+
+def _display_prose(container, key, location, page):
+    """One prose block reformatted once and remembered, so a block rendered in two places (the
+    chairman's rationale on the decision front and again in full; the reviewer's synopsis on the
+    front and again in peer review) is respelt once and logged once, not twice."""
+    cache = "_display_" + key
+    if cache not in container:
+        container[cache] = reformat_prose(container.get(key) or "not recorded",
+                                          location, page.number_subs)
+    return container[cache]
+
+
+def _reformat_verdict_structured(verdict, log):
+    """Owner ruling AC16(1): the chairman-authored STRUCTURED verdict text carries numbers in
+    words just as the seat and chairman PROSE blocks do, and is respelt into the market form the
+    same way - value unchanged, every substitution logged with where it was made. The three
+    authored free-text fields are a falsifier's statement, a reopening trigger's detail, and an
+    invalidation level's meaning; each is rendered both on the decision front and again in the
+    tripwires appendix, so it is respelt ONCE here, before any section renders, and logged once.
+    Nothing else is touched: the figures beside these fields (a level, a trigger's own level and
+    date - rendered through format_number/format_date), the identifiers (figure_name, source, the
+    constituent tag), a theme's FROZEN declared condition, and every quoted-source passage are not
+    chairman prose and are never reached. When a number carries no unit word the reformatter leaves
+    it alone (a missed reformat is cosmetic; a changed value is a defect)."""
+    tripwires = verdict.get("tripwires") or {}
+    for level in tripwires.get("invalidation_levels") or []:
+        if level.get("meaning"):
+            level["meaning"] = reformat_prose(
+                level["meaning"], "verdict invalidation level meaning", log)
+    for trigger in tripwires.get("reopening_triggers") or []:
+        if trigger.get("detail"):
+            trigger["detail"] = reformat_prose(
+                trigger["detail"], "verdict reopening trigger detail", log)
+    for falsifier in tripwires.get("falsifiers") or []:
+        if falsifier.get("statement"):
+            falsifier["statement"] = reformat_prose(
+                falsifier["statement"], "verdict falsifier statement", log)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -166,6 +701,32 @@ RATING_WORDS = {
 }
 
 MISPRICING_WORDS = {"cheap": "cheap", "fair": "fair", "rich": "rich", "no_view": "no view"}
+
+# Owner ruling AC15 (P2, unit U3e): the archetype and the rating measure
+# it calls for, in plain words on the front and in the appendix.
+ARCHETYPE_WORDS = {
+    "profitable_operator": "profitable operator",
+    "ramping_infrastructure_builder": "ramping infrastructure builder",
+    "stabilised_lessor": "stabilised lessor",
+    "no_earnings_asset": "asset with no earnings",
+}
+MEASURE_WORDS = {
+    "earnings_vs_history_and_peers":
+        "earnings against its own history and peers",
+    "ev_per_contracted_capacity_and_contracted_revenue_per_unit":
+        "enterprise value per unit of contracted capacity and contracted "
+        "revenue per unit",
+    "ev_to_operating_income": "enterprise value to operating income",
+    "anchorless_ladder": "the anchorless scenario ladder",
+}
+
+
+def _capture_measure(capture):
+    """The rating measure the third canonical test declares, or None."""
+    for row in (capture.get("sufficiency") or {}).get("requirements") or []:
+        if row.get("id") == "rating_vs_history_or_peers":
+            return row.get("measure")
+    return None
 
 # T3's freshness vocabulary, ported: the pack stamps a machine token, the reader sees a word.
 FRESHNESS_WORD = {
@@ -261,12 +822,14 @@ def _constituent_tag(entry):
     return '<span class="tag">%s</span> ' % esc(ticker)
 
 # The five lenses, in dispatch order, each headed by its name in plain words.
+# The five seats, in reading order. No emoji (owner ruling AC16, audit C4/B9): a research note
+# names its sections in words, not pictograms.
 ADVISOR_SEATS = (
-    ("advisor_bear", "The bear case", "\U0001F43B"),
-    ("advisor_bull", "The bull case", "\U0001F402"),
-    ("advisor_base_rate", "The base-rate skeptic", "\U0001F4CA"),
-    ("advisor_market_structure", "Market structure", "\U0001F3E6"),
-    ("advisor_risk", "The asset's risk", "\U0001F6E1"),
+    ("advisor_bear", "The bear case"),
+    ("advisor_bull", "The bull case"),
+    ("advisor_base_rate", "The base-rate skeptic"),
+    ("advisor_market_structure", "Market structure"),
+    ("advisor_risk", "The asset's risk"),
 )
 
 
@@ -280,6 +843,19 @@ ADVISOR_SEATS = (
 
 def esc(text):
     return html.escape("" if text is None else str(text), quote=True)
+
+
+def _end_sentence(text):
+    """End a sentence the page authors with exactly ONE full stop. A fragment
+    quoted from a seat, the outside auditor or the capture may already end in
+    its own sentence punctuation; appending another produced a double period on
+    the page (the '..' the design audit flagged). The quoted words are never
+    edited - only the renderer's own full stop is withheld when one is already
+    there."""
+    stripped = text.rstrip()
+    if stripped and stripped[-1] in ".!?":
+        return text
+    return text + "."
 
 
 def _inline(text):
@@ -456,6 +1032,20 @@ def load_run(run_dir):
     }
 
 
+def _load_prose_scores(run_dir):
+    """The latest prose score per seat, out of the run record (owner ruling
+    AC6, spec U6.4). Empty for a run published before U6 or a hand-built report
+    fixture with no record - the page then shows no scores, exactly as before.
+    Read here, at render time, so the page builders still read no disk."""
+    scores = {}
+    if not os.path.isfile(runrecord.record_path(run_dir)):
+        return scores
+    for event in runrecord.read_events(run_dir):
+        if event.get("event") == "prose_scored" and event.get("seat"):
+            scores[event["seat"]] = event
+    return scores
+
+
 def _challenge_response(result):
     """The challenger's own document out of challenge/result.json. The flat shape carries the
     summary, findings and endorsement beside the status; a shape that nests the whole findings
@@ -492,57 +1082,130 @@ _CSS_TEMPLATE = """
   --text:#E8E6E0; --muted:#94918A; --line:rgba(255,255,255,0.09);
   --ember:#DD8B5A; --bear:#A85C50; --mid:#5F5C55; --bull:#7F9468; --alarm:#D2603F;
   --alarm-wash:rgba(210,96,63,0.12); --shadow:rgba(0,0,0,0.5);
+  --hair:rgba(255,255,255,0.13); --measure:680px;
 }
 :root[data-theme="light"]{
   --base:#FAF8F3; --panel:#F1EDE5; --panel-open:#E9E4DA; --chrome:#F1EDE5;
   --text:#1F1E1B; --muted:#615D55; --line:rgba(0,0,0,0.14);
   --ember:#A8571B; --bear:#8C3B2F; --mid:#6F6B62; --bull:#4B6837; --alarm:#992D14;
   --alarm-wash:rgba(153,45,20,0.09); --shadow:rgba(0,0,0,0.18);
+  --hair:rgba(0,0,0,0.17);
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 @media (prefers-reduced-motion: reduce){html{scroll-behavior:auto} *{transition:none!important}}
 body{margin:0;background:var(--base);color:var(--text);
-     font-family:system-ui,"Segoe UI",sans-serif;line-height:1.55;font-size:15.5px}
-.wrap{max-width:960px;margin:0 auto;padding:64px 22px 60px}
-h1,h2,h3,h4{font-family:Georgia,Cambria,serif;@B@:600;line-height:1.25}
-h1{font-size:27px;margin:0 0 6px}
-h2{font-size:20px;margin:34px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--ember);
-   scroll-margin-top:66px}
-h3{font-size:16.5px;margin:20px 0 8px}
-h4{font-size:15px;margin:16px 0 6px;color:var(--muted)}
-.meta{color:var(--muted);font-size:13px;margin-bottom:26px}
-.badge{display:inline-block;border:1px solid var(--ember);color:var(--ember);border-radius:4px;
-       padding:5px 14px;font-family:Georgia,serif;font-size:17px;letter-spacing:.06em;margin:10px 0}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:18px 20px;margin:14px 0}
+     font-family:system-ui,"Segoe UI",sans-serif;line-height:1.5;font-size:14.5px;
+     font-variant-numeric:tabular-nums}
+/* A 12-column feel: a 1,100px column with a 680px measure for running text (design audit C5).
+   Tables use the full width; the masthead and the sticky bar are handled on their own below. */
+.wrap{max-width:1100px;margin:0 auto;padding:58px 24px 64px}
+.wrap>p,.wrap>ul,.wrap>ol,.wrap>.card,.wrap>details,.wrap>.muted,.wrap>hr{max-width:var(--measure)}
+
+h1,h2,h3,h4{font-family:Georgia,Cambria,serif;line-height:1.22}
+h1{font-size:30px;@B@:600;margin:0 0 4px;letter-spacing:-0.01em}
+h1 .tkr{font-size:16px;color:var(--muted);@B@:400;white-space:nowrap}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:0.13em;color:var(--ember);@B@:700;
+   margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--ember);scroll-margin-top:70px}
+h3{font-size:16px;@B@:600;margin:22px 0 8px}
+h4{font-size:14px;font-style:italic;@B@:600;color:var(--muted);margin:16px 0 6px}
+p{margin:10px 0}
+
+/* Masthead (design audit C4 tier 0): company identity on the left, the rating rail on the
+   right above 1,000px, stacked below it on a narrow screen. */
+.masthead{margin:0 0 6px;display:grid;grid-template-columns:1fr;gap:22px}
+.masthead-id{min-width:0}
+.kicker{font-size:11px;text-transform:uppercase;letter-spacing:0.17em;color:var(--muted);@B@:700;
+  margin-bottom:9px}
+.question{font-size:16px;line-height:1.4;font-style:italic;color:var(--muted);margin:11px 0 0;
+  max-width:var(--measure)}
+.rail{min-width:0}
+@media (min-width:1000px){
+  .masthead{grid-template-columns:minmax(0,1fr) 300px;gap:46px;align-items:start}
+}
+
+/* The rating box: the one card in the masthead. The rating word large, the price it is made
+   against and its date, the model stamp beneath (owner ruling AC16(9); M3 still satisfied). */
+.ratingbox{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--ember);
+  border-radius:4px;padding:15px 18px 16px}
+.rating-word{font-family:Georgia,serif;font-size:28px;line-height:1.12;color:var(--ember);@B@:600;
+  margin:0 0 8px}
+.rating-scale{margin-bottom:6px}
+.rating-price{margin:11px 0 0;padding-top:11px;border-top:1px solid var(--line)}
+.rating-price dt{font-size:11.5px;color:var(--muted);letter-spacing:0.02em}
+.rating-price dd{margin:3px 0 0;font-size:19px;font-family:Georgia,serif;color:var(--text)}
+.rating-price .asof{font-size:11.5px;color:var(--muted);font-family:system-ui,sans-serif;
+  @B@:400;margin-left:7px}
+.stamp{margin-top:11px;padding-top:11px;border-top:1px solid var(--line);line-height:1.5}
+
+/* Key-data strip (closes register item P-U6b-8): the envelope's headline figures under their
+   own labels, given real styling in the rail. */
+.rail h3{font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);
+  @B@:700;margin:20px 0 8px}
+.keydata{display:grid;grid-template-columns:1fr auto;gap:7px 14px;margin:6px 0}
+.keydata dt{font-size:12px;color:var(--muted);align-self:baseline}
+.keydata dd{margin:0;text-align:right;font-size:13.5px;@B@:600;white-space:nowrap}
+.rail .muted.small{margin-top:9px}
+
+/* Sticky summary bar (design audit C5): once the masthead scrolls off it pins to the top of the
+   screen, carrying ticker, rating, price and date. It is full-bleed so the pinned Y3 icon and the
+   theme toggle (both fixed at the screen corners, ruling Y3/Y4) sit at its two ends; the inner
+   text is inset past them. CSS only - no script beyond the theme toggle's own. */
+.stickybar{@P@:sticky;top:0;z-index:500;margin:20px calc(50% - 50vw) 0;
+  background:var(--chrome);border-bottom:1px solid var(--line);box-shadow:0 2px 9px var(--shadow)}
+.stickybar-inner{max-width:1100px;margin:0 auto;min-height:40px;display:flex;align-items:center;
+  gap:9px;padding:5px 58px;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.stickybar-inner .sb-tick{@B@:700;color:var(--text);letter-spacing:0.03em}
+.stickybar-inner .sb-rate{color:var(--ember);@B@:600}
+.stickybar-inner .sep{color:var(--muted);opacity:0.6}
+
+.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:12px 15px;
+  margin:12px 0}
 .muted{color:var(--muted)}
 .small{font-size:12.5px}
-.lead{display:block;@B@:600;color:var(--text);margin-bottom:6px}
-table{border-collapse:collapse;width:100%;font-size:13.5px;margin:10px 0}
-td,th{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left}
-th{color:var(--muted);@B@:600}
-th.nowrap,td.nowrap{white-space:nowrap}
-td code,.foot code{word-break:break-all}
-details{background:var(--panel);border:1px solid var(--line);border-radius:4px;margin:10px 0}
+.lead{display:block;@B@:600;color:var(--text);margin-bottom:5px}
+
+/* Tables read as a research note's data tables (design audit C5): no vertical rules and no outer
+   box, a firm rule under the header row, hairlines between body rows, tabular figures, and
+   numeric or date columns (marked nowrap) right-aligned. */
+table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0}
+.wrap>table{max-width:none}
+td,th{padding:7px 12px 7px 0;vertical-align:top;text-align:left;border:0;
+  border-bottom:1px solid var(--hair);overflow-wrap:anywhere}
+td:last-child,th:last-child{padding-right:0}
+tr:first-child th{border-bottom:1.5px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{color:var(--muted);@B@:700;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+th.nowrap,td.nowrap{white-space:nowrap;text-align:right;padding-left:16px}
+tr.alarm td{background:var(--alarm-wash)}
+
+details{background:var(--panel);border:1px solid var(--line);border-radius:4px;margin:12px 0}
 details[open]{background:var(--panel-open);border-left:2px solid var(--ember)}
-summary{cursor:pointer;padding:13px 16px;font-family:Georgia,serif;font-size:16px;outline-offset:3px}
+summary{cursor:pointer;padding:11px 15px;font-family:Georgia,serif;font-size:15px;outline-offset:3px}
 summary:focus-visible{outline:2px solid var(--ember)}
-details .body{padding:2px 20px 16px;border-top:1px solid var(--line)}
+details .body{padding:2px 18px 15px;border-top:1px solid var(--line)}
 details details{margin:10px 0;background:var(--base)}
-details details summary{font-size:14px;padding:10px 14px}
+details details summary{font-size:13.5px;padding:9px 13px}
 ul,ol{margin:8px 0;padding-left:22px}
 li{margin:5px 0}
 strong{color:var(--text)}
-code{font-family:Consolas,"SF Mono",monospace;font-size:12.5px;color:var(--ember)}
-pre{background:var(--base);border:1px solid var(--line);border-radius:4px;padding:12px;overflow-x:auto}
+/* Code font is a debug tell: it is kept for the run id and hash in the stamps only (C5). A fact
+   id elsewhere reads as a labelled term in the body font, tinted ember. */
+code{font-family:inherit;color:var(--ember);font-size:0.94em}
+.foot code{font-family:Consolas,"SF Mono",monospace;color:var(--muted);font-size:12px;
+  word-break:break-all}
+pre{background:var(--base);border:1px solid var(--line);border-radius:4px;padding:12px;
+  overflow-x:auto}
+pre,pre code{font-family:Consolas,"SF Mono",monospace}
 pre code{color:var(--text);font-size:12px}
 hr{border:0;border-top:1px solid var(--line);margin:16px 0}
-.foot{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+.foot{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);
+  font-size:12.5px}
 .prominent{border-left:2px solid var(--ember)}
 .alarm{border:1px solid var(--alarm);border-left:4px solid var(--alarm);background:var(--alarm-wash)}
-.alarm .shout{color:var(--alarm);font-family:Georgia,serif;font-size:18px;letter-spacing:.03em;
+.alarm .shout{color:var(--alarm);font-family:Georgia,serif;font-size:17px;letter-spacing:.02em;
               display:block;margin-bottom:8px}
-tr.alarm td{background:var(--alarm-wash);border-color:var(--alarm)}
+tr.alarm td{border-color:var(--alarm)}
 .tag{display:inline-block;border:1px solid var(--line);border-radius:3px;padding:1px 7px;
      font-size:11.5px;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
 .tag.addressed{color:var(--bull);border-color:var(--bull)}
@@ -570,7 +1233,28 @@ tr.alarm td{background:var(--alarm-wash);border-color:var(--alarm)}
   padding:6px 0;box-shadow:0 8px 26px var(--shadow)}
 .menucard a{display:block;padding:7px 15px;color:var(--text);text-decoration:none;font-size:13.5px}
 .menucard a:hover,.menucard a:focus-visible{background:var(--panel-open);color:var(--ember);outline:none}
-@media print{.dock,.themebtn{display:none}details{border-left:1px solid var(--line)}}
+
+/* Print (owner ruling AC16(2), design audit C5): the screen stays dark by default, but the
+   PRINTED page is light - a dark PDF is unreadable on paper. A4 with a running margin, the
+   screen chrome removed, the rating box, table rows and cards kept whole, and a fresh page
+   before the chairman's note and before the evidence. */
+@page{size:A4;margin:18mm 16mm}
+@media print{
+  :root,:root[data-theme="dark"],:root[data-theme="light"]{
+    --base:#FFFFFF; --panel:#FFFFFF; --panel-open:#FFFFFF; --chrome:#FFFFFF;
+    --text:#101010; --muted:#4A4A4A; --line:#C9C9C9; --hair:#DEDEDE;
+    --ember:#A8571B; --bear:#8C3B2F; --mid:#6F6B62; --bull:#4B6837; --alarm:#992D14;
+    --alarm-wash:#F6E7E1; --shadow:transparent;
+  }
+  body{background:#FFFFFF;color:#101010}
+  .dock,.themebtn,.stickybar{display:none!important}
+  .wrap{max-width:none;padding:0}
+  .wrap>p,.wrap>ul,.wrap>ol,.wrap>.card,.wrap>details,.wrap>.muted{max-width:none}
+  .ratingbox,tr,.card,.keydata{break-inside:avoid}
+  #synthesis,#evidence{break-before:page}
+  details{border-left:1px solid var(--line)}
+  a{color:inherit;text-decoration:none}
+}
 """
 CSS = _CSS_TEMPLATE.replace("@P@", _PIN_PROP).replace("@B@", _BOLD_PROP)
 
@@ -625,6 +1309,10 @@ class Page(object):
     def __init__(self):
         self.parts = []
         self.nav = []
+        # Every number the prose reformatter rewrote, in render order (owner ruling AC16(1)):
+        # each row is {location, original, replacement}, written beside the report as
+        # <report name>.number-substitutions.json so a reader can see exactly what was respelt.
+        self.number_subs = []
 
     def add(self, html_text):
         self.parts.append(html_text)
@@ -672,23 +1360,105 @@ def _models_line(provenance):
     return seats, challenger
 
 
+def _masthead_title(subject):
+    """Company name, then ticker and listing (design audit C4 tier 0). A subject with no ticker
+    (a theme) is named alone; a crypto asset with no listing carries its ticker only."""
+    name = subject.get("name") or ""
+    ticker = subject.get("ticker")
+    listing = subject.get("listing")
+    if ticker and listing:
+        tail = "(%s: %s)" % (listing, ticker)
+    elif ticker:
+        tail = "(%s)" % ticker
+    else:
+        tail = ""
+    if not tail:
+        return esc(name)
+    return '%s <span class="tkr">%s</span>' % (esc(name), esc(tail))
+
+
+def _question_line(verdict):
+    """The owner's question in one phrase, as he asked it (closes register item P-U6b-10): the
+    first paragraph of his brief -- the text up to the first blank line -- cut at its first question
+    mark if one occurs (the text up to and including that "?"), otherwise the whole first paragraph.
+    Whitespace is collapsed to single spaces, there is no ellipsis, and the ".question" CSS wraps
+    the line. The whole brief, word for word, stays in the folded appendix below.
+
+    Round 5 (architect ruling closing P-U6b-15) removed the sentence splitter. Three earlier rounds
+    patched a terminator/abbreviation rule that no single rule makes right for every case (a lone
+    share-class "B." vs an initial "U.S."). By ruling, the accepted cost is that a brief opening
+    with two statements shows both; in exchange a cut or misleading line never occurs. A dedicated
+    one-line question field in the brief would remove the tension but is an owner question under
+    J3 (not built)."""
+    verbatim = (verdict.get("question_verbatim") or "").strip()
+    if not verbatim:
+        return ""
+    paragraph = re.sub(r"\s+", " ", re.split(r"\n\s*\n", verbatim)[0]).strip()
+    mark = paragraph.find("?")
+    if mark != -1:
+        return paragraph[:mark + 1]
+    return paragraph
+
+
 def _head_block(page, run):
+    """The masthead (design audit C4 tier 0): company identity and the owner's one-phrase
+    question on the left, the rating box and the key-data strip in the rail on the right. The
+    warnings band renders directly beneath it, never folded; the sticky summary bar follows."""
     verdict = run["verdict"]
     subject = verdict.get("subject") or {}
-    provenance = verdict.get("provenance") or {}
-    title = subject.get("name") or verdict.get("run_id", "")
-    if subject.get("ticker"):
-        title = "%s (%s)" % (title, subject["ticker"])
-    page.add("<h1>Investment Council &mdash; %s</h1>" % esc(title))
-    seats, challenger = _models_line(provenance)
-    published = (provenance.get("timestamps") or {}).get("published", "")
-    stamps = [
-        "run <code>%s</code>" % esc(verdict.get("run_id", "")),
-        "published %s" % esc(published),
-        "seats ran on <strong>%s</strong>" % esc(seats),
-        "the challenge went to <strong>%s</strong>" % esc(challenger),
-    ]
-    page.add('<div class="meta">%s</div>' % " &middot; ".join(stamps))
+    page.add('<header class="masthead">')
+    page.add('<div class="masthead-id">')
+    page.add('<div class="kicker">Investment Council</div>')
+    page.add("<h1>%s</h1>" % _masthead_title(subject))
+    question = _question_line(verdict)
+    if question:
+        page.add('<p class="question">%s</p>' % esc(question))
+    page.add("</div>")
+    page.add('<aside class="rail">')
+    _rating_box(page, verdict)
+    _front_key_numbers(page, verdict)
+    page.add("</aside>")
+    page.add("</header>")
+    _warnings_band(page, run)
+    _sticky_bar(page, run)
+
+
+# The subject kinds judged through several named instruments at once (THEMES-BASKETS-SPEC
+# section 7): their leading key number is a constituent's price or a theme-level metric, not a
+# price for the subject as a whole. The rating box shows that figure under its own label, so it
+# reads true there; the slim sticky bar drops the label, so it omits the figure rather than
+# print a constituent's price unlabelled beside the subject's own name. Every single subject
+# (a stock, Bitcoin, gold, a commodity, an ETF) keeps its price in the bar.
+_MULTI_MEMBER_KINDS = frozenset(["basket", "theme"])
+
+
+def _sticky_bar(page, run):
+    """The slim summary bar (design audit C5). Pure CSS `@P@:sticky`: it rides down with the page
+    and pins to the top of the screen once the masthead has scrolled off, so the reader always
+    sees which company, rating and price the page is about. The Y3 icon and the theme toggle keep
+    their fixed corners (rulings Y3/Y4) and sit at its two ends; no new script is added."""
+    verdict = run["verdict"]
+    subject = verdict.get("subject") or {}
+    rating = verdict.get("rating", "")
+    short = RATING_WORDS.get(rating, rating).split(" - ")[0]
+    ident = subject.get("ticker") or subject.get("name") or ""
+    bits = ['<span class="sb-tick">%s</span>' % esc(ident),
+            '<span class="sb-rate">%s</span>' % esc(short)]
+    lead = _first_key_number(verdict)
+    if lead and subject.get("kind") not in _MULTI_MEMBER_KINDS:
+        # Round 4 (P-U6b-14): show the figure UNDER its own label, exactly as the rating box does,
+        # so a non-price leading key number (the envelope's order is LLM-authored) can never read
+        # as the price. The label wraps with the value as one flex unit; the icon and toggle are
+        # pinned to the viewport corners (fixed) and cannot be pushed off the bar.
+        label = lead.get("name", "")
+        value = format_number(lead.get("value"), lead.get("unit"))
+        shown = "%s %s" % (label, value) if label else value
+        bits.append('<span class="sb-lead">%s</span>' % esc(shown))
+        asof = format_date(lead.get("as_of", ""))
+        if asof:
+            bits.append(esc(asof))
+    joined = ' <span class="sep">&middot;</span> '.join(bits)
+    page.add('<div class="stickybar"><div class="stickybar-inner">%s</div></div>' % joined)
 
 
 # --- 1b. THE DECISION FRONT (ANCHORLESS-SPEC section 5, owner ruling AB13.5) --------------------
@@ -703,8 +1473,13 @@ def _head_block(page, run):
 # sentences - is quoted exactly as it arrived: those were rounded once, in the engine that
 # computed them, and rounding them again would put two spellings of one number on one page.
 
-# At most five, per the ruling: "the three-to-five numbers the ruling actually turns on".
-MAX_FRONT_KEY_NUMBERS = 5
+# Owner ruling AC16(3), audit B11: the executive summary carries the decisive numbers as a
+# key-data strip, six to eight cells, not a raw table dump of every envelope row.
+KEY_DATA_STRIP_MAX = 8
+
+# Owner ruling AC16(7), architect ruling before U6b(b) round 1: the compact table of the facts
+# the verdict rests on holds at most this many OPEN rows; every other dependency fact folds below.
+COMPACT_EVIDENCE_MAX = 25
 
 # A pack fact whose id begins with this is a dated event (the anchorless anchor set).
 CALENDAR_PREFIX = "calendar_"
@@ -717,110 +1492,140 @@ LEADING_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 SCALE_ORDER = ("strong_buy", "buy", "hold", "sell", "monitor")
 
 
+def _prose_note(run, seat):
+    """One muted line with a seat's writing score, for the collapsed appendix
+    (spec U6.4). Empty where the run carries no score for the seat - a report
+    published before U6, or a hand-built fixture with no record."""
+    score = (run.get("prose_scores") or {}).get(seat)
+    if not score:
+        return ""
+    whose = "chairman, measured" if score.get("judged") else "advisory"
+    return ('<div class="muted small">Writing score (%s): %s</div>'
+            % (whose, esc(prose.describe(score.get("score") or {}))))
+
+
+def _chair_prose_warning(page, run):
+    """Owner ruling AC6, spec U6.4: when the chairman's FINAL document still
+    missed the council's writing rules after its one rewrite, the verdict
+    publishes with its writing score shown here - transparency, never a freeze
+    (the AB4 spirit). The final document is the resolve, or the draft where the
+    outside audit did not run."""
+    scores = run.get("prose_scores") or {}
+    score = scores.get("chair_resolve") or scores.get("chair_draft")
+    if not score or not score.get("warned"):
+        return
+    page.add('<div class="card alarm"><span class="shout">The chairman&#x27;s '
+             "final wording did not meet the council&#x27;s writing rules after "
+             "one rewrite. The verdict and its numbers stand; the writing score "
+             'is recorded here.</span><div class="small">%s</div></div>'
+             % esc(prose.describe(score.get("score") or {})))
+
+
 def _warnings_band(page, run):
     """The loud warning band. It renders in the DECISION FRONT and nowhere else: a failed
     outside audit or a raise the auditor never saw must never sit behind a fold."""
     warnings = run["verdict"].get("warnings") or []
     for warning in warnings:
         page.add('<div class="card alarm"><span class="shout">%s</span></div>' % esc(warning))
+    _chair_prose_warning(page, run)
 
 
-# The front is at most two rendered pages (AB13.5), and a schema-valid
-# chairman can write at any length: six thousand-character tripwires
-# rendered twice is not a front, it is the appendix moved upstairs
-# (audit finding ANCHORLESS-C c1-4). So the front BOUNDS what it shows -
-# how many rows, and how long each may run - and says plainly what it
-# left downstairs. Nothing is lost: every word is in the appendix.
-FRONT_MAX_ROWS = 3
-FRONT_MAX_RATIONALE = 1000
-FRONT_MAX_CHARS = 200
-# The what-changes sentences RESTATE the tripwire table above them,
-# so they carry the shorter trim: the reader has just read the
-# whole of each one.
-FRONT_MAX_SENTENCE = 160
-MORE_IN_APPENDIX = "in full in the appendix"
+# Owner ruling AC16(3), closing register item P-U6-5: the executive summary is a MINIMUM-content
+# rule, no longer a fixed two-page box. Nothing the reader needs in the first three minutes is cut,
+# trimmed to a character budget or shown as an ellipsis; length is bounded at the writer (the
+# chair's brief caps the rationale), never at the display. The old bounding constants, the trimming
+# helper and the row cap are gone, and every front value renders in full.
 
 
-def _front_trim(text, budget=None):
-    """One rendered value, cut to the front's budget with a pointer to
-    where the whole of it lives."""
-    text = str(text or "")
-    budget = budget or FRONT_MAX_CHARS
-    if len(text) <= budget:
-        return esc(text)
-    return "%s&hellip; <span class=\"muted small\">(%s)</span>" % (
-        esc(text[:budget].rstrip()), MORE_IN_APPENDIX)
+def _first_key_number(verdict):
+    """The envelope's leading headline figure - the price the ruling is made against for a priced
+    subject, the first key number otherwise. Read by the envelope's own ORDER (the price leads it
+    for a priced subject), under the envelope's own label: no label map and no new field, as ruled
+    for this sub-charge (owner ruling AC16)."""
+    key_numbers = (verdict.get("atlas_envelope") or {}).get("key_numbers") or []
+    return key_numbers[0] if key_numbers else None
 
 
-def _front_rows(page, items, what):
-    """The first few of a list, with one plain sentence when the rest
-    were left for the appendix."""
-    if len(items) <= FRONT_MAX_ROWS:
-        return items
-    page.add('<div class="muted small">Showing %d of %d %s; the rest are '
-             "%s.</div>" % (FRONT_MAX_ROWS, len(items), what,
-                            MORE_IN_APPENDIX))
-    return items[:FRONT_MAX_ROWS]
-
-
-def _front_rating(page, verdict):
+def _rating_box(page, verdict):
+    """The rating box in the masthead (owner ruling AC16(3),(9); design audit C5): the rating word
+    large; the price the ruling is made against and its date, from the envelope's leading key
+    number under its own label; the model names as a small stamp beneath (M3 still satisfied - the
+    chair's model and the challenger are still named at the top). No label map, no new field."""
     rating = verdict.get("rating", "")
-    page.add('<div class="badge">%s</div>' % esc(RATING_WORDS.get(rating, rating)))
-    page.add('<div class="muted small">The council&#x27;s scale, strongest first: %s.</div>'
-             % esc(", ".join(RATING_WORDS[word] for word in SCALE_ORDER)))
+    page.add('<div class="ratingbox">')
+    page.add('<div class="rating-word">%s</div>' % esc(RATING_WORDS.get(rating, rating)))
+    page.add('<div class="rating-scale muted small">The council&#x27;s scale, strongest first: '
+             "%s.</div>" % esc(", ".join(RATING_WORDS[word] for word in SCALE_ORDER)))
     page.add('<div class="muted small">The subject is %s.</div>'
              % esc(_kind_words(verdict.get("subject") or {})))
-    rationale = verdict.get("conviction_rationale") or "not recorded"
-    if len(rationale) > FRONT_MAX_RATIONALE:
-        rationale = ("%s…\n\n*(%s)*"
-                     % (rationale[:FRONT_MAX_RATIONALE].rstrip(),
-                        MORE_IN_APPENDIX))
+    lead = _first_key_number(verdict)
+    if lead:
+        asof = format_date(lead.get("as_of", ""))
+        page.add('<dl class="rating-price"><dt>%s</dt><dd>%s%s</dd></dl>'
+                 % (esc(lead.get("name", "")),
+                    esc(format_number(lead.get("value"), lead.get("unit"))),
+                    (' <span class="asof">%s</span>' % esc(asof)) if asof else ""))
+    seats, challenger = _models_line(verdict.get("provenance") or {})
+    page.add('<div class="stamp muted small">seats ran on <strong>%s</strong> &middot; the '
+             "challenge went to <strong>%s</strong></div>" % (esc(seats), esc(challenger)))
+    page.add("</div>")
+
+
+def _front_thesis(page, verdict):
+    """The thesis in five sentences or fewer (owner ruling AC16(3),(6)): the opening of the
+    chairman's rationale, shown once as a lede. No new verdict field - the renderer takes the
+    rationale's first sentences; fewer than five means the thesis is all of it, and the full
+    rationale still prints below."""
+    rationale = _display_prose(verdict, "conviction_rationale", "chairman rationale", page)
+    if not rationale or rationale == "not recorded":
+        return
+    sentences = prose.split_sentences(rationale, prose.load_rules())
+    thesis = " ".join(sentences[:5]) if sentences else rationale
+    page.add('<div class="card prominent"><span class="lead">The thesis</span>%s</div>'
+             % markdown(thesis))
+
+
+def _front_rationale(page, verdict):
+    """The chairman's rationale, in full, never cut, with its paragraph breaks (owner ruling
+    AC16(3); audit B2). Length is bounded at the writer by the chair's brief, not here."""
+    rationale = _display_prose(verdict, "conviction_rationale", "chairman rationale", page)
     page.add('<div class="card"><span class="lead">Why this rating, in the chairman&#x27;s own '
              "words</span>%s</div>" % markdown(rationale))
 
 
 def _front_key_numbers(page, verdict):
-    """The few figures the ruling turns on, from the hand-off the verdict already carries."""
+    """The decisive numbers as a key-data strip (owner ruling AC16(3); audit B11): the envelope's
+    headline figures at a glance in the market form, each under the envelope's own plain label.
+    The whole list, with its dates and bounds, is in the hand-off appendix at the end."""
     key_numbers = (verdict.get("atlas_envelope") or {}).get("key_numbers") or []
     page.add("<h3>The numbers this ruling turns on</h3>")
     if not key_numbers:
         page.add('<div class="card">The verdict names no headline numbers.</div>')
         return
-    shown = key_numbers[:MAX_FRONT_KEY_NUMBERS]
-    rows = "".join('<tr><td>%s</td><td class="nowrap">%s%s</td><td class="nowrap">%s</td></tr>'
-                   % (_front_trim(number.get("name", ""), FRONT_MAX_SENTENCE),
-                      _front_trim(format_number(number.get("value"),
-                                                    number.get("unit")),
-                                      FRONT_MAX_SENTENCE),
-                      (" " + esc(_unit_words(number.get("unit"))))
-                      if number.get("unit") else "",
-                      _front_trim(number.get("as_of", ""), FRONT_MAX_SENTENCE))
-                   for number in shown)
-    page.add('<table><tr><th>the number</th><th class="nowrap">value</th>'
-             '<th class="nowrap">as of</th></tr>%s</table>' % rows)
-    if len(key_numbers) > len(shown):
+    shown = key_numbers[:KEY_DATA_STRIP_MAX]
+    cells = "".join("<dt>%s</dt><dd>%s</dd>"
+                    % (esc(number.get("name", "")),
+                       esc(format_number(number.get("value"), number.get("unit"))))
+                    for number in shown)
+    page.add('<dl class="keydata">%s</dl>' % cells)
+    remaining = len(key_numbers) - len(shown)
+    if remaining > 0:
         page.add('<div class="muted small">The verdict carries %d more headline number%s. They '
                  "are listed in full under &#x27;What the portfolio system receives&#x27; at the "
                  "end of this report.</div>"
-                 % (len(key_numbers) - len(shown),
-                    "" if len(key_numbers) - len(shown) == 1 else "s"))
+                 % (remaining, "" if remaining == 1 else "s"))
 
 
 def _ladder_table(page, scenarios, currency):
-    """The chairman's ladder: one row per named rung. The price is rounded for reading in the
-    subject's own currency; the chance is quoted as he wrote it, because the arithmetic block
-    beside this table quotes that same string and the two must read alike. The row count is
-    bounded like every other front list - the contract sets no maximum on how many rungs a
-    ladder may name, and the whole ladder is in the appendix."""
-    scenarios = _front_rows(page, list(scenarios), "scenarios")
-    rows = "".join('<tr><td>%s</td><td class="nowrap">%s%s</td><td class="nowrap">%s</td>'
+    """The chairman's ladder: one row per named rung, every rung in full. The price is rounded for
+    reading in the subject's own currency; the chance is quoted as he wrote it, because the
+    arithmetic block beside this table quotes that same string and the two must read alike."""
+    rows = "".join('<tr><td>%s</td><td class="nowrap">%s</td><td class="nowrap">%s</td>'
                    "<td>%s</td></tr>"
-                   % (_front_trim(rung.get("name", ""),
-                                      FRONT_MAX_SENTENCE),
-                      esc(format_number(rung.get("price_outcome"), currency)),
-                      (" " + esc(_unit_words(currency))) if currency else "",
+                   % (esc(rung.get("name", "")),
+                      esc(format_price(rung.get("price_outcome"), currency)),
                       esc(rung.get("probability", "")),
-                      _front_trim(rung.get("rationale", "")))
+                      esc(rung.get("rationale", "")))
                    for rung in scenarios)
     page.add('<table><tr><th>the case</th><th class="nowrap">price if it happens</th>'
              '<th class="nowrap">chance</th><th>why</th></tr>%s</table>' % rows)
@@ -888,8 +1693,7 @@ def _front_sensitivity(page, block):
                  % _capped_caveat(block))
     if lines:
         page.add('<div class="card">%s</div>'
-                 % "".join("<p>%s</p>" % _front_trim(line)
-                            for line in lines))
+                 % "".join("<p>%s</p>" % esc(line) for line in lines))
     if steps:
         rows = "".join('<tr><td>%s</td><td class="nowrap">%s%%</td>'
                        '<td class="nowrap">%s</td></tr>'
@@ -906,8 +1710,8 @@ def _front_not_aggregated(page, verdict, block):
     page.add("<h3>Why no rating was earned from the ladder</h3>")
     page.add('<div class="card prominent"><span class="lead">The chairman judged this ladder too '
              "uncertain to add up</span>%s</div>"
-             % _front_trim(block.get("not_aggregated_reason")
-                        or "He recorded no reason."))
+             % esc(block.get("not_aggregated_reason")
+                   or "He recorded no reason."))
     scenarios = block.get("scenarios") or []
     if scenarios:
         _ladder_judgment_note(page, block)
@@ -925,9 +1729,24 @@ def _front_context_ladder(page, verdict, block):
                   (verdict.get("subject") or {}).get("currency"))
 
 
-def _front_basis(page, run):
-    """What the rating actually rests on: the ladder and its sum for an anchorless subject, the
-    price read for an anchored one, and a context ladder after the read where one exists."""
+def _front_price_read(page, run):
+    """The price read on the executive summary (owner ruling AC16(3), audit C4 tier 1): the
+    mispricing sentence, once, for an anchored subject. An anchorless subject earns its rating
+    from the scenario ladder instead, which sits under 'The decision in detail' below - so this
+    prints nothing for it, and the ladder is not shown twice."""
+    verdict = run["verdict"]
+    block = verdict.get("scenario_rating") or {}
+    if block and block.get("basis") == "rating":
+        return
+    page.add('<div class="card"><span class="lead">The mispricing read</span>%s</div>'
+             % _mispricing_sentence(verdict))
+
+
+def _detail_basis(page, run):
+    """How the rating was earned, on the decision-in-detail tier (audit C4 tier 3): the anchorless
+    scenario ladder and its arithmetic where the subject earns its rating from one, or a context
+    ladder offered beside an anchored read. Content unchanged - it moved down from the executive
+    summary, where the ladder used to sit."""
     verdict = run["verdict"]
     block = verdict.get("scenario_rating") or {}
     if block and block.get("basis") == "rating":
@@ -935,10 +1754,7 @@ def _front_basis(page, run):
             _front_earned_rating(page, verdict, block)
         else:
             _front_not_aggregated(page, verdict, block)
-        return
-    page.add('<div class="card"><span class="lead">The mispricing read</span>%s</div>'
-             % _mispricing_sentence(verdict))
-    if block and block.get("basis") == "context":
+    elif block and block.get("basis") == "context":
         _front_context_ladder(page, verdict, block)
 
 
@@ -975,27 +1791,22 @@ def _front_downside(page, run):
                  "view.</div>")
         return
     if levels:
-        levels = _front_rows(page, levels, "invalidation levels")
-        rows = "".join('<tr><td class="nowrap">%s%s</td><td>%s%s</td></tr>'
+        rows = "".join('<tr><td class="nowrap">%s</td><td>%s%s</td></tr>'
                        % (esc(format_number(level.get("level"), level.get("unit"))),
-                          (" " + esc(_unit_words(level.get("unit"))))
-                          if level.get("unit") else "",
                           _constituent_tag(level),
-                          _front_trim(level.get("meaning", "")))
+                          esc(level.get("meaning", "")))
                        for level in levels)
         page.add('<table><tr><th class="nowrap">level</th>'
                  "<th>what it means if it is reached</th></tr>%s</table>" % rows)
     if below:
         currency = (verdict.get("subject") or {}).get("currency")
-        page.add('<div class="muted small">The ladder&#x27;s own losing rungs, priced under %s%s '
+        page.add('<div class="muted small">The ladder&#x27;s own losing rungs, priced under %s '
                  "&mdash; the price the ladder is measured against.</div>"
-                 % (esc(block.get("reference_price", "")),
-                    (" " + esc(_unit_words(currency))) if currency else ""))
-        rows = "".join('<tr><td class="nowrap">%s%s</td><td>%s</td>'
+                 % esc(format_price(block.get("reference_price", ""), currency)))
+        rows = "".join('<tr><td class="nowrap">%s</td><td>%s</td>'
                        '<td class="nowrap">%s</td></tr>'
-                       % (esc(format_number(rung.get("price_outcome"), currency)),
-                          (" " + esc(_unit_words(currency))) if currency else "",
-                          _front_trim(rung.get("name", ""), FRONT_MAX_SENTENCE), esc(rung.get("probability", "")))
+                       % (esc(format_price(rung.get("price_outcome"), currency)),
+                          esc(rung.get("name", "")), esc(rung.get("probability", "")))
                        for rung in below)
         page.add('<table><tr><th class="nowrap">price if it happens</th><th>the case</th>'
                  '<th class="nowrap">chance</th></tr>%s</table>' % rows)
@@ -1021,16 +1832,18 @@ def _calendar_rows(pack):
     return rows
 
 
-def _front_calendar(page, run):
+def _detail_calendar(page, run):
+    """The dated events, on the decision-in-detail tier. Omitted ENTIRELY when the pack carries
+    none (audit B6): an empty section headed by a 'no dated events' sentence is machine noise on
+    a research note, so the heading only appears when there is a calendar to show."""
     rows = _calendar_rows(run["pack"])
-    page.add("<h3>The dated event calendar</h3>")
     if not rows:
-        page.add('<div class="card">The evidence pack carries no dated events for this '
-                 "subject.</div>")
         return
+    page.add("<h3>The dated event calendar</h3>")
     body = "".join('<tr><td class="nowrap">%s</td><td>%s%s<div class="muted small"><code>%s</code>'
                    "</div></td></tr>"
-                   % (esc(when), (esc(detail) + " ") if detail else "", esc(source), esc(fact_id))
+                   % (esc(format_date(when)), (esc(detail) + " ") if detail else "",
+                      esc(source), esc(fact_id))
                    for when, fact_id, source, detail in rows)
     page.add('<table><tr><th class="nowrap">date</th>'
              "<th>what happens, and where the date comes from</th></tr>%s</table>" % body)
@@ -1040,96 +1853,44 @@ def _trigger_when(trigger):
     """A reopening trigger's level or its date, as the reader reads it. Empty where the record
     carries neither."""
     if trigger.get("level"):
-        return "%s%s" % (esc(format_number(trigger["level"], trigger.get("unit"))),
-                         (" " + esc(_unit_words(trigger.get("unit"))))
-                         if trigger.get("unit") else "")
+        return esc(format_number(trigger["level"], trigger.get("unit")))
     if trigger.get("date"):
-        return esc(trigger["date"])
+        return esc(format_date(trigger["date"]))
     return ""
 
 
 def _front_tripwires(page, run):
+    """Everything that would change the rating, in one full table (owner ruling AC16(3); audit C4
+    and B4): every reopening trigger and every falsifier, uncut, with no restated bullets beside
+    it. Each row: what it is, the level or date it turns on, and the figure it is scored against."""
     tripwires = run["verdict"].get("tripwires") or {}
     triggers = tripwires.get("reopening_triggers") or []
     falsifiers = tripwires.get("falsifiers") or []
-    page.add("<h3>The tripwires</h3>")
-    triggers = _front_rows(page, triggers, "reopening triggers")
-    falsifiers = _front_rows(page, falsifiers, "falsifiers")
-    if not triggers and not falsifiers:
-        page.add('<div class="card">The verdict names no tripwire.</div>')
-        return
-    if triggers:
-        page.add("<h4>What reopens the case</h4>")
-        rows = "".join('<tr><td class="nowrap"><span class="tag">%s</span></td><td>%s%s</td>'
-                       '<td class="nowrap">%s</td></tr>'
-                       % (esc("Price" if trigger.get("kind") == "price" else "Event"),
-                          _constituent_tag(trigger),
-                          _front_trim(trigger.get("detail", "")),
-                          _trigger_when(trigger) or "&mdash;")
-                       for trigger in triggers)
-        page.add('<table><tr><th class="nowrap">kind</th><th>what reopens the case</th>'
-                 '<th class="nowrap">at</th></tr>%s</table>' % rows)
-    if falsifiers:
-        page.add("<h4>What would prove this wrong</h4>")
-        rows = "".join('<tr><td>%s%s</td><td class="nowrap"><code>%s</code></td>'
-                       '<td class="nowrap">%s</td></tr>'
-                       % (_constituent_tag(row),
-                          _front_trim(row.get("statement", "")),
-                          _front_trim(row.get("figure_name", ""), FRONT_MAX_SENTENCE),
-                          _front_trim(row.get("date", ""),
-                                      FRONT_MAX_SENTENCE))
-                       for row in falsifiers)
-        page.add('<table><tr><th>what would prove the view wrong</th>'
-                 '<th class="nowrap">the figure it is scored against</th>'
-                 '<th class="nowrap">scored on</th></tr>%s</table>' % rows)
-
-
-def _front_what_changes(page, run):
-    """The same triggers and falsifiers as sentences, so the reader never has to read a table to
-    learn what would move the rating. Every sentence is built from the record's own fields."""
-    verdict = run["verdict"]
-    tripwires = verdict.get("tripwires") or {}
-    block = verdict.get("scenario_rating") or {}
     page.add("<h3>What changes this rating</h3>")
-    flip = ((block.get("sensitivity") or {}).get("flip") or {}).get("sentence")
-    if block.get("basis") == "rating" and flip:
-        page.add('<div class="card prominent">%s</div>' % _front_trim(flip))
-    items = []
-    for trigger in (tripwires.get("reopening_triggers") or []):
-        when = _trigger_when(trigger)
-        items.append("<li><strong>Would reopen this rating:</strong> %s%s%s</li>"
-                     % (_constituent_tag(trigger),
-                        _front_trim(trigger.get("detail", ""),
-                                    FRONT_MAX_SENTENCE),
-                        (" The %s to watch is %s."
-                         % ("level" if trigger.get("level") else "date", when))
-                        if when else ""))
-    for row in (tripwires.get("falsifiers") or []):
-        scored = []
-        if row.get("figure_name"):
-            scored.append("against <code>%s</code>"
-                          % _front_trim(row["figure_name"],
-                                        FRONT_MAX_SENTENCE))
-        if row.get("source"):
-            scored.append("from %s"
-                          % _front_trim(row["source"],
-                                        FRONT_MAX_SENTENCE))
-        if row.get("date"):
-            scored.append("on %s"
-                          % _front_trim(row["date"],
-                                        FRONT_MAX_SENTENCE))
-        items.append("<li><strong>Would prove this rating wrong:</strong> %s%s%s</li>"
-                     % (_constituent_tag(row),
-                        _front_trim(row.get("statement", ""),
-                                    FRONT_MAX_SENTENCE),
-                        (" Scored %s." % " ".join(scored)) if scored else ""))
-    if items:
-        shown = _front_rows(page, items,
-                            "things that would change this rating")
-        page.add('<div class="card"><ul>%s</ul></div>' % "".join(shown))
-    elif not flip:
-        page.add('<div class="card">The verdict names nothing that would change this '
-                 "rating.</div>")
+    if not triggers and not falsifiers:
+        page.add('<div class="card">The verdict names nothing that would change this rating.</div>')
+        return
+    rows = []
+    for trigger in triggers:
+        kind = ("Reopen the case (price)" if trigger.get("kind") == "price"
+                else "Reopen the case (event)")
+        rows.append('<tr><td><span class="tag">%s</span> %s%s</td>'
+                    '<td class="nowrap">%s</td><td>&mdash;</td></tr>'
+                    % (esc(kind), _constituent_tag(trigger),
+                       esc(trigger.get("detail", "")),
+                       _trigger_when(trigger) or "&mdash;"))
+    for row in falsifiers:
+        scored = row.get("figure_name") or ""
+        source = row.get("source") or ""
+        scored_cell = ((("<code>%s</code>" % esc(scored)) if scored else "")
+                       + ((" from %s" % esc(source)) if source else "")) or "&mdash;"
+        rows.append('<tr><td><span class="tag">Prove the view wrong</span> %s%s</td>'
+                    '<td class="nowrap">%s</td><td>%s</td></tr>'
+                    % (_constituent_tag(row), esc(row.get("statement", "")),
+                       esc(format_date(row.get("date", ""))) or "&mdash;", scored_cell))
+    page.add('<table><tr><th>what would change the rating</th>'
+             '<th class="nowrap">level or date</th>'
+             "<th>the figure it is scored against</th></tr>%s</table>" % "".join(rows))
 
 
 def _front_cross_examination(page, run):
@@ -1139,29 +1900,442 @@ def _front_cross_examination(page, run):
     page.add('<div class="muted small">One reviewer read all five advisors without knowing who '
              "wrote what, and summarised where they parted company.</div>")
     page.add('<div class="card prominent">%s</div>'
-             % markdown(reviewer.get("synopsis") or "not recorded", 4))
+             % markdown(_display_prose(reviewer, "synopsis", "reviewer synopsis", page), 4))
 
 
-def _front_section(page, run):
-    """The whole decision, on the opening pages, in the ruled order (AB13.5)."""
-    page.section("decision", "The decision")
-    _warnings_band(page, run)
-    _front_rating(page, run["verdict"])
-    _front_key_numbers(page, run["verdict"])
-    _front_basis(page, run)
-    _front_downside(page, run)
-    _front_calendar(page, run)
+# --- 1c. What the outside auditor asked for before the council sat (owner ruling AC2) ----------
+# A second model, outside this council's own family, read the evidence BEFORE any seat was paid
+# and said what it thought was missing, wrong or misread. Every point it raised was answered on
+# the record before the council could sit. The reader meets that here; the whole of it, with the
+# auditor's own paragraph in its own words, is in the appendix.
+
+EVIDENCE_UNCHECKED_SENTENCE = "The outside auditor did not check the evidence."
+
+_AUDIT_KIND_WORDS = {
+    "missing_decisive_fact": "a fact the case turns on, missing",
+    "suspect_figure": "a figure that looks wrong",
+    "framing_error": "the business read wrongly",
+    "missing_checklist_row": "a requirement the checklist did not carry",
+    "source_doubt": "the source says something else",
+}
+
+
+def _evidence_audit(run):
+    """The outside auditor's block out of the frozen pack, or {}."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    return capture.get("evidence_challenge") or {}
+
+
+def _named_ids(ids):
+    """The fact ids that are actually ids. Same rule as _named, one
+    container in (audit round 2, r2-2)."""
+    return [str(item).strip() for item in ids or [] if str(item).strip()]
+
+
+def _named(item, field):
+    """What the auditor actually named in one field, or "". A value made
+    of blanks is not a page, a figure or a place to look, and the answer
+    schema permits one (audit round 2, r2-2): every read of these fields
+    asks this, so none of them can be talked into printing an emptiness
+    as a thing that was named."""
+    return str(item.get(field) or "").strip()
+
+
+def _conceded_gap_ids(capture):
+    """The auditor's points the capture answered by conceding a gap. The section names them
+    and sends the reader to the audit above, rather than reprinting what it says: reprinting
+    put a model's prose in the page's own voice and showed one absence as two for a pack that
+    also wrote the ordinary row (audit round 5 r5-3, audit round 6 r6-2)."""
+    block = capture.get("evidence_challenge") or {}
+    if block.get("status") != "success":
+        return []
+    return [str(finding_id)
+            for finding_id, entry in sorted((block.get("resolutions") or {}).items())
+            if (entry or {}).get("disposition") == "gap_declared"]
+
+
+def _audit_kind_words(finding):
+    # A `source_doubt` ASSERTS that the auditor read a published page and
+    # that the page prints something else. Where it named no page, the
+    # owner is not told a source says otherwise - nothing on the record
+    # says any source was read (audit round 1, r1-6).
+    if finding.get("kind") == "source_doubt" and not _named(finding,
+                                                            "source_url"):
+        return "a doubt about a source, with no page named"
+    return _AUDIT_KIND_WORDS.get(finding.get("kind"),
+                                 str(finding.get("kind") or ""))
+
+
+def _audit_answer_words(resolution):
+    """What the capture session did about one point, for a reader. Ready HTML: every dynamic
+    part is escaped here, as every other card on this page escapes its own, and printed in full."""
+    render = lambda text: esc(str(text))
+    if not resolution or not resolution.get("disposition"):
+        return "not answered"
+    disposition = resolution["disposition"]
+    if disposition == "captured":
+        named = ", ".join(_named_ids(resolution.get("fact_ids")))
+        return ("gathered, and it is in the evidence below (%s)"
+                % render(named or "not named"))
+    if disposition == "gap_declared":
+        return ("could not be gathered; the gap is declared and it weakens %s &mdash; %s"
+                % (render(_named(resolution, "weakened_test")
+                          or "no named test"),
+                   render(_named(resolution, "reason") or "no reason given")))
+    return ("set aside by the session that gathered the evidence, with reasons: %s"
+            % render(_named(resolution, "reason") or ""))
+
+
+def _post_audit_changes(run):
+    """What the capture changed after the outside auditor read it (owner ruling AC13.2), as the
+    recording listed it."""
+    return _evidence_audit(run).get("post_audit_changes") or []
+
+
+# The three headline pairs are read from the evidence gate rather than copied here: the frame,
+# the case file and this page must name one list, never two (audit finding r1-5).
+_HEADLINE_IDS = frozenset(fact_id for pair in gate.HEADLINE_PAIRS for fact_id in pair)
+
+
+def _decisive_ids(run):
+    """Every fact or passage id a business frame says this question turns on."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    ids = set()
+    for frame in (capture.get("business_frame") or {}).values():
+        for row in (frame or {}).get("decisive_metrics") or []:
+            for entry_id in row.get("answered_by") or []:
+                ids.add(str(entry_id))
+    return ids
+
+
+def _changes_that_decide(run):
+    """The listed changes the DECISION turns on: a decisive metric's own answer, or one of the
+    three headline pairs - a member of an expression wearing its own suffix included."""
+    decisive = _decisive_ids(run)
+    hits = []
+    for change in _post_audit_changes(run):
+        entry_id = str(change.get("id"))
+        base = entry_id.rpartition("__")[0] or entry_id
+        if entry_id in decisive or base in _HEADLINE_IDS:
+            hits.append(change)
+    return hits
+
+
+def _front_post_audit_changes(page, run):
+    """What moved after the audit, on the front (owner ruling AC13.2).
+
+    Open - and a CONSTANT size, whatever moved - when a change touches a number the decision
+    turns on: a decisive metric, or one of the three headline pairs. Otherwise one folded line
+    pointing at the appendix, which lists every change with what the auditor read and what the
+    council sat on."""
+    changes = _post_audit_changes(run)
+    if not changes or _evidence_audit(run).get("status") != "success":
+        return
+    decisive = _changes_that_decide(run)
+    if not decisive:
+        mark = page.mark()
+        page.add('<div class="muted small">Each one, with what the auditor read and what the '
+                 "council sat on, is under &ldquo;The outside auditor&#x27;s objections&rdquo; "
+                 "below.</div>")
+        page.collapse("%d figure%s changed after the outside auditor read the evidence &mdash; "
+                      "none of them a number this decision turns on"
+                      % (len(changes), "" if len(changes) == 1 else "s"), mark)
+        return
+    # Deliberately terse, and open whatever moved: a number the decision turns on that the
+    # outside auditor never read is a fact the reader must not have to click for.
+    page.add('<div class="card alarm"><span class="shout">%d figure%s changed after the outside '
+             "auditor read the evidence, %d of them decisive.</span>"
+             '<div class="small">Listed under the outside auditor&#x27;s objections.</div></div>'
+             % (len(changes), "" if len(changes) == 1 else "s", len(decisive)))
+
+
+def _front_evidence_audit(page, run):
+    """The audit of the evidence, on the front.
+
+    The front is at most two rendered pages (AB13.5) and the appendix holds the whole of this
+    section, so what belongs HERE is only what a reader must not have to click for: that the
+    audit did not happen at all, or that the auditor called something BLOCKING and the council
+    sat anyway. Everything else is one folded line pointing at the appendix. A front that
+    reprinted every finding would break the ruled budget on any long answer, which is the
+    defect ANCHORLESS-C c1-4 already cost this page once."""
+    block = _evidence_audit(run)
+    if block.get("status") != "success":
+        page.add('<div class="card alarm"><span class="shout">%s</span>'
+                 '<div class="small">Every figure below is one session&#x27;s work. No model '
+                 "from outside this council&#x27;s own family read it before the advisors "
+                 "argued.</div></div>" % esc(EVIDENCE_UNCHECKED_SENTENCE))
+        return
+    findings = block.get("findings") or []
+    blocking = [item for item in findings if item.get("severity") == "blocking"]
+    resolutions = block.get("resolutions") or {}
+    if not blocking:
+        mark = page.mark()
+        page.add('<div class="muted small">Every point is set out in full, with the '
+                 "auditor&#x27;s own reading of the evidence, under &ldquo;The outside "
+                 "auditor&#x27;s objections&rdquo; below.</div>")
+        page.collapse("An outside auditor read this evidence before the council sat and raised "
+                      "%d point%s, none of them blocking &mdash; all answered on the record"
+                      % (len(findings), "" if len(findings) == 1 else "s"), mark)
+        _front_post_audit_changes(page, run)
+        return
+    # The card is a CONSTANT size, whatever the auditor wrote. The front is at most two pages
+    # and a long-writing chairman already fills them; a front that reprinted three blocking
+    # findings and their answers would break the ruled budget on exactly the run where the
+    # reader most needs the rest of the page. The fact that must not be foldable is that the
+    # council sat over an unanswered objection - and that fits in a sentence.
+    page.add('<div class="card alarm"><span class="shout">The outside auditor called %d point%s '
+             "blocking before the council sat.</span>"
+             '<div class="small">Each one, and what the record answered, is under &ldquo;The '
+             "outside auditor&#x27;s objections&rdquo; below.</div></div>"
+             % (len(blocking), "" if len(blocking) == 1 else "s"))
+    _front_post_audit_changes(page, run)
+
+
+# --- 1d. Who reviewed the evidence, and what the sitting cost in time (owner ruling AC3) -------
+# The mode is chosen once, at the very start of a sitting, and the page says which way it went
+# either way: a reader must never have to wonder whether a person looked at the evidence before
+# five advisors argued over it. The capture stage's own minutes and tokens are printed BESIDE
+# the sitting's wall clock and never inside it - the 1.5-hour budget is the council's own time,
+# and folding the gathering into it would either break the budget or hide the gathering.
+
+REVIEWED_SENTENCE = "Reviewed by %s before the council sat."
+AUTO_MODE_SENTENCE = "Auto-mode: no human reviewed the evidence before the council sat."
+# The budget this sitting is measured against where its own invocation names none. Pinned equal
+# to host.DEFAULT_MINUTES_CAP by the report suite: this module reads a published package and no
+# engine code at all, and two caps free to drift apart is one budget nobody can trust.
+DEFAULT_MINUTES_CAP = 90
+# Deliberately terse: the muted line directly beneath it prints the minutes, and the front is
+# a fixed-size container (AB13.5, two rendered pages). MEASURED - the longest front these
+# fixtures can produce is 7,874 visible characters against the 8,000-character proxy, and the
+# first draft of this sentence put it at 8,009.
+BUDGET_MISSED_SENTENCE = "This sitting missed its %s-minute budget."
+
+
+def _evidence_review(run):
+    """The evidence stage's own provenance out of the published verdict, or {} for a run
+    published before ruling AC3 existed."""
+    return (run["verdict"].get("provenance") or {}).get("evidence") or {}
+
+
+def _stamp(text):
+    """One recorded moment, or None. A stamp this page cannot read is a stamp it does not
+    print: the alternative is a wall clock computed from a guess."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        moment = datetime.datetime.fromisoformat(text.strip())
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=datetime.timezone.utc)
+    return moment.astimezone(datetime.timezone.utc)
+
+
+REPORT_RENDERED_EVENT = "report_rendered"
+
+
+def first_render_moment(run_dir):
+    """When this run's report was FIRST rendered, out of the run's own record, or None.
+
+    Spec section U3.3 measures the 1.5-hour budget "to the rendered report", so the finish line
+    is the rendering (register item P-U3-5) - and a page that read the clock on the wall printed
+    a different number every time it was rendered, which is no archive at all. So the first
+    rendering of a run RECORDS the moment, as one append-only row, and every later rendering of
+    that run prints what the first one recorded. Two renderings minutes apart are then byte for
+    byte the same page (architect's mechanism ruling, 2026-09-09).
+
+    READ ONLY. Writing the row here recorded a rendering that never produced a page: a render
+    whose output write failed left the row behind, and the next successful render was timed to
+    the failed attempt (audit round 1, r1-6). `commit_render_moment` writes it, after the page
+    is on disk.
+
+    A directory carrying no run record is not a sitting this council ran - the report fixtures
+    are hand-built - so it can carry no moment, and the page then says nothing about the clock
+    rather than inventing a first rendering for it."""
+    if not os.path.isfile(runrecord.record_path(run_dir)):
+        return None
+    for event in runrecord.read_events(run_dir):
+        if event.get("event") == REPORT_RENDERED_EVENT:
+            # The moment the page was BUILT, which the row carries itself - the same shape
+            # `evidence_approved` uses for the go. `ts` is when the row was appended, a moment
+            # later, and stands for a row written by an older renderer.
+            return _stamp(event.get("at") or event.get("ts"))
+    return None
+
+
+def commit_render_moment(run_dir, moment):
+    """Record that this run's report has now been rendered, at `moment`.
+
+    Called by the command that writes the report, between staging the page and making it
+    visible: the row says a report exists, so it must not exist before one does (audit round 1,
+    r1-6) and the report must not exist without it (round 2, r2-1). The three guards below are
+    the "nothing to do" cases - no moment, a moment already recorded, a directory that is not a
+    run. A record that cannot be WRITTEN is not one of them: it used to be swallowed here, and
+    a full disk then published a page nothing had timed, which the next rendering re-timed
+    silently (round 3, r3-1). The failure now reaches the caller, which publishes nothing."""
+    if moment is None or first_render_moment(run_dir) is not None:
+        return
+    if not os.path.isfile(runrecord.record_path(run_dir)):
+        return
+    runrecord.append_event(run_dir, REPORT_RENDERED_EVENT,
+                           {"at": moment.strftime("%Y-%m-%dT%H:%M:%SZ")})
+
+
+def _wall_clock_minutes(run, now):
+    """The sitting's own wall clock: from the go - the approval, or the run itself in
+    auto-mode - to the FIRST rendering of the report, as that run's record carries it.
+
+    Spec section U3.3 measures the 1.5-hour budget "to the rendered report", and the read-back
+    and the rendering are the sitting's own last work: a clock that stopped at publication
+    reported a 95-minute sitting as 89 (register item P-U3-5). `now` is the recorded moment of
+    the first rendering, read once per page by the caller, so the number is one moment for the
+    whole page and a reprint months later is the same page."""
+    provenance = run["verdict"].get("provenance") or {}
+    review = _evidence_review(run)
+    timestamps = provenance.get("timestamps") or {}
+    started = _stamp(review.get("clock_started") or timestamps.get("run_started"))
+    if started is None or now is None:
+        return None
+    # Never below zero. The host tolerates a go stamped up to ten minutes ahead of its own
+    # clock, because the owner captures on one machine and sits on the other - and a page
+    # rendered inside that allowance printed "The council sat -9 minutes" to him (audit round
+    # 1, r1-5). A sitting cannot have run less than no time.
+    return max(0.0, (now - started).total_seconds() / 60.0)
+
+
+def _minutes_cap(run):
+    """The budget in force for this sitting: the whole number its own invocation named, or the
+    ruled default where it named none - a run published before the config existed.
+
+    ANY whole number the host accepted is honoured, zero included. The host measures the run
+    against exactly the number in its invocation and writes a budget-overrun event the moment
+    it is passed; a page that quietly substituted its own would report a miss the record knew
+    about and the reader did not (audit round 1, r1-2). Nothing else is a cap: a run published
+    before the config existed carries none, and the default stands for it."""
+    config = (run.get("invocation") or {}).get("config") or {}
+    cap = config.get("minutes_cap")
+    if isinstance(cap, bool) or not isinstance(cap, int):
+        return DEFAULT_MINUTES_CAP
+    return cap
+
+
+def _front_evidence_review(page, run, now):
+    """Who reviewed the evidence, and whether the sitting missed its budget, on the executive
+    summary (owner ruling AC3; AC16 moved the clocks off it). The reviewer's name is ruled onto
+    the front - a CIO wants to know a person looked at the evidence - and the budget-missed alarm
+    is a warning that stays at the top, never folded. The minute and token counts themselves sit
+    under 'About this sitting' below (audit C4 tier 5)."""
+    review = _evidence_review(run)
+    if review.get("mode") == "reviewed" and review.get("approved_by"):
+        page.add('<div class="card">%s</div>'
+                 % esc(REVIEWED_SENTENCE % review["approved_by"]))
+    else:
+        page.add('<div class="card alarm"><span class="shout">%s</span></div>'
+                 % esc(AUTO_MODE_SENTENCE))
+    minutes = _wall_clock_minutes(run, now)
+    cap = _minutes_cap(run)
+    # The budget is measured to the same finish line the page prints, so the page can say
+    # itself when the sitting missed it. This is a warning: it stays here, never folded. The
+    # host's own budget event is measured at publication and is not touched: two clocks, both
+    # named, neither silently redefined.
+    if minutes is not None and minutes > cap:
+        page.add('<div class="card alarm"><span class="shout">%s</span></div>'
+                 % esc(BUDGET_MISSED_SENTENCE % format_number(cap)))
+
+
+def _sitting_clocks(page, run, now):
+    """The sitting's own wall clock and the capture stage's, side by side, for the run-stamps
+    tier (owner ruling AC3; AC16 moved them off the executive summary). The council's 1.5-hour
+    clock and the gathering time are printed together and never added into one number."""
+    review = _evidence_review(run)
+    minutes = _wall_clock_minutes(run, now)
+    capture = review.get("capture") or {}
+    bits = []
+    if minutes is not None:
+        bits.append("The council sat %s minutes, from the go to this page being rendered."
+                    % esc(format_number(minutes, "minutes")))
+    if capture.get("minutes") is not None or capture.get("tokens") is not None:
+        # Owner ruling AC15 (P5(b)): where the capture-stage figures are an
+        # estimate, the page says so beside them - an estimate never reads
+        # as a counted figure.
+        estimated = " (estimated)" if capture.get("estimated") else ""
+        bits.append("Gathering it took another %s minutes and %s tokens%s, counted beside that "
+                    "clock and never inside it."
+                    % (esc(format_number(capture["minutes"], "minutes"))
+                       if capture.get("minutes") is not None
+                       else "an unrecorded number of",
+                       esc(format_number(capture["tokens"], "tokens"))
+                       if capture.get("tokens") is not None
+                       else "an unrecorded number of",
+                       estimated))
+    if bits:
+        page.add('<div class="muted small">%s</div>' % " ".join(bits))
+
+
+def _front_archetype(page, run):
+    """The business archetype and the rating measure it calls for, beside
+    the rating (owner ruling AC15, P2). A single name only - a basket, a
+    theme, a fund and an asset with no earnings carry none."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    subject = capture.get("subject") or {}
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if not frame or not frame.get("archetype"):
+        return
+    archetype = frame["archetype"]
+    measure = _capture_measure(capture)
+    rated = ((" &mdash; rated on %s"
+              % esc(MEASURE_WORDS.get(measure, measure))) if measure else "")
+    page.add('<div class="card"><span class="lead">What kind of business, '
+             "and how it is rated</span>%s%s</div>"
+             % (esc(ARCHETYPE_WORDS.get(archetype, archetype)), rated))
+
+
+def _front_theme_thesis(page, verdict):
+    """A theme's own thesis, frozen before the council sat, as a card in the executive summary
+    directly under the key-data strip (architect ruling closing P-U6b-9): the idea the rating
+    judged is decision content for a theme, not an appendix. Moved WHOLE from the constituents
+    section - the card's HTML is unchanged. Nothing for a subject with no theme block."""
+    theme = subjects.theme_block(verdict.get("subject") or {})
+    if not theme:
+        return
+    page.add('<div class="card prominent"><span class="lead">The '
+             "theme&#x27;s thesis, frozen before the council sat"
+             '</span><div class="verbatim">%s</div></div>'
+             % esc(theme.get("thesis", "")))
+
+
+def _front_section(page, run, now):
+    """The executive summary (owner ruling AC16(3)): the first two to three minutes of reading.
+    The decisive numbers, the thesis, the price read, the chairman's rationale IN FULL and never
+    cut, one table of everything that would change the rating, where the advisors parted, and the
+    audit state. The chairman's synthesis follows this directly (AC16(5)); the decision in detail,
+    the frozen evidence and the appendices come below it in turn - a reader dives deeper the
+    further down the page they scroll."""
+    # The warnings band, the rating box and the key-data strip now sit in the masthead above
+    # (owner ruling AC16(3),(9); design audit C4 tier 0 / C5), assembled by _head_block. This
+    # tier opens with the business archetype and the thesis; nothing here is folded.
+    page.section("decision", "Executive summary")
+    _front_archetype(page, run)
+    _front_theme_thesis(page, run["verdict"])
+    _front_thesis(page, run["verdict"])
+    _front_price_read(page, run)
+    _front_rationale(page, run["verdict"])
     _front_tripwires(page, run)
-    _front_what_changes(page, run)
     _front_cross_examination(page, run)
+    _front_evidence_audit(page, run)
+    _front_evidence_review(page, run, now)
 
 
 # --- 2. The owner's question, and the frame ----------------------------------------------------
 
 def _question_section(page, run):
+    """The owner's question and the frame, a folded appendix (audit C4 tier 5). The half the
+    council answered is on the front already, in one phrase; the verbatim question and the routing
+    to the portfolio system are the record, behind one line."""
     verdict = run["verdict"]
     frame = verdict.get("frame") or {}
     page.section("question", "The owner's question")
+    mark = page.mark()
     page.add('<div class="card"><span class="lead">His question, word for word</span>'
              '<div class="verbatim">%s</div></div>' % esc(verdict.get("question_verbatim", "")))
     page.add('<div class="card"><span class="lead">The half the council answered</span>'
@@ -1175,6 +2349,8 @@ def _question_section(page, run):
                  "It went to the portfolio system exactly as he wrote it:"
                  '<div class="verbatim" style="margin-top:8px">%s</div></div>'
                  % esc(frame["for_atlas"]))
+    page.collapse("The owner&#x27;s question as he asked it, and the half the council answered",
+                  mark)
 
 
 # --- 3. The verdict block ----------------------------------------------------------------------
@@ -1187,10 +2363,11 @@ def _mispricing_sentence(verdict):
     if read == "no_view" or not read:
         sentence = "The council takes no view on the price yet."
     else:
-        sentence = ("The council reads the price as <strong>%s</strong>%s."
-                    % (esc(MISPRICING_WORDS.get(read, read)),
-                       (" &mdash; %s" % esc(mispricing["magnitude"]))
-                       if mispricing.get("magnitude") else ""))
+        sentence = _end_sentence(
+            "The council reads the price as <strong>%s</strong>%s"
+            % (esc(MISPRICING_WORDS.get(read, read)),
+               (" &mdash; %s" % esc(mispricing["magnitude"]))
+               if mispricing.get("magnitude") else ""))
     arithmetic = mispricing.get("arithmetic")
     if arithmetic:
         # The arithmetic-in-words sentence is the chairman's own; it is quoted, never reworked.
@@ -1198,23 +2375,9 @@ def _mispricing_sentence(verdict):
     return sentence
 
 
-def _verdict_section(page, run):
-    verdict = run["verdict"]
-    page.section("verdict", "The verdict")
-    # The decision front above already carries this headline, so the block itself opens folded.
-    mark = page.mark()
-    rating = verdict.get("rating", "")
-    page.add('<div class="badge">%s</div>' % esc(RATING_WORDS.get(rating, rating)))
-    # What kind of subject earned the rating, in plain words - one
-    # rating for the subject as a whole, whatever its kind.
-    page.add('<div class="muted small">The subject is %s.</div>'
-             % esc(_kind_words(verdict.get("subject") or {})))
-    page.add('<div class="card"><span class="lead">Why this rating, in the chairman&#x27;s own '
-             "words</span>%s</div>" % markdown(verdict.get("conviction_rationale") or "not recorded"))
-    page.add('<div class="card"><span class="lead">The mispricing read</span>%s</div>'
-             % _mispricing_sentence(verdict))
-    page.collapse("The verdict block in full &mdash; the rating, the chairman&#x27;s reasoning "
-                  "and the price read", mark)
+# The verdict fold is gone (owner ruling AC16(3), audit B2/B4): the rating, the chairman's
+# rationale in full and the price read now sit once in the executive summary above, so a separate
+# folded copy in the appendix would be a fourth restatement of the same words.
 
 
 # --- 3b. The named expression: constituents, or the one vehicle --------------------------------
@@ -1227,9 +2390,7 @@ def _member_fact_cell(facts_by_id, concept, ticker):
     fact = facts_by_id.get("%s__%s" % (concept, subjects.slug(ticker)))
     if not fact:
         return "&mdash;"
-    unit = _unit_words(fact.get("unit"))
-    cell = esc(format_number(fact.get("value"), fact.get("unit")))
-    return cell + ((" " + esc(unit)) if unit else "")
+    return esc(format_number(fact.get("value"), fact.get("unit")))
 
 
 def _bound_words(tag):
@@ -1284,29 +2445,24 @@ def _proportions_card(page, proportions):
 def _constituents_section(page, run):
     """The subject's named expression (THEMES-BASKETS-SPEC section 7):
     the constituent table for a basket or a theme's named universe, or
-    the one implementation vehicle for a vehicle-mode theme. A subject
-    carrying a theme block states the frozen thesis first, whatever the
-    expression mode - a thematic vehicle names no expression fields at
-    all, and its rating must still show the idea it judged (audit
-    finding THEMES-C r3-1). Subjects with no theme and no expression
-    render no section."""
+    the one implementation vehicle for a vehicle-mode theme, on the
+    decision-in-detail tier (architect ruling closing P-U6b-9). The
+    theme's frozen thesis - the idea the rating judged, which must show
+    even for a thematic vehicle that names no expression fields (audit
+    finding THEMES-C r3-1) - now leads the executive summary instead
+    (_front_theme_thesis). A subject with no expression renders no
+    heading here."""
     verdict = run["verdict"]
     subject = verdict.get("subject") or {}
-    theme = subjects.theme_block(subject)
-    if theme:
-        # The idea the rating judges, exactly as it was frozen before
-        # the council sat - the chairman's prose need not restate it,
-        # so the page does. Capture free text, escaped like all of it.
-        page.add('<div class="card prominent"><span class="lead">The '
-                 "theme&#x27;s thesis, frozen before the council sat"
-                 '</span><div class="verbatim">%s</div></div>'
-                 % esc(theme.get("thesis", "")))
+    # The theme's frozen thesis moved to the executive summary, under the key-data strip
+    # (architect ruling closing P-U6b-9, _front_theme_thesis); it is what the decision rests on
+    # for a theme, not an appendix.
     constituents = subject.get("constituents") or []
     vehicle = subject.get("vehicle")
     if not constituents and not vehicle:
         return
     if constituents:
-        page.section("constituents", "The constituents")
+        page.add("<h3>The constituents</h3>")
         page.add('<div class="muted small">The named instruments the one '
                  "idea is judged across - one rating for the whole, never "
                  "one per name. Prices and market values are frozen pack "
@@ -1348,7 +2504,7 @@ def _constituents_section(page, run):
                  "<th>Load-bearing metric</th><th>Note</th></tr>%s</table>"
                  % "".join(rows))
     else:
-        page.section("constituents", "The implementation vehicle")
+        page.add("<h3>The implementation vehicle</h3>")
         listing = vehicle.get("listing")
         currency = vehicle.get("currency")
         page.add('<div class="card"><span class="lead">%s</span>'
@@ -1362,23 +2518,12 @@ def _constituents_section(page, run):
         _proportions_card(page, proportions)
 
 
-# --- 4. Warnings, loud -------------------------------------------------------------------------
-
-def _warnings_section(page, run):
-    """The warnings themselves are printed ONCE, at the very top of the report, by the decision
-    front. This section keeps its place in the running order and points at them; printing the
-    band twice would teach the reader to scroll past it."""
-    warnings = run["verdict"].get("warnings") or []
-    page.section("warnings", "Warnings")
-    if not warnings:
-        page.add('<div class="card">This verdict carries no warnings.</div>')
-        return
-    page.add('<div class="card">Every warning on this verdict is printed at the top of this '
-             "report, above everything else, so that it cannot be missed. "
-             '<a href="#decision">Go back to the decision</a>.</div>')
-
-
-# --- 5. Tripwires ------------------------------------------------------------------------------
+# --- The theme's own falsifiers (moved to tier 3, the decision in detail) ----------------------
+# The warnings appendix section is gone (audit B5/B6): the warnings are loud at the top of the
+# report and an appendix section that only pointed back to them was process noise. The full
+# tripwires appendix section is gone too (owner ruling AC16, architect ruling): the one full
+# tripwire table now lives once, in the executive summary. What that table does NOT show - a
+# theme's declared condition, prior period and metric identity - is kept here, on tier 3.
 
 def _theme_falsifier_block(page, rows, subject):
     """The theme's own falsifiers, first among the tripwires (the
@@ -1415,16 +2560,14 @@ def _theme_falsifier_block(page, rows, subject):
         parts.append("Scored against <code>%s</code> from %s, on %s."
                      % (esc(row.get("figure_name", "")),
                         esc(row.get("source", "")),
-                        esc(row.get("date", ""))))
+                        esc(format_date(row.get("date", "")))))
         if row.get("prior_period_value") is not None:
-            unit = _unit_words(row.get("prior_period_unit"))
             parts.append('<div style="margin-top:6px">Prior period: '
-                         "%s%s, as of %s.</div>"
+                         "%s, as of %s.</div>"
                          % (esc(format_number(
                                 row.get("prior_period_value"),
                                 row.get("prior_period_unit"))),
-                            (" " + esc(unit)) if unit else "",
-                            esc(row.get("prior_period_as_of", ""))))
+                            esc(format_date(row.get("prior_period_as_of", "")))))
         parts.append('<div class="muted small" style="margin-top:6px">'
                      "Metric identity assumed: %s</div>"
                      % esc(row.get("metric_identity_assumed")
@@ -1432,69 +2575,54 @@ def _theme_falsifier_block(page, rows, subject):
         page.add('<div class="card prominent">%s</div>' % "".join(parts))
 
 
-def _tripwires_section(page, run):
-    tripwires = run["verdict"].get("tripwires") or {}
-    page.section("tripwires", "Tripwires")
-    # The decision front above already carries the tripwires, so the full record opens folded.
-    mark = page.mark()
-    page.add('<div class="muted small">The levels and events that change this verdict, each '
-             "scored against a named figure from a named source.</div>")
-    falsifiers = tripwires.get("falsifiers") or []
-    theme_rows = [f for f in falsifiers
-                  if f.get("theme_falsifier_id") is not None]
-    plain_rows = [f for f in falsifiers
-                  if f.get("theme_falsifier_id") is None]
-    if theme_rows:
-        _theme_falsifier_block(page, theme_rows,
-                               run["verdict"].get("subject") or {})
-    levels = tripwires.get("invalidation_levels") or []
-    if levels:
-        page.add("<h3>Invalidation levels</h3>")
-        rows = "".join('<tr><td class="nowrap">%s %s</td><td>%s%s</td></tr>'
-                       % (esc(format_number(level.get("level"), level.get("unit"))),
-                          esc(_unit_words(level.get("unit")) or ""),
-                          _constituent_tag(level), esc(level.get("meaning", "")))
-                       for level in levels)
-        page.add('<table><tr><th class="nowrap">level</th><th>what it means if hit</th></tr>'
-                 "%s</table>" % rows)
-    triggers = tripwires.get("reopening_triggers") or []
-    if triggers:
-        page.add("<h3>Reopening triggers</h3>")
-        rows = []
-        for trigger in triggers:
-            kind = "Price" if trigger.get("kind") == "price" else "Event"
-            at = ""
-            if trigger.get("level"):
-                at = "%s %s" % (esc(format_number(trigger["level"], trigger.get("unit"))),
-                                esc(_unit_words(trigger.get("unit")) or ""))
-            elif trigger.get("date"):
-                at = esc(trigger["date"])
-            rows.append('<tr><td class="nowrap"><span class="tag">%s</span></td><td>%s%s</td>'
-                        '<td class="nowrap">%s</td></tr>'
-                        % (esc(kind), _constituent_tag(trigger),
-                           esc(trigger.get("detail", "")), at or "&mdash;"))
-        page.add('<table><tr><th class="nowrap">kind</th><th>what reopens the case</th>'
-                 '<th class="nowrap">at</th></tr>%s</table>' % "".join(rows))
-    if plain_rows:
-        page.add("<h3>Falsifiers</h3>")
-        rows = "".join('<tr><td>%s%s</td><td class="nowrap"><code>%s</code></td><td>%s</td>'
-                       '<td class="nowrap">%s</td></tr>'
-                       % (_constituent_tag(f), esc(f.get("statement", "")),
-                          esc(f.get("figure_name", "")),
-                          esc(f.get("source", "")), esc(f.get("date", "")))
-                       for f in plain_rows)
-        page.add('<table><tr><th>what would prove the view wrong</th>'
-                 '<th class="nowrap">the figure it is scored against</th><th>source</th>'
-                 '<th class="nowrap">scored on</th></tr>%s</table>' % rows)
-    page.collapse("Every tripwire in full &mdash; the levels, the triggers and the falsifiers, "
-                  "each with the figure and the source it is scored against", mark)
+def _theme_falsifiers(page, run):
+    """A theme or basket's own declared falsifiers, on tier 3, with the scoring detail the front's
+    one tripwire table does not carry: the declared condition, the prior period and the metric
+    identity assumed. Nothing for a subject with no theme falsifiers."""
+    falsifiers = (run["verdict"].get("tripwires") or {}).get("falsifiers") or []
+    theme_rows = [f for f in falsifiers if f.get("theme_falsifier_id") is not None]
+    if not theme_rows:
+        return
+    _theme_falsifier_block(page, theme_rows, run["verdict"].get("subject") or {})
 
 
-# --- 6. The challenge round, summarized --------------------------------------------------------
+# --- Tier 3: the decision in detail ------------------------------------------------------------
 
-def _challenge_section(page, run):
+def _detail_section(page, run):
+    """Tier 3, open (audit C4): the decision in detail. How the rating was earned (an anchorless
+    subject's scenario ladder and its arithmetic, or a context ladder beside an anchored read),
+    the downside ladder and invalidation levels, a theme's own falsifiers where it has them, the
+    dated events, the outside auditor's objections and the answers, and the challenge round. A
+    reader who wants more than the summary and the chairman's note reads on here; the frozen
+    evidence and the appendices are below. Every block is content that moved down whole - nothing
+    the council wrote is lost, and the anchorless ladder's arithmetic is unchanged.
+
+    The subject-shape blocks - the constituents (what the subject IS), the cycle a single name
+    depends on, and the scenario ladders in full - are decision content for their subject shape,
+    not appendices (architect ruling closing P-U6b-9): they render OPEN here, each under a
+    content-named h3, constituents first, the ladder detail beside the ladder content already on
+    this tier. They were open under the 'all folded' appendices divider before; now the divider's
+    statement is true."""
+    page.section("detail", "The decision in detail")
+    _constituents_section(page, run)
+    _cycle_section(page, run)
+    _detail_basis(page, run)
+    _front_downside(page, run)
+    _ladders_section(page, run)
+    _theme_falsifiers(page, run)
+    _detail_calendar(page, run)
+    _auditor_objections(page, run)
+    _challenge_card(page, run)
+
+
+# --- The challenge round, summarized (a card on tier 3) ----------------------------------------
+
+def _challenge_card(page, run):
+    """The challenge round summary card and the endorsement line, on the decision-in-detail tier
+    (audit C4 tier 3, C5): every finding with its disposition, ruled open, never folded. The
+    challenger's own words in full are a folded appendix below."""
     challenge = run["verdict"].get("challenge") or {}
-    page.section("challenge", "The challenge round")
+    page.add("<h3>The outside challenge round</h3>")
     status = challenge.get("status")
     if status == "success":
         page.add('<div class="card"><strong>The outside audit ran.</strong> A model from a '
@@ -1548,27 +2676,56 @@ def _challenge_section(page, run):
 
 # --- 7. The post-audit change appendix ---------------------------------------------------------
 
+def _change_sentence(change):
+    """One field the challenge changed, as a sentence for a reader (owner ruling AC16(8), audit
+    B3): what field moved and what happened to it, in plain words - not the raw JSON the diff used
+    to print open in the reader's way. The before/after text itself is behind a second fold."""
+    field = esc(change.get("field", ""))
+    label = change.get("label", "")
+    words = esc(CHANGE_LABEL_WORDS.get(label, label))
+    if label == "unendorsed_raise":
+        words = '<span class="alarmtag">%s</span>' % words
+    return "<li><code>%s</code> &mdash; %s.</li>" % (field, words)
+
+
 def _changes_section(page, run):
+    """What changed after the outside challenge, a folded appendix (owner ruling AC16(8), audit
+    C4 tier 5). The final document is compared field by field against the draft the challenger
+    read. Each changed field is one plain sentence; the exact before-and-after text of every field
+    is behind a SECOND fold - kept in full, so nothing the diff recorded is lost, but no longer
+    open JSON in the reader's way (audit B3)."""
     challenge = run["verdict"].get("challenge") or {}
     appendix = challenge.get("change_appendix") or []
-    page.section("changes", "What changed after the outside audit")
+    # A folded appendix, not in the navigation (the menu stays to the tiers and the main
+    # appendices, about nine entries): the challenge diff is a technical stamp reached by scrolling.
+    page.add('<h2 id="changes">What changed after the outside audit</h2>')
     if not appendix:
         page.add('<div class="card">Nothing changed after the outside audit.</div>')
         return
+    mark = page.mark()
     page.add('<div class="muted small">The final document is compared, field by field, against '
-             "the draft the challenger read. Every changed field is listed, before and after.</div>")
+             "the draft the challenger read. Each changed field is named below; the exact text "
+             "before and after is behind the second fold.</div>")
+    alarm = any(change.get("label") == "unendorsed_raise" for change in appendix)
+    page.add('<div class="card%s"><ul>%s</ul></div>'
+             % (" alarm" if alarm else "",
+                "".join(_change_sentence(change) for change in appendix)))
     rows = []
     for change in appendix:
-        label = change.get("label", "")
-        alarm = label == "unendorsed_raise"
+        row_alarm = change.get("label") == "unendorsed_raise"
         rows.append('<tr%s><td class="nowrap"><code>%s</code></td><td>%s</td><td>%s</td>'
                     '<td class="nowrap"><span class="tag%s">%s</span></td></tr>'
-                    % (' class="alarm"' if alarm else "", esc(change.get("field", "")),
+                    % (' class="alarm"' if row_alarm else "", esc(change.get("field", "")),
                        esc(change.get("before", "")), esc(change.get("after", "")),
-                       " alarmtag" if alarm else "",
-                       esc(CHANGE_LABEL_WORDS.get(label, label))))
-    page.add('<table><tr><th class="nowrap">what changed</th><th>before</th><th>after</th>'
-             '<th class="nowrap">what happened</th></tr>%s</table>' % "".join(rows))
+                       " alarmtag" if row_alarm else "",
+                       esc(CHANGE_LABEL_WORDS.get(change.get("label", ""),
+                                                  change.get("label", "")))))
+    page.add("<details><summary>The exact text before and after, field by field</summary>"
+             '<div class="body"><table><tr><th class="nowrap">what changed</th><th>before</th>'
+             "<th>after</th><th class=\"nowrap\">what happened</th></tr>%s</table></div></details>"
+             % "".join(rows))
+    page.collapse("%d field%s changed between the draft the challenger read and the final document"
+                  % (len(appendix), "" if len(appendix) == 1 else "s"), mark)
 
 
 # --- 8. The chairman's final synthesis ---------------------------------------------------------
@@ -1582,10 +2739,267 @@ def _synthesis_section(page, run):
         prose = (answers.get("chair_draft") or {}).get("synthesis_markdown", "")
         page.add('<div class="muted small">No post-challenge resolve is in the record, so this '
                  "is the chairman&#x27;s synthesis as drafted.</div>")
-    page.add('<div class="card">%s</div>' % markdown(prose or "not recorded"))
+    page.add('<div class="card">%s%s</div>'
+             % (markdown(reformat_prose(prose or "not recorded", "chairman synthesis",
+                                        page.number_subs)),
+                _prose_note(run, "chair_resolve_synthesis")
+                or _prose_note(run, "chair_draft_synthesis")))
 
 
 # --- 9. The evidence, folded; the market-shut sentence in plain sight ---------------------------
+
+def _audit_finding_card(finding, resolutions):
+    """One outside-auditor finding and the answer on the record, as a card. Every dynamic part is
+    escaped here, as every card on this page escapes its own, and printed in full."""
+    return ('<div class="card"><span class="lead">%s &mdash; %s</span>%s%s'
+            '<div class="small" style="margin-top:8px">The answer on the record: %s</div>'
+            "</div>"
+            % (esc(str(finding.get("severity") or "")),
+               esc(_audit_kind_words(finding)),
+               esc(str(finding.get("detail") or "")),
+               _audit_finding_extras(finding),
+               _audit_answer_words(resolutions.get(finding.get("id")))))
+
+
+def _auditor_objections(page, run):
+    """The outside auditor's objections and the answers, on the decision-in-detail tier (audit C4
+    tier 3). A model outside this council's family read the evidence before any seat was paid. Its
+    own paragraph and any BLOCKING finding with its answer stay open; the non-blocking points and
+    the list of figures that moved after it read fold behind one line each. A failed or absent
+    audit is a loud, open alarm - never folded."""
+    block = _evidence_audit(run)
+    page.add("<h3>The outside auditor&#x27;s objections, and the answers</h3>")
+    if block.get("status") != "success":
+        page.add('<div class="card alarm"><span class="shout">%s</span>'
+                 "<div class=\"small\">The council's rules require a model from outside its "
+                 "own family to read the evidence before any advisor is paid. On this run the "
+                 "call did not produce an answer (%s), and the sitting went on without one.%s</div>"
+                 "</div>"
+                 % (esc(EVIDENCE_UNCHECKED_SENTENCE),
+                    esc(str(block.get("failure_status") or "it was never made")),
+                    # What actually went wrong, in the bridge's own words. It can carry the
+                    # outside model's own text verbatim, so it is escaped here and reaches no
+                    # seat's prompt at all (audit round 5, r5-4).
+                    (" What went wrong: %s" % esc(_named(block, "failure_reason")))
+                    if _named(block, "failure_reason") else ""))
+        return
+    findings = block.get("findings") or []
+    resolutions = block.get("resolutions") or {}
+    page.add('<div class="muted small">Asked of <strong>%s</strong>, a model outside this '
+             "council&#x27;s own family, before any advisor was paid. It audits the evidence; "
+             "it never gathers it and it never writes it.</div>"
+             % esc(str(block.get("model") or "not recorded")))
+    overall = block.get("overall")
+    if overall:
+        page.add('<div class="card prominent"><span class="lead">The auditor&#x27;s reading of '
+                 "this evidence, in its own words</span>"
+                 '<div class="verbatim">%s</div></div>' % esc(str(overall)))
+    blocking = [f for f in findings if f.get("severity") == "blocking"]
+    nonblocking = [f for f in findings if f.get("severity") != "blocking"]
+    if not findings:
+        page.add('<div class="card">It raised nothing against this evidence.</div>')
+    # A blocking point the council sat over stays open; the reader must not click for it.
+    for finding in blocking:
+        page.add(_audit_finding_card(finding, resolutions))
+    # The points the auditor did not call blocking fold behind one line with their count.
+    if nonblocking:
+        mark = page.mark()
+        for finding in nonblocking:
+            page.add(_audit_finding_card(finding, resolutions))
+        page.collapse("%d non-blocking point%s the auditor raised, each with its answer on the "
+                      "record" % (len(nonblocking), "" if len(nonblocking) == 1 else "s"), mark)
+    _changes_after_the_audit(page, run)
+
+
+def _change_row(change, decisive):
+    """One listed change, for a reader: what it is, what the auditor read, what the council sat
+    on. Every dynamic part is escaped here, as every other card escapes its own."""
+    entry_id = esc(str(change.get("id") or ""))
+    word = change.get("change")
+    turns = (' <strong>&mdash; a number this decision turns on</strong>'
+             if change in decisive else "")
+    if word == "added":
+        said = _end_sentence("It was gathered after the audit and reads %s"
+                             % esc(str(change.get("new") or "")))
+    elif word == "removed":
+        said = _end_sentence("It was taken out after the audit; it read %s"
+                             % esc(str(change.get("old") or "")))
+    elif change.get("old") == change.get("new"):
+        said = _end_sentence(
+            "Its value stands at %s; what moved is its unit, its date or where "
+            "it came from" % esc(str(change.get("new") or "")))
+    else:
+        said = _end_sentence("The auditor read %s; the council sat on %s"
+                             % (esc(str(change.get("old") or "")),
+                                esc(str(change.get("new") or ""))))
+    return ("<li><strong>%s</strong>%s &mdash; %s</li>" % (entry_id, turns, said))
+
+
+def _changes_after_the_audit(page, run):
+    """Every figure that moved between the audit and the sitting (owner ruling AC13.2).
+
+    The capture MAY change what the auditor never asked about; the rule is that every such
+    change is on the record, in each seat's case file and here - so the reader can see which
+    numbers the outside model never read."""
+    changes = _post_audit_changes(run)
+    if not changes:
+        return
+    decisive = _changes_that_decide(run)
+    mark = page.mark()
+    page.add('<div class="card"><span class="lead">Changed after the outside auditor read the '
+             "evidence</span>"
+             '<div class="small">The council may gather more, correct a figure or drop one '
+             "after the audit; what it may not do is sit on evidence the record says was "
+             "audited when it was not. These %d did not reach the outside model.</div>"
+             "<ul>%s</ul></div>"
+             % (len(changes),
+                "".join(_change_row(change, decisive) for change in changes)))
+    # Folded behind one line with its count (audit C4 tier 3): the list of figures that moved
+    # after the auditor read is detail, and the front already shows whether any was decisive.
+    page.collapse("%d figure%s moved after the outside auditor read the evidence, and never "
+                  "reached it" % (len(changes), "" if len(changes) == 1 else "s"), mark)
+
+
+def _audit_finding_extras(finding):
+    """The parts of a finding only some kinds carry: which figures it is about, where a missing
+    one would be found, and - where the auditor read the source itself - the page and the figure
+    it printed."""
+    rows = []
+    named = ", ".join(_named_ids(finding.get("fact_ids")))
+    if named:
+        rows.append("The figures it is about: %s" % esc(named))
+    for field, words in (("where_it_likely_lives", "Where it would be found"),
+                         ("source_url", "Read at"),
+                         ("figure_at_source", "What that page printed")):
+        value = _named(finding, field)
+        if value:
+            rows.append("%s: %s" % (words, esc(value)))
+    if not rows:
+        return ""
+    return ('<div class="small" style="margin-top:8px">%s</div>'
+            % "<br>".join(rows))
+
+
+def _cycle_section(page, run):
+    """The cycle a single name depends on (owner ruling AC15, P4), on the
+    decision-in-detail tier (architect ruling closing P-U6b-9): the dated series carried as
+    EVIDENCE, or the declared gap. Nothing here is computed from them - the seats read them as
+    evidence."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    cycle = capture.get("cycle")
+    if not cycle:
+        return
+    page.add("<h3>The cycle this name depends on</h3>")
+    page.add('<div class="muted small">Evidence, not analysis: the pack '
+             "carries these dated series and the seats read them; there is "
+             "no computed indicator and no reading here.</div>")
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>'
+             % (esc(cycle.get("name", "")),
+                esc(cycle.get("why_it_matters", ""))))
+    gap = cycle.get("gap")
+    if gap:
+        page.add('<div class="card"><span class="lead">The dated series are '
+                 "a declared gap</span>%s</div>" % esc(gap.get("reason", "")))
+        return
+    for series in cycle.get("series") or []:
+        rows = "".join(
+            "<tr><td>%s</td><td>%s</td></tr>"
+            % (esc(point["date"]), esc(point["value"]))
+            for point in series["points"])
+        page.add('<h3>%s <span class="muted small">(%s, as of %s)</span>'
+                 "</h3>"
+                 % (esc(series["id"]), esc(series["unit"]),
+                    esc(series["as_of"])))
+        page.add("<table><tr><th>Date</th><th>Value</th></tr>%s</table>"
+                 % rows)
+        page.add('<div class="muted small">Source: %s. Re-fetch: %s</div>'
+                 % (esc(series["source"]),
+                    esc(series["refetch_url_or_source_line"])))
+
+
+def _decisive_fact_order(tier1, dependencies, envelope, frames):
+    """Order the dependency facts for the compact table (architect ruling before U6b(b) round 1).
+    Priority, duplicates removed: the facts the envelope's key numbers cite, then its sizing
+    inputs, then the first fact each decisive metric cites, then the rest in recorded order."""
+    by_id = {}
+    for fact in tier1:
+        fid = fact.get("id")
+        if fid in dependencies and fid not in by_id:
+            by_id[fid] = fact
+    ordered, seen = [], set()
+
+    def take(fid):
+        fid = str(fid)
+        if fid in by_id and fid not in seen:
+            seen.add(fid)
+            ordered.append(by_id[fid])
+
+    for number in envelope.get("key_numbers") or []:
+        take(number.get("pack_fact_id"))
+    for entry in envelope.get("sizing_inputs") or []:
+        for fid in entry.get("pack_fact_ids") or []:
+            take(fid)
+    for frame in frames.values():
+        for row in (frame or {}).get("decisive_metrics") or []:
+            # A metric's place goes to the FIRST id it cites that is a recorded tier-1
+            # dependency fact - not answered_by[0] blindly, which may be a passage and would
+            # leave the fact to fall into the counted fold (round 3 finding r3-3, P-U6b-11).
+            for fid in row.get("answered_by") or []:
+                if str(fid) in by_id:
+                    take(fid)
+                    break
+    for fact in tier1:
+        take(fact.get("id"))
+    return ordered
+
+
+def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames):
+    """The facts the verdict rests on, as a compact OPEN table (audit C4 tier 4): Fact, Value, As
+    of, Freshness, Source. At most COMPACT_EVIDENCE_MAX rows stay open (architect ruling before
+    U6b(b) round 1); every other dependency fact folds directly below under a counted summary,
+    above the full-pack fold. Nothing where the verdict marks no dependency at all."""
+    ordered = _decisive_fact_order(tier1, dependencies, envelope, frames)
+    if not ordered:
+        return
+    rows = []
+    for fact in ordered:
+        status = freshness.get(fact.get("id"))
+        if isinstance(status, dict):
+            status = status.get("status")
+        word = FRESHNESS_WORD.get(status, status or "not stated")
+        # A bound (ceiling/floor) fact must not read as a measurement here, where the owner meets
+        # it first, before the full-pack fold (round 1 finding r1-1) - the declaration and the
+        # named line render exactly as the full-pack table renders them below.
+        source_html = esc(fact.get("source", ""))
+        bound = _bound_words(fact.get("bound"))
+        if bound:
+            source_html += "<br>%s" % esc(bound)
+            tag = fact.get("bound") or {}
+            if tag.get("published_line"):
+                source_html += ("<br>The published line, as the capture names it: %s"
+                                % esc(" ".join(str(tag["published_line"]).split())))
+        rows.append('<tr><td><code>%s</code></td><td>%s</td>'
+                    '<td class="nowrap">%s</td><td class="nowrap">'
+                    '<span class="tag %s">%s</span></td><td>%s</td></tr>'
+                    % (esc(fact.get("id", "")),
+                       esc(format_number(fact.get("value"), fact.get("unit"))),
+                       esc(format_date(fact.get("as_of", ""))),
+                       esc(str(word).replace(" ", "-")), esc(word),
+                       source_html))
+    # The value column carries figures AND tier-2 passages (whole sentences), so it is NOT a
+    # nowrap column (design audit C5, B8): a sentence there must wrap, not blow the table wide.
+    header = ('<table><tr><th>fact</th><th>value</th><th class="nowrap">as of</th>'
+              '<th class="nowrap">freshness</th><th>source</th></tr>%s</table>')
+    page.add('<div class="muted small">The figures the verdict says its ruling rests on. Every '
+             "figure on the record, with its bounds and how it was struck, is below.</div>")
+    page.add(header % "".join(rows[:COMPACT_EVIDENCE_MAX]))
+    rest = rows[COMPACT_EVIDENCE_MAX:]
+    if rest:
+        mark = page.mark()
+        page.add(header % "".join(rest))
+        page.collapse("The other %d fact%s this verdict rests on"
+                      % (len(rest), "" if len(rest) == 1 else "s"), mark)
+
 
 def _evidence_section(page, run):
     pack = run["pack"] or {}
@@ -1602,9 +3016,15 @@ def _evidence_section(page, run):
             disclosure_text = str(disclosure)
         page.add('<div class="card prominent"><strong>The market was shut when this evidence '
                  "was captured.</strong> %s</div>" % esc(disclosure_text.strip()))
-    mark = page.mark()
     tier1 = capture.get("tier1") or []
     freshness = pack.get("freshness") or {}
+    # The verdict's own declared dependencies - the facts its ruling rests on
+    # (audit finding SC3 r6-2). The compact table above the fold carries these.
+    dependencies = set(run["verdict"].get("evidence_dependencies") or [])
+    envelope = run["verdict"].get("atlas_envelope") or {}
+    frames = capture.get("business_frame") or {}
+    _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames)
+    mark = page.mark()
     notes = pack.get("generated_notes") or {}
     # The verdict's own declared dependencies - marked on their rows,
     # so the page never claims the whole pack carried the ruling
@@ -1633,15 +3053,15 @@ def _evidence_section(page, run):
         rests = ('<span class="tag checked" title="the verdict names this '
                  'fact as one its ruling rests on">rests on this</span> '
                  if fact_id in dependencies else "")
-        unit = _unit_words(fact.get("unit"))
         value = format_number(fact.get("value"), fact.get("unit"))
         rows.append('<tr><td>%s<code>%s</code><div class="muted small" style="margin-top:4px">'
-                    '%s</div></td><td class="nowrap">%s%s</td><td class="nowrap">%s</td>'
+                    '%s</div></td><td>%s</td><td class="nowrap">%s</td>'
                     '<td class="nowrap"><span class="tag %s">%s</span></td></tr>'
                     % (rests, esc(fact_id), source_html, esc(value),
-                       (" " + esc(unit)) if unit else "",
-                       esc(fact.get("as_of", "")), esc(str(word).replace(" ", "-")), esc(word)))
-    page.add('<table><tr><th>fact, and where it came from</th><th class="nowrap">value</th>'
+                       esc(format_date(fact.get("as_of", ""))),
+                       esc(str(word).replace(" ", "-")), esc(word)))
+    # As above: value is a wrapping column, never nowrap - it can hold a whole tier-2 sentence.
+    page.add('<table><tr><th>fact, and where it came from</th><th>value</th>'
              '<th class="nowrap">as of</th><th class="nowrap">freshness</th></tr>%s</table>'
              % "".join(rows))
     page.add('<div class="muted small"><strong>checked</strong> &mdash; the figure&#x27;s age '
@@ -1662,13 +3082,24 @@ def _evidence_section(page, run):
                      % (rests, esc(passage.get("id", "")), esc(passage.get("source", "")),
                         esc(passage.get("as_of", "")), esc(passage.get("text", ""))))
     gaps = capture.get("gaps") or []
-    if gaps:
+    # A gap conceded to the outside auditor is a declared gap, whether or
+    # not the capture also wrote the ordinary row (audit round 5, r5-3).
+    # Without this the section vanished entirely while the audit section
+    # said a gap stood - a silent omission, on the owner's own page.
+    conceded = _conceded_gap_ids(capture)
+    if gaps or conceded:
         page.add("<h3>Declared gaps</h3>")
-        page.add('<div class="card"><ul>%s</ul></div>' % "".join(
-            "<li><strong>%s</strong> &mdash; %s The test it weakens: <code>%s</code>.</li>"
-            % (esc(g.get("fact_class", "")), esc(g.get("reason", "")),
-               esc(g.get("weakened_test", "")))
-            for g in gaps))
+        page.add('<div class="card"><ul>%s%s</ul></div>'
+                 % ("".join(
+                     "<li><strong>%s</strong> &mdash; %s The test it weakens: <code>%s</code>.</li>"
+                     % (esc(g.get("fact_class", "")), esc(g.get("reason", "")),
+                        esc(g.get("weakened_test", "")))
+                     for g in gaps),
+                    ("<li><strong>%d gap%s conceded to the outside auditor</strong> (%s) "
+                     "&mdash; the reason and the test each weakens are under "
+                     "<em>The outside auditor&#x27;s objections</em>, above.</li>"
+                     % (len(conceded), "" if len(conceded) == 1 else "s",
+                        esc(", ".join(conceded)))) if conceded else ""))
     requirements = (capture.get("sufficiency") or {}).get("requirements") or []
     if requirements:
         answered = sum(1 for r in requirements if r.get("status") == "answered")
@@ -1694,23 +3125,31 @@ def _evidence_section(page, run):
         page.add('<table><tr><th>what this question needs</th><th class="nowrap">kind</th>'
                  '<th class="nowrap">status</th><th>answered by</th></tr>%s</table>' % rows)
     count = len(tier1)
-    page.collapse("The %d frozen fact%s in the evidence pack (facts and "
-                  "passages marked &#x27;rests on this&#x27; carry the "
-                  "ruling)"
+    page.collapse("Every figure on the record &mdash; all %d frozen fact%s in the evidence pack, "
+                  "the narrative record, the declared gaps and the sufficiency checklist"
                   % (count, "" if count == 1 else "s"), mark)
 
 
 # --- 10. Peer review ---------------------------------------------------------------------------
 
 def _review_section(page, run):
+    """The blind reviewer's peer review, a folded appendix (audit C4 tier 5). The synopsis is on
+    the front already, where the advisors disagreed; here it sits with the full cross-examination,
+    behind one line."""
     reviewer = run["answers"].get("reviewer") or {}
     page.section("review", "Peer review")
+    mark = page.mark()
     page.add('<div class="muted small">One reviewer read all five advisors blind and wrote the '
              "cross-examination and this synopsis.</div>")
     page.add('<div class="card prominent"><span class="lead">Synopsis</span>%s</div>'
-             % markdown(reviewer.get("synopsis") or "not recorded", 4))
-    page.add("<details><summary>The reviewer's full cross-examination</summary>"
-             '<div class="body">%s</div></details>' % markdown(reviewer.get("markdown", ""), 4))
+             % markdown(_display_prose(reviewer, "synopsis", "reviewer synopsis", page), 4))
+    page.add("<h4>The reviewer's full cross-examination</h4>"
+             '<div class="body">%s%s</div>'
+             % (markdown(reformat_prose(reviewer.get("markdown", ""),
+                                        "reviewer cross-examination", page.number_subs), 4),
+                _prose_note(run, "reviewer")))
+    page.collapse("The blind reviewer&#x27;s synopsis and full cross-examination of the five "
+                  "advisors", mark)
 
 
 # --- The five advisors, each folded shut -------------------------------------------------------
@@ -1719,10 +3158,13 @@ def _advisors_section(page, run):
     page.section("advisors", "The five advisors")
     page.add('<div class="muted small">Five seats, one frozen pack, no tools. Each line opens '
              "to that seat&#x27;s answer, unedited.</div>")
-    for kind, label, icon in ADVISOR_SEATS:
+    for kind, label in ADVISOR_SEATS:
         answer = run["answers"].get(kind) or {}
-        page.add('<details><summary>%s %s</summary><div class="body">%s</div></details>'
-                 % (icon, esc(label), markdown(answer.get("markdown", ""), 4)))
+        page.add('<details><summary>%s</summary><div class="body">%s%s</div></details>'
+                 % (esc(label),
+                    markdown(reformat_prose(answer.get("markdown", ""),
+                                            "advisor: " + label, page.number_subs), 4),
+                    _prose_note(run, kind)))
 
 
 # --- The challenger's full response, folded shut ------------------------------------------------
@@ -1885,6 +3327,7 @@ def _bound_cell(row):
 def _atlas_section(page, run):
     envelope = run["verdict"].get("atlas_envelope") or {}
     page.section("atlas", "What the portfolio system receives")
+    mark = page.mark()
     page.add('<div class="muted small">The verdict carries a machine hand-off for the portfolio '
              "system, named Atlas. This is what is inside it.</div>")
     rating = envelope.get("rating")
@@ -1936,10 +3379,10 @@ def _atlas_section(page, run):
         _proportions_card(page, proportions)
     key_numbers = envelope.get("key_numbers") or []
     if key_numbers:
-        rows = "".join('<tr><td>%s%s</td><td class="nowrap">%s %s</td><td class="nowrap">%s</td></tr>'
+        rows = "".join('<tr><td>%s%s</td><td class="nowrap">%s</td><td class="nowrap">%s</td></tr>'
                        % (esc(k.get("name", "")), _bound_cell(k),
                           esc(format_number(k.get("value"), k.get("unit"))),
-                          esc(_unit_words(k.get("unit")) or ""), esc(k.get("as_of", "")))
+                          esc(format_date(k.get("as_of", ""))))
                        for k in key_numbers)
         page.add('<table><tr><th>key number</th><th class="nowrap">value</th>'
                  '<th class="nowrap">as of</th></tr>%s</table>' % rows)
@@ -1954,14 +3397,13 @@ def _atlas_section(page, run):
             if value is None:
                 cell = "not in the record - the note beside says why"
             else:
-                cell = "%s %s" % (format_number(value, entry.get("unit")),
-                                  _unit_words(entry.get("unit")) or "")
+                cell = format_number(value, entry.get("unit"))
             rows.append('<tr><td>%s%s%s</td><td class="nowrap">%s</td>'
                         '<td class="nowrap">%s</td></tr>'
                         % (_constituent_tag(entry),
                            esc(entry.get("detail", "")),
                            _bound_cell(entry), esc(cell.strip()),
-                           esc(entry.get("as_of") or "")))
+                           esc(format_date(entry.get("as_of") or ""))))
         page.add('<table><tr><th>sizing fact about the asset</th>'
                  '<th class="nowrap">value</th>'
                  '<th class="nowrap">as of</th></tr>%s</table>'
@@ -1979,6 +3421,8 @@ def _atlas_section(page, run):
                  % esc(envelope["for_atlas_note"]))
     page.add('<div class="muted small">The envelope also travels as its own file, and that file '
              "carries this verdict&#x27;s own hash, so the hand-off can be proved.</div>")
+    page.collapse("The machine hand-off to the portfolio system, Atlas &mdash; the rating, the "
+                  "audit state, the key numbers and the pack&#x27;s fingerprint", mark)
 
 
 # --- Footer stamps -----------------------------------------------------------------------------
@@ -2002,12 +3446,10 @@ def _one_ladder(rows, horizon, currency=None):
     """One ladder, whole: nothing bounded, nothing trimmed. This is
     where the front's "in full in the appendix" pointer has to be true
     (audit finding ANCHORLESS-C c3-1)."""
-    cells = "".join('<tr><td>%s</td><td class="nowrap">%s %s</td>'
+    cells = "".join('<tr><td>%s</td><td class="nowrap">%s</td>'
                     '<td class="nowrap">%s</td><td>%s</td></tr>'
                     % (esc(rung.get("name", "")),
-                       esc(format_number(rung.get("price_outcome"),
-                                         currency)),
-                       esc(_unit_words(currency) or ""),
+                       esc(format_price(rung.get("price_outcome"), currency)),
                        esc(rung.get("probability", "")),
                        esc(rung.get("rationale", "")))
                     for rung in rows)
@@ -2029,8 +3471,7 @@ def _ladders_section(page, run):
     if not scenarios and not seat_ladders:
         return
     currency = (run["verdict"].get("subject") or {}).get("currency")
-    page.section("ladders", "The scenario ladders, in full")
-    mark = page.mark()
+    page.add("<h3>The scenario ladders, in full</h3>")
     if scenarios:
         page.add("<h3>The chairman&#x27;s published ladder</h3>")
         page.add(_one_ladder(scenarios, block.get("horizon_months", ""),
@@ -2042,7 +3483,7 @@ def _ladders_section(page, run):
                  "disagreed.</div>")
         for entry in seat_ladders:
             seat = entry.get("seat", "")
-            page.add("<h4>%s</h4>" % esc(dict((s, t) for s, t, _ in ADVISOR_SEATS).get(seat, seat)))
+            page.add("<h4>%s</h4>" % esc(dict(ADVISOR_SEATS).get(seat, seat)))
             page.add(_one_ladder(entry.get("scenarios") or [],
                                  entry.get("horizon_months", ""),
                                  currency))
@@ -2063,43 +3504,104 @@ def _ladders_section(page, run):
                      % _capped_caveat(block))
         page.add('<div class="card">%s</div>'
                  % "".join("<p>%s</p>" % esc(line) for line in lines))
-    page.collapse("The ladders in full &mdash; the chairman&#x27;s and "
-                  "each advisor&#x27;s", mark)
 
 
-def build_page(run):
+def _about_sitting_section(page, run, now):
+    """About this sitting - the run stamps, a folded appendix (audit C4 tier 5; owner ruling AC16
+    moved the clocks here off the executive summary). The council's own wall clock and the
+    gathering time sit here, and the seat-by-seat cost where the record carries it (owner ruling
+    AC15, architect ruling (5)(a): tokens per tool turn and brief bytes per seat; the input and
+    output token columns stay empty with the note that says why the harness cannot fill them).
+    Deliberately NOT in the navigation - it is the deepest stamp on the page, reached by scrolling
+    to the end, so the menu stays to the tiers and the main appendices (about nine entries)."""
+    review = _evidence_review(run)
+    seat_cost = (run["verdict"].get("provenance") or {}).get("seat_cost") or {}
+    minutes = _wall_clock_minutes(run, now)
+    capture = review.get("capture") or {}
+    has_clock = (minutes is not None or capture.get("minutes") is not None
+                 or capture.get("tokens") is not None)
+    has_cost = bool(seat_cost.get("per_seat"))
+    if not has_clock and not has_cost:
+        return
+    page.add('<h2 id="stamps">About this sitting</h2>')
+    mark = page.mark()
+    _sitting_clocks(page, run, now)
+    if has_cost:
+        page.add("<h3>The sitting&#x27;s cost, seat by seat</h3>")
+        page.add('<div class="muted small">%s</div>' % esc(seat_cost.get("note", "")))
+        rows = ['<table><thead><tr><th>Seat</th><th>Tokens</th>'
+                '<th>Tool turns</th><th>Tokens per turn</th>'
+                '<th>Brief bytes</th><th>Input tokens</th>'
+                '<th>Output tokens</th></tr></thead><tbody>']
+
+        def cell(value):
+            return "&mdash;" if value is None else esc(format_number(value))
+
+        for seat, cost in seat_cost["per_seat"].items():
+            rows.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
+                        "<td>%s</td><td>%s</td><td>%s</td></tr>"
+                        % (esc(seat), cell(cost.get("tokens")),
+                           cell(cost.get("tool_calls")),
+                           cell(cost.get("tokens_per_tool_call")),
+                           cell(cost.get("brief_bytes")),
+                           cell(cost.get("input_tokens")),
+                           cell(cost.get("output_tokens"))))
+        rows.append("</tbody></table>")
+        page.add("".join(rows))
+    page.collapse("How long the sitting took, and what it cost", mark)
+
+
+def build_page(run, now):
+    """The whole page. `now` is the RECORDED moment of this run's first rendering - the finish
+    line of the sitting's own wall clock (spec section U3.3, register item P-U3-5), or None
+    where the run's record does not carry one. Nothing here reads the clock on the wall: the
+    page a sitting produced and the same page reprinted a month later are the same bytes."""
     page = Page()
+    # The chairman's own STRUCTURED verdict text (falsifier statements, trigger details, level
+    # meanings) is respelt into the market form ONCE, before any section renders it, so a field
+    # shown both on the decision front and in the appendix is respelt once and logged once (AC16(1)).
+    _reformat_verdict_structured(run["verdict"], page.number_subs)
     _head_block(page, run)
-    # The decision first, on its own opening pages (AB13.5); the whole record behind it.
-    _front_section(page, run)
-    page.section("appendices", "Appendices — the full record")
-    page.add('<div class="muted small">Everything the decision above rests on, in full: the '
-             "question as it was asked, the verdict document, the tripwires with their sources, "
-             "the outside audit, the chairman&#x27;s synthesis, the frozen evidence, the peer "
-             "review, the five advisors, the challenger&#x27;s own words, and the hand-off to "
-             "the portfolio system.</div>")
+    # A reader dives deeper the further they scroll (owner ruling AC16, audit C4). Tier 1: the
+    # executive summary. Tier 2: the chairman's synthesis, directly after it (AC16(5)). Tier 3:
+    # the decision in detail. Tier 4: the frozen evidence. Tier 5: the appendices, all folded.
+    _front_section(page, run, now)                 # tier 1
+    _synthesis_section(page, run)                  # tier 2
+    _detail_section(page, run)                     # tier 3
+    _evidence_section(page, run)                   # tier 4
+    # Tier 5. The "Appendices" divider is a plain signpost, not a menu entry - the navigation
+    # names the tiers and the main appendices (about nine entries), not every stamp.
+    page.add('<h2 id="appendices">Appendices — the full record</h2>')
+    page.add('<div class="muted small">The record behind the decision above, all folded: the '
+             "question as it was asked, the peer review, the five advisors, the challenger&#x27;s "
+             "own words, what changed after the outside audit, the hand-off to the portfolio "
+             "system, and the run stamps.</div>")
     _question_section(page, run)
-    _verdict_section(page, run)
-    _ladders_section(page, run)
-    _constituents_section(page, run)
-    _warnings_section(page, run)
-    _tripwires_section(page, run)
-    _challenge_section(page, run)
-    _changes_section(page, run)
-    _synthesis_section(page, run)
-    _evidence_section(page, run)
     _review_section(page, run)
     _advisors_section(page, run)
     _challenger_section(page, run)
+    _changes_section(page, run)
     _atlas_section(page, run)
+    _about_sitting_section(page, run, now)
     _footer(page, run)
     return page
 
 
-def render(run_dir):
-    """The whole report as one string. Refuses, in plain words, a directory that is not a run."""
+def render(run_dir, moment=None, subs_out=None):
+    """The whole report as one string. Refuses, in plain words, a directory that is not a run.
+
+    The moment the sitting's wall clock is measured to is the run's own recorded first
+    rendering, so a reprint is the page the sitting produced. `moment` is what the command
+    below passes on the first rendering of a run - the moment it will record once the page is
+    written - and nothing else passes it: read on its own, this function reads no clock, and a
+    run whose record carries no moment yet renders without one. `subs_out`, when a list is
+    given, is filled with every number the prose reformatter respelt, in render order (owner
+    ruling AC16(1)) - the caller writes it beside the report."""
     run = load_run(run_dir)
-    page = build_page(run)
+    run["prose_scores"] = _load_prose_scores(run_dir)
+    page = build_page(run, moment or first_render_moment(run_dir))
+    if subs_out is not None:
+        subs_out.extend(page.number_subs)
     subject = run["verdict"].get("subject") or {}
     title = "Investment Council - %s" % (subject.get("name") or run["verdict"].get("run_id", ""))
     return "".join([
@@ -2147,14 +3649,72 @@ def main(argv):
             sys.stderr.write("REFUSED: '%s' already exists and is not a report this command "
                              "wrote. Rendering would overwrite it; nothing was written.\n" % target)
             return 4
+    # The sitting's clock ends at the rendering, and the FIRST rendering of a run is what
+    # records the moment (register item P-U3-5). The moment is read once here, printed on the
+    # page, and written to the record only after that page is on disk - so a render that
+    # produced no report leaves no row saying one exists (audit round 1, r1-6).
+    moment = first_render_moment(run_dir)
+    # A run with no record of its own can never HAVE a recorded moment, so it is given none:
+    # a clock nothing can reproduce is worse on this page than no clock at all.
+    first = moment is None and os.path.isfile(runrecord.record_path(run_dir))
+    if first:
+        moment = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    substitutions = []
     try:
-        body = render(run_dir)
+        body = render(run_dir, moment, substitutions)
     except MissingInputError as refusal:
         sys.stderr.write("REFUSED: %s\n" % refusal)
         return 1
-    with open(target, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(body)
-    sys.stdout.write("report written: %s (%d bytes)\n" % (target, len(body.encode("utf-8"))))
+    # Two writes, ordered so that neither can be believed without the other. The page is staged
+    # beside its target, the row saying a report was rendered is appended, and only then does
+    # the page become visible. A stop before the row leaves NO page and no row - the retry is an
+    # honest first rendering, because no report ever existed. A stop between the row and the
+    # rename leaves a row and no page - the retry reads that recorded moment and rebuilds the
+    # identical bytes. A report on disk without its row, which would let a retry silently
+    # re-time the archived page and flip its budget line, is unreachable from either
+    # (audit round 1, r1-6; round 2, r2-1).
+    data = body.encode("utf-8")
+    directory = os.path.dirname(os.path.abspath(target))
+    handle, staged = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(handle, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if first:
+            try:
+                commit_render_moment(run_dir, moment)
+            except OSError as failure:
+                sys.stderr.write(
+                    "REFUSED: the row recording that this report was rendered could not be "
+                    "written to the run's own record (%s). Nothing was published: a report "
+                    "without that row is re-timed by the next rendering, which would change "
+                    "the minutes on the front page and can flip the budget line. Fix the "
+                    "record and run this again.\n" % failure)
+                return 5
+        os.replace(staged, target)
+    finally:
+        if os.path.exists(staged):
+            os.unlink(staged)
+    # The record of every number the prose reformatter respelt, beside the report it belongs to
+    # (owner ruling AC16(1)). It is a supplementary artifact - a report is a report without it -
+    # so it is written after the page, in deterministic render order. Its name is DERIVED from the
+    # report's own file name (report.html -> report.html.number-substitutions.json), so it can
+    # never be the report's own path on any filesystem, case-sensitive or not (round 2, r2-1).
+    log_path = os.path.join(
+        directory, os.path.basename(os.path.abspath(target)) + ".number-substitutions.json")
+    log_bytes = (json.dumps(substitutions, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    log_handle, log_staged = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(log_handle, "wb") as fh:
+            fh.write(log_bytes)
+        os.replace(log_staged, log_path)
+    finally:
+        if os.path.exists(log_staged):
+            os.unlink(log_staged)
+    sys.stdout.write("report written: %s (%d bytes); %d prose number substitution%s logged\n"
+                     % (target, len(data), len(substitutions),
+                        "" if len(substitutions) == 1 else "s"))
     return 0
 
 

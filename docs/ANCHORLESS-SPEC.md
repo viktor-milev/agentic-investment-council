@@ -159,6 +159,15 @@ challenge round, the audit trail — folds behind it as appendices. Figures ROUN
 the reading-precision rules. Ruling Z binds. Tripwires must be actionable INSIDE the horizon:
 every event trigger carries a date; long-horizon invalidations get rolling checkpoints.
 
+> **Superseded in part by owner ruling AC16(3),(5) (unit U6b REPORT-DESIGN, 2026-09-15).** This
+> front is now the **executive summary**, and the two-page rule is a MINIMUM-content rule, never a
+> truncation: the rating, the decisive numbers, the thesis, the priced read and the chairman's
+> rationale IN FULL sit here, uncut. What used to trail on the front — the scenario ladder and its
+> arithmetic, the downside ladder and invalidation levels, and the dated event calendar — moves
+> below the chairman's synthesis into a "decision in detail" tier, and the reader dives deeper the
+> further they scroll (executive summary → chairman's note → decision in detail → the evidence →
+> the appendices). The anchorless ladder's arithmetic sentences are unchanged.
+
 ## 6. Seat differentiation for anchorless subjects
 
 The five advisor lenses stay named as built, but for an anchorless subject each brief assigns

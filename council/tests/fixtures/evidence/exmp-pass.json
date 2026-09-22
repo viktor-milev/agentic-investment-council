@@ -1,6 +1,195 @@
 {
- "capture_version": "1.3.0",
+ "business_frame": {
+  "EXMP": {
+   "competitive_position": "t2_market_structure_and_share",
+   "decisive_metrics": [
+    {
+     "answered_by": [
+      "order_backlog_note"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "capacity_or_backlog",
+     "name": "Order backlog",
+     "why_it_decides": "The backlog is next year's revenue already signed. It is the only figure here that says whether the mix shift survives a weak order year."
+    },
+    {
+     "answered_by": [
+      "segment_revenue_service_q",
+      "segment_revenue_service_prior_year_q"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "growth",
+     "name": "Service revenue against last year",
+     "why_it_decides": "Service is the recurring, higher-margin half. Whether it keeps outgrowing new pumps decides whether the rating should rise."
+    },
+    {
+     "answered_by": [
+      "free_cash_flow_q",
+      "free_cash_flow_prior_year_q"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "cash_conversion",
+     "name": "Free cash flow after capital spending",
+     "why_it_decides": "Pumps are made in owned plants, so growth costs cash. Cash after that spending is what the owner can actually have."
+    },
+    {
+     "answered_by": [
+      "pe_ratio_current"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "other",
+     "name": "Price/earnings, against its own history and peers",
+     "why_it_decides": "The business is rated on earnings against its own history and its peers, and this multiple is the number that rating divides the market value by."
+    }
+   ],
+   "headline_decline_read": null,
+   "how_it_earns": [
+    {
+     "facts": [
+      "segment_revenue_pumps_q",
+      "segment_revenue_pumps_prior_year_q",
+      "segment_revenue_total_q"
+     ],
+     "figures": [],
+     "line": "INVENTED FIXTURE - New pumps",
+     "share_of_period": "0.62"
+    },
+    {
+     "facts": [
+      "segment_revenue_service_q",
+      "segment_revenue_service_prior_year_q",
+      "segment_revenue_total_q"
+     ],
+     "figures": [],
+     "line": "INVENTED FIXTURE - Service contracts and spare parts",
+     "share_of_period": "0.38"
+    }
+   ],
+   "management": {
+    "capital_allocation": "t2_capital_allocation",
+    "ceo_tenure_years": "ceo_tenure_years",
+    "cfo_tenure_years": null,
+    "guidance_vs_delivery": [
+     {
+      "delivered": "delivered_revenue_q1_fy2026",
+      "guided": [
+       "guided_revenue_q1_fy2026"
+      ],
+      "period": "Q1 FY2026"
+     },
+     {
+      "delivered": "delivered_revenue_q2_fy2026",
+      "guided": [
+       "guided_revenue_q2_fy2026"
+      ],
+      "period": "Q2 FY2026"
+     }
+    ],
+    "insider_ownership_pct": "insider_ownership_pct"
+   },
+   "peers": [
+    {
+     "metrics": [
+      "peer_pe_ratio__pmpc",
+      "peer_market_cap__pmpc"
+     ],
+     "name": "INVENTED FIXTURE - Pump Makers Corp",
+     "ticker": "PMPC",
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+    },
+    {
+     "metrics": [
+      "peer_pe_ratio__vlvi",
+      "peer_market_cap__vlvi"
+     ],
+     "name": "INVENTED FIXTURE - Valve Industries Inc",
+     "ticker": "VLVI",
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+    }
+   ],
+   "what_is_changing": {
+    "facts": [
+     "segment_revenue_service_q",
+     "segment_revenue_service_prior_year_q",
+     "segment_revenue_pumps_q",
+     "segment_revenue_pumps_prior_year_q"
+    ],
+    "figures": [
+     "500.0",
+     "570.0",
+     "900.0",
+     "930.0"
+    ],
+    "kind": "mix_shift",
+    "statement": "INVENTED FIXTURE - Service is growing faster than new pumps: service revenue rose from 500.0 to 570.0 million dollars while new-pump revenue rose from 900.0 to 930.0. Service is sold on multi-year contracts, so the revenue that arrives next year is largely already signed, and it carries a higher margin than the pump it attaches to. The mix is shifting toward the recurring half of the business, which is why the backlog matters more to this question than the quarter's revenue does."
+   },
+   "what_it_does": "INVENTED FIXTURE - Example Manufacturing builds industrial pumps and sells the service contracts that keep them running. Its customers are water utilities, mines and chemical plants, which buy a pump to move fluid they cannot afford to stop moving. If the company vanished, a customer would have to re-engineer its fluid handling around another maker's pump and re-qualify it on a live site, which takes about a year, and would have to find spare parts and service crews elsewhere in the meantime.",
+   "what_it_does_figures": [],
+   "archetype": "profitable_operator",
+   "archetype_because": "INVENTED FIXTURE - the business earns a net profit each quarter and is rated on earnings against its own history and its listed peers.",
+   "cycle_dependence": "none",
+   "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
+  }
+ },
+ "capture_version": "1.6.0",
  "captured_at": "2026-08-30T21:30Z",
+ "evidence_challenge": {
+  "failure_status": null,
+  "findings": [
+   {
+    "detail": "INVENTED FIXTURE - the record shows what the service line earns but not what it earns per contract, and the question turns on whether that is improving.",
+    "fact_ids": [],
+    "figure_at_source": null,
+    "id": "E1",
+    "kind": "missing_decisive_fact",
+    "severity": "material",
+    "source_url": null,
+    "where_it_likely_lives": "INVENTED FIXTURE - the segment note of the latest quarterly report"
+   },
+   {
+    "detail": "INVENTED FIXTURE - the frame reads the mix shift as settled when only two quarters support it.",
+    "fact_ids": [
+     "segment_revenue_share_pumps_q"
+    ],
+    "figure_at_source": null,
+    "id": "E2",
+    "kind": "framing_error",
+    "severity": "minor",
+    "source_url": null,
+    "where_it_likely_lives": null
+   }
+  ],
+  "model": "gpt-5.6-sol",
+  "overall": "INVENTED FIXTURE - the record is strong on what each line earns and weak on what a single contract earns. One point below would change how the mix shift reads; the other would not.",
+  "resolutions": {
+   "E1": {
+    "disposition": "captured",
+    "fact_ids": [
+     "segment_revenue_service_q"
+    ],
+    "reason": null,
+    "weakened_test": null
+   },
+   "E2": {
+    "disposition": "overruled",
+    "fact_ids": [],
+    "reason": "INVENTED FIXTURE - the frame states the mix shift as a kind and not as a settled outcome, and the two quarters it rests on are the two the pack carries with their prior-year pairs, so the reading it makes is the one the record supports.",
+    "weakened_test": null
+   }
+  },
+  "status": "success",
+  "failure_reason": null,
+  "nonce": "a1b2c3d4e5f6071865786d702d706173",
+  "evidence_sha256": "8199460fe88ddd3b85015dd8fbdc10c4d146d4ad8d973e22f7a338d68857ef52",
+  "post_audit_changes": [],
+  "post_audit_sha256": "8199460fe88ddd3b85015dd8fbdc10c4d146d4ad8d973e22f7a338d68857ef52"
+ },
  "gaps": [
   {
    "fact_class": "short_interest_shares",
@@ -18,9 +207,9 @@
  },
  "question_verbatim": "Is Example Manufacturing worth buying at today's price? (INVENTED FIXTURE)",
  "subject": {
+  "asset_class": "equity",
   "currency": "USD",
   "kind": "single_stock",
-  "asset_class": "equity",
   "listing": "NYSE (INVENTED)",
   "name": "Example Manufacturing Co",
   "ticker": "EXMP"
@@ -55,7 +244,10 @@
     "description": "Is today's rating expensive or cheap against the company's own five-year record? (INVENTED FIXTURE)",
     "id": "rating_vs_history_or_peers",
     "kind": "canonical_test",
-    "status": "answered"
+    "status": "answered",
+    "measure": "earnings_vs_history_and_peers",
+    "peer_denominator_metrics": ["pe_ratio"],
+    "subject_denominator_facts": ["pe_ratio_current"]
    },
    {
     "answered_by": [
@@ -336,6 +528,210 @@
    "source": "INVENTED FIXTURE - Federal Reserve H.15 release, one-month Treasury bill",
    "unit": "%",
    "value": "4.35"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "segment_revenue_pumps_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q segment note, 2026-07-15",
+   "unit": "USD_m",
+   "value": "930.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "segment_revenue_pumps_prior_year_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q segment note, comparative column",
+   "unit": "USD_m",
+   "value": "900.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "segment_revenue_service_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q segment note, 2026-07-15",
+   "unit": "USD_m",
+   "value": "570.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "segment_revenue_service_prior_year_q",
+   "source": "INVENTED FIXTURE - Example Manufacturing 10-Q segment note, comparative column",
+   "unit": "USD_m",
+   "value": "500.0"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "peer_pe_ratio__pmpc",
+   "source": "INVENTED FIXTURE - market-data page for Pump Makers Corp, dated at the sitting",
+   "unit": "x",
+   "value": "20.6"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "peer_market_cap__pmpc",
+   "source": "INVENTED FIXTURE - market-data page for Pump Makers Corp, dated at the sitting",
+   "unit": "USD_m",
+   "value": "31000"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "peer_pe_ratio__vlvi",
+   "source": "INVENTED FIXTURE - market-data page for Valve Industries Inc, dated at the sitting",
+   "unit": "x",
+   "value": "16.9"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "peer_market_cap__vlvi",
+   "source": "INVENTED FIXTURE - market-data page for Valve Industries Inc, dated at the sitting",
+   "unit": "USD_m",
+   "value": "12400"
+  },
+  {
+   "as_of": "2026-01-20",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "guided_revenue_q1_fy2026",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q4 FY2025 release, the Q1 outlook",
+   "unit": "USD_m",
+   "value": "1420"
+  },
+  {
+   "as_of": "2026-04-16",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "delivered_revenue_q1_fy2026",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q1 FY2026 release",
+   "unit": "USD_m",
+   "value": "1435"
+  },
+  {
+   "as_of": "2026-04-16",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "guided_revenue_q2_fy2026",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q1 FY2026 release, the Q2 outlook",
+   "unit": "USD_m",
+   "value": "1480"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 500,
+   "id": "delivered_revenue_q2_fy2026",
+   "source": "INVENTED FIXTURE - Example Manufacturing Q2 FY2026 release",
+   "unit": "USD_m",
+   "value": "1500.0"
+  },
+  {
+   "as_of": "2026-06-30",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "insider_ownership_pct",
+   "source": "INVENTED FIXTURE - Example Manufacturing proxy statement, 2026-06-30",
+   "unit": "%",
+   "value": "3.10"
+  },
+  {
+   "as_of": "2026-08-30",
+   "derived": null,
+   "freshness_rule_days": 400,
+   "id": "ceo_tenure_years",
+   "source": "INVENTED FIXTURE - Example Manufacturing leadership page, read at the sitting",
+   "unit": "years",
+   "value": "6"
+  },
+  {
+   "as_of": "2026-08-28",
+   "derived": null,
+   "freshness_rule_days": 30,
+   "id": "analyst_consensus_revenue_fy",
+   "source": "INVENTED FIXTURE - market-data page carrying the published consensus",
+   "unit": "USD_m",
+   "value": "6050"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "segment_revenue_pumps_q",
+      "label": "the pumps line in the quarter",
+      "value": "930.0"
+     },
+     {
+      "fact_id": "segment_revenue_service_q",
+      "label": "the service line in the quarter",
+      "value": "570.0"
+     }
+    ],
+    "operation": "sum"
+   },
+   "freshness_rule_days": 120,
+   "id": "segment_revenue_total_q",
+   "source": "INVENTED FIXTURE - struck at capture from the 10-Q segment note, 2026-07-15",
+   "unit": "USD_m",
+   "value": "1500.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "segment_revenue_pumps_q",
+      "label": "the pumps line in the quarter",
+      "value": "930.0"
+     },
+     {
+      "fact_id": "segment_revenue_total_q",
+      "label": "every revenue line in the quarter",
+      "value": "1500.0"
+     }
+    ],
+    "operation": "divide"
+   },
+   "freshness_rule_days": 120,
+   "id": "segment_revenue_share_pumps_q",
+   "source": "INVENTED FIXTURE - struck at capture from the 10-Q segment note, 2026-07-15",
+   "unit": "share of the segment total",
+   "value": "0.62"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": {
+    "operands": [
+     {
+      "fact_id": "segment_revenue_service_q",
+      "label": "the service line in the quarter",
+      "value": "570.0"
+     },
+     {
+      "fact_id": "segment_revenue_total_q",
+      "label": "every revenue line in the quarter",
+      "value": "1500.0"
+     }
+    ],
+    "operation": "divide"
+   },
+   "freshness_rule_days": 120,
+   "id": "segment_revenue_share_service_q",
+   "source": "INVENTED FIXTURE - struck at capture from the 10-Q segment note, 2026-07-15",
+   "unit": "share of the segment total",
+   "value": "0.38"
   }
  ],
  "tier2": [
@@ -357,6 +753,32 @@
    "id": "management_outlook_note",
    "source": "INVENTED FIXTURE - Example Manufacturing Q2 FY2026 press release, 2026-07-15",
    "text": "INVENTED FIXTURE - Management guided full-year revenue to about 6100 million dollars and said component costs are easing."
+  },
+  {
+   "as_of": "2026-07-15",
+   "figures": [
+    "640",
+    "300",
+    "180",
+    "0.4"
+   ],
+   "id": "t2_capital_allocation",
+   "source": "INVENTED FIXTURE - Example Manufacturing FY2023-FY2026 annual reports",
+   "text": "INVENTED FIXTURE - Over the three years to FY2026 the company bought back 640 million dollars of its own shares, paid 300 million dollars of dividends, made one acquisition for 180 million dollars, and let the diluted share count grow 0.4 percent as staff awards vested."
+  },
+  {
+   "as_of": "2026-07-15",
+   "figures": [
+    "28",
+    "24",
+    "11",
+    "40",
+    "42",
+    "19"
+   ],
+   "id": "t2_market_structure_and_share",
+   "source": "INVENTED FIXTURE - Example Manufacturing FY2026 annual report and trade-body data",
+   "text": "INVENTED FIXTURE - Three makers supply most of this class of industrial pump: Example Manufacturing at 28 percent of units sold, Pump Makers Corp at 24 percent and Valve Industries at 11 percent, with the rest split among about 40 regional builders. Example wins re-orders on its service network - 42 depots against Pump Makers Corp's 19 - because a stopped pump costs a mine more per day than the pump itself. A utility that buys nothing keeps its existing units and rebuilds them on a seven-year cycle, and every bid is priced against that alternative."
   }
  ]
 }

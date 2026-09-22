@@ -1,0 +1,36 @@
+{
+  "scoring_rules_version": "1.0.2",
+  "authority": "OWNER-RULINGS AC7 and UPGRADE-2-BUILD-SPEC U7.3. The defaults of U7.3 are adopted as DATA, not code: the benchmark by asset class, the horizons in trading days, what counts as right for each rating word, and how a falsifier, a tripwire and a mispricing read are resolved. The benchmark-by-asset-class defaults are U4.2's (AC4): US equity keyed to SPY; crypto, gold and commodity have no benchmark and are scored on their own return. A subject file may name a different benchmark per sitting (U4.2 override). The correlation of tokens against return is refused below twenty scored rows (AC7). Beside AC7 and U7.3: architect mechanism rulings recorded in docs/BUILD-LOG.md (U7 audit rounds 2–3, 2026-09-18): the close window after the due date is data (`close_window_days_after_due`, `close_days_before_due_allowed`), an out-of-order same-subject append refuses, a duplicate row id refuses; and (U7 audit round 8, 2026-09-18, closing P-U7-8) an excess return is one window - the subject close and the benchmark close that score one horizon must carry the same as-of date, and a pair from different sessions is refused by the observation gate.",
+  "horizons_trading_days": [63, 126, 252],
+  "scoring_horizon_trading_days": 252,
+  "close_window_days_after_due": 5,
+  "close_days_before_due_allowed": 0,
+  "correlation_min_rows": 20,
+  "correlation_caveat": "n is small; this is a record, not a proof",
+  "benchmarks": {
+    "equity": {
+      "name": "SPDR S&P 500 ETF",
+      "ticker": "SPY",
+      "level_fact_ids": ["benchmark_level_at_sitting", "spy_level_at_sitting"],
+      "note": "U4.2 default for US equity; a non-US listing names its own broad-index ETF in the subject file. The level at the sitting is read from one of these fact ids when the pack carries it; where it is absent the row records no benchmark level and the excess return is not computed for that row."
+    },
+    "crypto": null,
+    "gold": null,
+    "commodity": null
+  },
+  "price_fact_ids": ["price_last", "price_official_close"],
+  "rating_rules": {
+    "strong_buy": {"kind": "excess", "test": "ge", "threshold_pct": 10.0},
+    "buy": {"kind": "excess", "test": "gt", "threshold_pct": 0.0},
+    "sell": {"kind": "excess", "test": "lt", "threshold_pct": 0.0},
+    "hold": {"kind": "hold", "band_pct": 10.0},
+    "monitor": {"kind": "trigger_within", "trading_days": 252}
+  },
+  "mispricing_direction": {
+    "cheap": {"test": "gt", "threshold_pct": 0.0},
+    "rich": {"test": "lt", "threshold_pct": 0.0},
+    "fair": {"test": "abs_le", "threshold_pct": 10.0},
+    "no_view": null
+  },
+  "falsifier_resolutions": ["for", "against", "unresolved"]
+}

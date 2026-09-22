@@ -5,6 +5,7 @@ model calls. The evidence stages run as the real commands; the seat answers
 are canned fixtures; the challenge result is written by this test in the
 bridge's exact result shape."""
 
+import atexit
 import html
 import json
 import os
@@ -20,12 +21,22 @@ sys.path.insert(0, os.path.abspath(
 from council.lib import canonical, validate  # noqa: E402
 from council.engine import briefs, host, readback  # noqa: E402
 from council.engine import runrecord  # noqa: E402
+from council.tests import test_evidence  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 REH = os.path.join(ROOT, "council", "tests", "fixtures", "rehearsal")
 CAPTURE = os.path.join(ROOT, "council", "tests", "fixtures", "evidence",
                        "exmp-pass.json")
 RUN_ID = "rehearsal-exmp-zero-model"
+
+# U7: publishing appends a row to the shared ledger. Every class here
+# publishes, and the host steps in-process while some stages run through
+# cli() (which copies os.environ), so one process-wide override keeps the
+# whole suite off the repo's ledger. Set once, for every class and every
+# subprocess; cleaned up when the process ends.
+_LEDGER_TMP = tempfile.mkdtemp(prefix="council-rehearsal-ledger-")
+os.environ["COUNCIL_LEDGER_PATH"] = os.path.join(_LEDGER_TMP, "ledger.jsonl")
+atexit.register(lambda: shutil.rmtree(_LEDGER_TMP, ignore_errors=True))
 
 
 def cli(*args):
@@ -77,12 +88,60 @@ class TestEndToEndRehearsal(unittest.TestCase):
                    "--out", suff_out)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
 
+        # Stage 3a - the one-page evidence brief, as the real command,
+        # and the sitting's own evidence folder: the mode chosen at the
+        # start and the capture stage's own cost (owner ruling AC3).
+        # This chain runs in the REVIEWED mode - a person read the page
+        # and said go - and the auto-mode path is rehearsed below.
+        evidence_dir = os.path.join(base, "evidence")
+        # The helper writes the mode and the capture's cost; the one page
+        # and the FULL document are rendered by the real brief command
+        # below, and the go is taken on the full document's own hash and the
+        # pack's (owner rulings AC15, AC3), so full_document/approval are
+        # left for this stage to write for real.
+        test_evidence.write_evidence_stage(
+            evidence_dir, pack_path=pack_path, mode="reviewed",
+            chosen_by="the invented owner (fixture)",
+            challenge_brief=b"# invented auditor brief (fixture)\n",
+            full_document=None, approval=False)
+        brief_path = os.path.join(evidence_dir, "brief.md")
+        proc = cli("council.evidence.brief", pack_path, "--out", brief_path)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(brief_path, "rb") as handle:
+            brief_page = handle.read().decode("utf-8")
+        self.assertIn("## The numbers that decide this question", brief_page)
+        self.assertIn("The capture: 38.5 minutes, 412000 tokens",
+                      brief_page)
+        # The full document a person actually approves (owner ruling AC15,
+        # P6), rendered by the real command.
+        full_path = os.path.join(evidence_dir, "EVIDENCE-FULL.md")
+        proc = cli("council.evidence.brief", pack_path, "--out", full_path,
+                   "--full")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(full_path, "rb") as handle:
+            full_text = handle.read().decode("utf-8")
+        # The full document names the pack it summarizes, at its head, so
+        # the approver's note names what he approved (owner ruling AC3).
+        self.assertIn(pack_sha, "\n".join(full_text.splitlines()[:10]))
+        # A person read the full document and said go, on its hash and the
+        # pack's - exactly what host init now requires (register items
+        # P-U3d-3 and P-U3d-4).
+        captured_at = canonical.read_json(pack_path)["capture"]["captured_at"]
+        canonical.write_canonical_json(
+            os.path.join(evidence_dir, "approval.json"),
+            {"by": "the invented owner (fixture)",
+             "at": captured_at[:10] + "T23:00:00Z",
+             "note": "read the full evidence document and said go (fixture)",
+             "document_sha256": canonical.sha256_file(full_path),
+             "pack_sha256": pack_sha})
+
         # Stage 4 - the council, stepped; every seat answered from a canned
         # fixture; usage sidecars written for every seat.
         state, run_dir = host.init(
             base, RUN_ID, pack_path, pack_sha, suff_out,
             os.path.join(REH, "question.txt"),
-            os.path.join(REH, "subject.json"))
+            os.path.join(REH, "subject.json"),
+            evidence_dir=evidence_dir)
         seat_tokens = {}
         for _ in range(40):
             host.step(run_dir)
@@ -193,12 +252,38 @@ class TestEndToEndRehearsal(unittest.TestCase):
         import re
         self.assertEqual(
             re.findall(r'(?:src|href)\s*=\s*"https?://', page), [])
-        # The rating in plain words, the empty-warnings sentence, and the
-        # change appendix showing the chairman's one rewording.
+        # The rating in plain words, and the change appendix showing the
+        # chairman's one rewording. The empty-warnings appendix sentence is
+        # gone with the warnings appendix section (owner ruling AC16, audit
+        # B5/B6): a clean verdict simply carries no warning band.
         self.assertIn("Buy", page)
-        self.assertIn("This verdict carries no warnings.", page)
+        self.assertNotIn("This verdict carries no warnings.", page)
         self.assertIn("grew 12 percent on the year", page)
         self.assertIn("one quarter, not yet a trend", page)
+        # Owner ruling AC2: the outside auditor read this evidence
+        # before any seat was paid, and its two points and their answers
+        # travelled the WHOLE chain - into the frozen pack, into every
+        # seat's case file, and onto the page. The auditor's objections sit
+        # on the decision-in-detail tier now (owner ruling AC16, audit C4).
+        self.assertIn("The outside auditor&#x27;s objections, and the answers", page)
+        self.assertIn("An outside auditor read this evidence before the "
+                      "council sat and raised 2 points, none of them "
+                      "blocking", page)
+        self.assertIn("The auditor&#x27;s reading of this evidence, in its "
+                      "own words", page)
+        self.assertIn("gathered, and it is in the evidence below "
+                      "(segment_revenue_service_q)", page)
+        self.assertNotIn("The outside auditor did not check the evidence.",
+                         page)
+        pack_capture = canonical.read_json(
+            os.path.join(run_dir, "pack", "pack.json"))["capture"]
+        self.assertEqual(pack_capture["evidence_challenge"]["status"],
+                         "success")
+        casefile = briefs.render_casefile(
+            canonical.read_json(os.path.join(run_dir, "pack", "pack.json")),
+            {"result": "pass"}, "x", pack_capture["subject"])
+        self.assertIn("## What the outside auditor asked for before the "
+                      "council sat", casefile)
         # The footer carries the same hash the envelope recorded.
         self.assertIn(envelope["verdict_hash"], page)
 
@@ -207,7 +292,7 @@ class TestEndToEndRehearsal(unittest.TestCase):
         # and the auditor's ceiling, carries the whole warnings list,
         # tags every row for bounds, and flags any sizing id the
         # council's own list does not pin.
-        self.assertEqual(verdict["schema_version"], "1.3.0")
+        self.assertEqual(verdict["schema_version"], "1.4.0")
         subject = verdict["subject"]
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
@@ -292,8 +377,12 @@ class TestKindRehearsals(unittest.TestCase):
             handle.write(capture["question_verbatim"])
         subject_path = os.path.join(work, "subject.json")
         canonical.write_canonical_json(subject_path, capture["subject"])
-        state, run_dir = host.init(work, run_id, pack_path, pack_sha,
-                                   suff_path, question_path, subject_path)
+        state, run_dir = host.init(
+            work, run_id, pack_path, pack_sha, suff_path, question_path,
+            subject_path,
+            evidence_dir=test_evidence.write_evidence_stage(
+                os.path.join(work, "evidence"), pack_path=pack_path,
+                capture=capture, chosen_by="atlas"))
         self.assertEqual(state, "INIT")
         for _ in range(40):
             host.step(run_dir)
@@ -355,7 +444,7 @@ class TestKindRehearsals(unittest.TestCase):
         envelope = canonical.read_json(
             os.path.join(self.last_run_dir, "atlas-envelope.json"))
         subject = verdict["subject"]
-        self.assertEqual(verdict["schema_version"], "1.3.0")
+        self.assertEqual(verdict["schema_version"], "1.4.0")
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
         self.assertEqual(envelope["run_id"], run_id)
@@ -404,7 +493,7 @@ class TestKindRehearsals(unittest.TestCase):
         # with a frozen price, and the ruled emphasis label verbatim.
         self.assertIn("The subject is a basket of 2 named instruments "
                       "judged as one idea.", page)
-        self.assertIn('<td class="nowrap">231.40 USD</td>', page)
+        self.assertIn('<td class="nowrap">$231.40</td>', page)
         self.assertIn("internal emphasis — a statement about the thesis "
                       "itself, never an instruction to any portfolio:",
                       page)
@@ -440,7 +529,7 @@ class TestKindRehearsals(unittest.TestCase):
         # REG-18 metric-identity line - and the trigger row carries the
         # member tag beside the trigger's own words.
         self.assertIn("The theme's falsifiers", page)
-        self.assertIn("Prior period: 9.10 GW, as of 2025-08-15.", page)
+        self.assertIn("Prior period: 9.10 GW, as of 15 Aug 2025.", page)
         self.assertIn("Metric identity assumed: ", page)
         self.assertIn('<span class="tag">GSTA</span> INVENTED FIXTURE - '
                       "reopen if Grid Storage Alpha closes at or under "
@@ -547,9 +636,12 @@ class TestKindRehearsals(unittest.TestCase):
             handle.write(capture["question_verbatim"])
         subject_path = os.path.join(work, "subject.json")
         canonical.write_canonical_json(subject_path, capture["subject"])
-        state, run_dir = host.init(work, "rehearsal-unearned-rating",
-                                   pack_path, pack_sha, suff_path,
-                                   question_path, subject_path)
+        state, run_dir = host.init(
+            work, "rehearsal-unearned-rating", pack_path, pack_sha,
+            suff_path, question_path, subject_path,
+            evidence_dir=test_evidence.write_evidence_stage(
+                os.path.join(work, "evidence"), pack_path=pack_path,
+                capture=capture, chosen_by="atlas"))
         self.assertEqual(state, "INIT")
         refusal = None
         for _ in range(40):
@@ -636,6 +728,11 @@ class TestKindRehearsals(unittest.TestCase):
         capture["sufficiency"]["requirements"] = [
             row for row in capture["sufficiency"]["requirements"]
             if row["kind"] != "constituent_essential"]
+        # The business frames go with the names they described: a frame
+        # is keyed to an instrument the subject actually names (owner
+        # ruling AC1). This theme now names none, so it carries none,
+        # and the refusal under test stays the ruled shopping list.
+        capture["business_frame"] = None
         stripped_path = os.path.join(work, "stripped-theme.json")
         canonical.write_canonical_json(stripped_path, capture)
         # The gate accepts: nothing present is malformed - the absence

@@ -4,13 +4,10 @@ Run every command from the repository root. The exit code is the authority
 (F4.1): 0 is green, anything else is red. `PYTHONIOENCODING=utf-8` on every
 invocation (the console codepage otherwise mangles output on Windows).
 `python` means YOUR Python 3 interpreter: on Windows it is `python`; on macOS use `python3.13`
-(no bare `python` exists there — MAC-3). The old stack's eleven checks are Windows-only by design
-(seven are PowerShell); on macOS they are absent along with the frozen stack they test, and the
-PowerShell invocation-pin hook registered in `.claude/settings.json` is likewise inert there —
-inert AND guarding nothing, since the frozen stack cannot run on macOS at all (MAC-4, adjudicated:
-documented rather than ported; the pin dies with the frozen stack at its AB1 retirement).
+(no bare `python` exists there — MAC-3). The seven suites below are the whole battery, on either
+platform.
 
-## The six suites
+## The seven suites
 
 ```
 python council/tests/test_foundations.py
@@ -19,6 +16,7 @@ python council/tests/test_engine.py
 python council/tests/test_bridge.py
 python council/tests/test_report.py
 python council/tests/test_e2e_rehearsal.py
+python council/tests/test_ledger.py
 ```
 
 - **foundations** — canonical bytes and hashing, the schema validator, the
@@ -31,12 +29,32 @@ python council/tests/test_e2e_rehearsal.py
   and the sufficiency gate's pass and refusal paths per kind — the
   per-constituent essential core, the ruled vehicle floor, and the
   empty-theme refuse-with-shopping-list — over invented fixture packs.
+  Since UPGRADE-2 Phase A it also covers the BUSINESS FRAME and the
+  outside auditor's reading of the evidence: a pack for a priced
+  business must say what it is, how it earns, what is changing, and the
+  three to five numbers that decide the question, each answered by a
+  fact in the pack or declared an honest gap; a figure written into the
+  frame's prose must be one the record carries, written exactly as the
+  record writes it; a headline figure that has fallen must be read as
+  by design, deterioration or mixed. Sufficiency refuses a sitting
+  whose evidence no outside model checked, whose auditor's points went
+  unanswered, whose audit record carries neither the one-time token
+  that call was issued nor the hash of the evidence it was sent, and
+  whose evidence moved after that call with nothing on record saying
+  what moved. The one-page evidence brief is covered here too: every
+  section present, every figure the exact string the capture recorded,
+  and the page kept to one page without cutting through a number.
   Since ANCHORLESS it also covers sufficiency judged PER ASSET CLASS: the
   shape and the class must agree, a commodity names its product, and the
   crypto, gold and copper anchor sets pass on their own fixtures and refuse
   BY NAME when an anchor is pulled — including the cycle history, where the
   four families must cover the same cycles or the recovery durations go
-  silently missing.
+  silently missing. Since UPGRADE-2 U3d it also covers the correction loop
+  (a fact patched in place, its derived chain re-struck, the pack re-run at
+  zero model cost, and a rebuilding correction refused until re-audited),
+  the optional plain-English fact label, the period basis that keeps an
+  average from being published as an annual figure, the peer comparability
+  statement, and the full evidence document a reviewed sitting approves.
 - **engine** — the stepped host's state machine end to end: seat retries,
   the blind seal re-run, the reach scan, the chair's mechanical checks
   (kind-aware: one note per named constituent, one falsifier row per
@@ -56,14 +74,40 @@ python council/tests/test_e2e_rehearsal.py
   bound tag resolved from the frozen pack onto each key number and sizing
   row, the three newly required fields, the pinned sizing-input units with
   the one checked percent-to-fraction restatement, and read-back still
-  CLEAN over every sitting on record after the version bump.
+  CLEAN over every sitting on record after the version bump. Since
+  UPGRADE-2 Phase A it also covers what every seat is told before the
+  numbers: the business frame ahead of the fact table, what the outside
+  auditor asked for and what the record answered, and what changed
+  after it read the evidence — every word either model wrote travelling
+  inside the quote fence, never in the case file's own voice. The
+  host's side of the evidence stage is here as well: the mode chosen at
+  the very start of a sitting, the approval a reviewed sitting cannot
+  open without, and the capture stage's own minutes and tokens —
+  including what the outside auditor cost, measured as the sum of every
+  call the bridge recorded. Since UPGRADE-2 U3d it also covers the full
+  evidence document a reviewed sitting cannot open without, the estimate
+  flag on the capture stage's own figures, and the seat-cost measure —
+  tokens per tool turn and brief bytes per seat — computed into the
+  published record.
 - **bridge** — the challenger command's exact flag surface, the stdin
   prompt, the isolated schema-only directory, every failure status, and a
   real tree-kill on timeout. Every test runs against a fake launcher: the
-  suite makes NO paid calls.
+  suite makes NO paid calls. Since UPGRADE-2 Phase A it also covers the
+  SECOND paid call — the audit of the evidence, made before any seat is
+  paid — under the same discipline: the brief the auditor reads, the
+  five kinds of finding it may return and nothing else, the one-time
+  token and the hash of the evidence that call was given, one attempt
+  logged per call so a re-dispatched audit can be added up, and the
+  merge that writes the auditor's own words into the capture together
+  with what the capture session answered and what moved afterwards.
+  Since UPGRADE-2 U3d it also covers the per-pass archive — every audit
+  pass kept whole so a re-dispatch never loses the first pass's
+  dispositions — and the delta re-audit of a correction: a narrower
+  brief carrying only the changed facts and the prior findings staged.
 - **report** — the rendered page's sections, folding, warnings band, change
-  appendix, number formatting (reading precision only - seat prose is never
-  edited), self-containedness, the dark default, and the kind sections:
+  appendix, number formatting (under AC16(1) the number DISPLAY inside seat and
+  chairman prose may be respelt to the market form - value unchanged, every
+  substitution logged), self-containedness, the dark default, and the kind sections:
   the constituent table, the theme falsifier block with its prior period
   and metric-identity line, the vehicle identity block, and the
   envelope's kind fields under the ruled emphasis label. Since ANCHORLESS it
@@ -71,7 +115,18 @@ python council/tests/test_e2e_rehearsal.py
   order before every appendix, the numbers the ruling turns on, the scenario
   ladder with its arithmetic quoted word for word, the bar and the printed
   sensitivity, the downside ladder, the dated calendar, what changes the
-  rating, and the two-page budget measured on the rendered text.
+  rating, and the two-page budget measured on the rendered text. Since
+  UPGRADE-2 Phase A it also covers the evidence stage on the page: what
+  the outside auditor asked for, open on the front when it called
+  anything blocking; what changed after it read the evidence, open when
+  a change touches a number the decision turns on; whether a person
+  reviewed the evidence before the council sat or the sitting ran
+  unattended; and the sitting's clock, read from the moment the FIRST
+  rendering recorded — so the same run reprints as the same page, today
+  and in a year. Since UPGRADE-2 U3d it also covers the word "estimated"
+  printed beside a capture figure that is one, and the seat-cost appendix
+  — tokens per tool turn and brief bytes per seat, the input and output
+  columns empty with the note that says the harness cannot fill them.
 - **e2e rehearsal** — invented captures through the REAL chain: gate →
   freeze → sufficiency → host → nine canned seats → a canned challenge
   result in the bridge's own shape → publish → read-back → rendered report
@@ -80,23 +135,23 @@ python council/tests/test_e2e_rehearsal.py
   chairman's rating raised one band above what his own ladder earns (refused,
   and nothing publishes), and the empty-theme refusal with its shopping-list
   note. Zero model calls.
+- **ledger** (UPGRADE-2 U7) — the track record. The row built from a verdict
+  of every schema version on record and validated; the horizons' due dates
+  counted in trading days; the anchorless price read from the scenario
+  reference. A real publish appends one append-only row whose hash the run
+  record carries, and read-back verifies it, refuses a row altered after the
+  fact, and refuses a missing ledger file. The scoring rules read from data
+  (owner ruling AC7): right and wrong per rating word at 252 trading days,
+  excess return against the benchmark or the subject's own return where the
+  class has none, the mispricing read scored by direction, falsifiers tallied
+  for and against, tripwires and triggers as fired or not — with a moved
+  threshold flipping an outcome to prove the rules are data. The scorecard
+  renders offline and refuses the tokens-against-return correlation below
+  twenty scored rows, showing it with its caveat at twenty. Zero model calls;
+  the scoring script never fetches; invented fixtures only.
 
-## The old stack's eleven checks — RETIRED (ruling AB24, 2026-09-06)
+## The old stack's eleven checks — RETIRED (AB24) and DELETED (AB25(3), 2026-09-06)
 
-The frozen PowerShell stack is retired: Atlas integrated the council and the AB1 trigger fired.
-These eleven are no longer run at any gate and no longer need to be green; they are listed only
-so the record stays legible until the owner rules on deleting the stack from the tree.
-
-```
-python schemas/verdict-schema.Tests.py
-powershell -ExecutionPolicy Bypass -File control/control-flow.Tests.ps1
-powershell -ExecutionPolicy Bypass -File bridge/bridge.Tests.ps1
-powershell -ExecutionPolicy Bypass -File control/diff/differential.Tests.ps1
-powershell -ExecutionPolicy Bypass -File control/store/run-store.Tests.ps1
-powershell -ExecutionPolicy Bypass -File control/store/run-store-ingress.Tests.ps1
-powershell -ExecutionPolicy Bypass -File tools/steward/steward.Tests.ps1
-powershell -ExecutionPolicy Bypass -File hooks/hooks.Tests.ps1
-powershell -ExecutionPolicy Bypass -File workflow/controller.Tests.ps1
-powershell -ExecutionPolicy Bypass -File workflow/build-controller.ps1 -Check
-python tools/report/report.Tests.py
-```
+Historical note only: the frozen PowerShell stack and its eleven checks were retired when Atlas
+integrated the council (the AB1 trigger), then deleted from the working tree in one audited commit.
+Nothing above depends on them; git history keeps the code and the commands.

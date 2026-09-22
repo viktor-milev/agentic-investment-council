@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Evidence capture contract 1.3.0 - what the evidence session hands the gate",
-  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 adds the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. Nothing else changed, and an ordinary capture carries no such tag.",
+  "title": "Evidence capture contract 1.6.0 - what the evidence session hands the gate",
+  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 added the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. 1.4.0 adds business_frame (owner ruling AC1): the pack states what the business IS, how it earns, what is changing, the three to five numbers that decide THIS question, the peer set or an honest gap, and management's delivery against its own guidance. The frame is keyed by ticker - the subject's own for a single instrument, one key per constituent for a basket or a theme universe - so one contract carries a single name and an expression of several without a second shape. 1.4.1 adds the frame's own figures lists (owner ruling AC12.2): a figure written in the frame's prose is DECLARED beside that prose and must appear in it word for word, exactly as a tier-2 passage's figures already must. what_it_does_figures carries them for what_it_does; what_is_changing, each revenue line and each decisive-metric row carries its own list. The lists may be empty - prose with no figure in it declares none. 1.4.2 adds evidence_challenge (owner ruling AC2): a genuinely different model audits the evidence BEFORE any seat is paid, and what it said and what the capture session did about every point travel INSIDE the capture, so the pack hash covers them. 1.4.3 makes that block traceable and honest about what moved after it (owner ruling AC13): it carries the one-time nonce the bridge issued for the call and the hash of the evidence the auditor was given, and it lists every fact that changed, was added or was removed between the call and the recording of its answer. 1.5.0 (owner ruling AC15, unit U3d) adds four things and forces none of them on a capture that has none: an optional plain-English 'label' on any tier-1 fact and an optional 'period_basis' on a derived one (P5, P3); optional 'comparable_because' and 'not_comparable_on' statements on each peer (P1); an optional 'corrections' list recording each user correction (who, when, fact, old, new, reason, and whether it narrows a claim or rebuilds what the seats reason from) so a fix patches the pack in place instead of rebuilding it (P7); and, in the evidence_challenge block, the archive of every audit pass - prior_passes with the current pass marked - so a re-dispatched audit no longer overwrites the first (per-pass archive), plus the scope of the current pass (a full audit or a delta re-audit of a correction, P8). The gate and the sufficiency gate enforce these where they bite; the block and the list stay optional because a pack that was never corrected and never re-audited carries neither. 1.6.0 (owner ruling AC15, unit U3e) adds two meaning changes for a single name and forces neither on any other subject. The business frame gains 'archetype' - what kind of business this is (a profitable operator, a ramping infrastructure builder, a stabilised lessor, or an asset with no earnings) - with 'archetype_because' citing facts in at most forty words; the third canonical test gains 'measure', the rating basis that archetype calls for, and council/floors/floors.json carries the archetype-to-measure table as data (P2, AC15.2); the same row names the measure's denominators on both sides - 'subject_denominator_facts' (the subject's own tier-1 denominator fact ids) and 'peer_denominator_metrics' (the peer-side metric names), each holding exactly the measure's denominators_required count - so the rating is required computable for the subject AND every peer, the numerator and each denominator, not the numerator alone (architect ruling 2026-09-20; unit U3e round-1 findings r1-1 and r1-3). The frame also gains 'cycle_dependence' - whether this single name's thesis rests on an identifiable capital or commodity cycle - with 'cycle_dependence_because' in at most twenty-five words, and an optional top-level 'cycle' carries three to five dated, re-fetchable series for that cycle (hard cap five), or declares the gap with a reason (P4, AC15.3). All four frame fields and the measure are optional in this contract and enforced by the gate and the sufficiency gate for a single name only; a basket, a theme, a fund and an asset with no earnings carry none. 1.6.0 also carries, beside each of those two rationale prose fields, an optional figures list - archetype_because_figures and cycle_dependence_because_figures - so a figure written into either stands in its own text word for word and equals the value of a fact the frame carries, exactly as what_it_does_figures already binds (owner ruling AC13.1, unit U3e closing pass); both lists are absent or empty where the prose carries no figure.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
   ],
   "properties": {
     "capture_version": {
-      "const": "1.3.0"
+      "const": "1.6.0"
     },
     "subject": {
       "type": "object",
@@ -284,6 +284,720 @@
         }
       }
     },
+    "business_frame": {
+      "description": "Owner ruling AC1 - what the business IS, before the numbers. Keyed by TICKER: a single instrument carries one key, its own; a basket or a theme universe carries one key per named constituent; a theme implemented through one vehicle carries the vehicle's. The gate refuses a key the subject does not declare. Required for a priced business (single_stock, and every constituent of a basket or a theme universe); advisory for a fund and for an asset with no earnings, which is judged on its own anchor set instead. Word limits are counted on whitespace-separated words by the gate. Every id named here is a fact id in tier1, or - for capital_allocation and competitive_position - a passage id in tier2.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "what_it_does",
+          "what_it_does_figures",
+          "how_it_earns",
+          "what_is_changing",
+          "headline_decline_read",
+          "decisive_metrics",
+          "peers",
+          "management",
+          "competitive_position"
+        ],
+        "properties": {
+          "what_it_does": {
+            "description": "At most 120 words, plain English: what is sold, to whom, and what the customer loses if this company disappears.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "what_it_does_figures": {
+            "description": "Owner ruling AC12.2: every figure written into what_it_does, declared here and standing in that text word for word - the rule a tier-2 passage's figures already meet. Empty where the text carries no figure. It rides beside what_it_does rather than inside it because that field is prose, not an object.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "how_it_earns": {
+            "description": "The revenue lines with their share of the latest reported period, each pointing at the tier-1 facts that carry it. Owner ruling AC12.3: those facts are revenue and nothing else - the families are named in council/floors/floors.json. Owner ruling AC12.2: the share is the value of a fact this line carries, never free text.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "line",
+                "share_of_period",
+                "facts",
+                "figures"
+              ],
+              "properties": {
+                "line": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "share_of_period": {
+                  "description": "What this line took of the latest reported period, written exactly as the fact that carries it writes it: the value of one of this line's own facts, or of a derived fact struck from them. A share no cited fact carries is refused (owner ruling AC12.2).",
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "facts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "[a-z0-9][a-z0-9_]*"
+                  }
+                },
+                "figures": {
+                  "description": "Owner ruling AC12.2: every figure written into this line's own words, declared here and standing in that text word for word. The share of the period is bound harder - to the facts themselves - and is not declared here.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          },
+          "what_is_changing": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "statement",
+              "facts",
+              "figures"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "none",
+                  "mix_shift",
+                  "model_transition",
+                  "turnaround",
+                  "cyclical_trough",
+                  "cyclical_peak",
+                  "rollup"
+                ]
+              },
+              "statement": {
+                "description": "At most 150 words, citing facts.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "figures": {
+                "description": "Owner ruling AC12.2: every figure written into the statement, declared here and standing in that text word for word. Empty where the statement carries no figure. These are the numbers as written; `facts` above are the ids they came from.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "headline_decline_read": {
+            "description": "Required where any of revenue, net income or operating cash flow is below its prior-year pair: is the fall by design, deterioration, or mixed? 'unknown' is a declared gap and the capture carries a gaps row for the class 'headline_decline_read'. Null where no headline figure has fallen.",
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "reading",
+              "facts"
+            ],
+            "properties": {
+              "reading": {
+                "enum": [
+                  "by_design",
+                  "deterioration",
+                  "mixed",
+                  "unknown"
+                ]
+              },
+              "facts": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              }
+            }
+          },
+          "decisive_metrics": {
+            "description": "The three to five numbers that decide THIS question. Each row either names the facts that answer it or declares a gap with a reason and the test it weakens - never both.",
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "why_it_decides",
+                "figures",
+                "kind",
+                "answered_by",
+                "gap"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "why_it_decides": {
+                  "description": "At most 40 words.",
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "figures": {
+                  "description": "Owner ruling AC12.2: every figure written into why_it_decides, declared here and standing in that text word for word. Empty where it carries no figure. The metric's own value is in the facts under answered_by, not here.",
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "kind": {
+                  "enum": [
+                    "capacity_or_backlog",
+                    "unit_economics",
+                    "margin",
+                    "cash_conversion",
+                    "balance_sheet",
+                    "growth",
+                    "pricing",
+                    "share",
+                    "other"
+                  ]
+                },
+                "answered_by": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "[a-z0-9][a-z0-9_]*"
+                  }
+                },
+                "gap": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": false,
+                  "required": [
+                    "reason",
+                    "weakened_test"
+                  ],
+                  "properties": {
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "weakened_test": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "peers": {
+            "description": "Two to six comparable names, each with at least two metrics captured as tier-1 facts under the peer_<metric>__<ticker> convention. An empty list is legal only where the capture declares a gaps row for the class 'peer_' saying why no peer set is honest: three true peers beat six doubtful ones.",
+            "type": "array",
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "ticker",
+                "metrics"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "ticker": {
+                  "type": "string",
+                  "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+                },
+                "metrics": {
+                  "type": "array",
+                  "minItems": 2,
+                  "items": {
+                    "type": "string",
+                    "pattern": "[a-z0-9][a-z0-9_]*"
+                  }
+                },
+                "comparable_because": {
+                  "description": "Owner ruling AC15 (P1): why this name is an honest peer - the contract structure and duration it shares, or the revenue model it shares - at most 40 words. The gate refuses a peer that carries no such statement, so a peer set is comparable by business model and not by narrative. Reaches the outside auditor's brief.",
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "not_comparable_on": {
+                  "description": "Owner ruling AC15 (P1): where this peer is NOT comparable, at most 25 words; 'nothing material' where there is no such caveat. The gate refuses an empty statement - an honest comparison names its own limits.",
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                }
+              }
+            }
+          },
+          "management": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ceo_tenure_years",
+              "cfo_tenure_years",
+              "insider_ownership_pct",
+              "guidance_vs_delivery",
+              "capital_allocation"
+            ],
+            "properties": {
+              "ceo_tenure_years": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "cfo_tenure_years": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "insider_ownership_pct": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "guidance_vs_delivery": {
+                "description": "One row per reported quarter that had guidance, at most the last four: the guided range and the delivered figure, both as tier-1 facts. An empty list is legal only where the capture declares a gaps row for the class 'guided_'.",
+                "type": "array",
+                "maxItems": 4,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "period",
+                    "guided",
+                    "delivered"
+                  ],
+                  "properties": {
+                    "period": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "guided": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "pattern": "[a-z0-9][a-z0-9_]*"
+                      }
+                    },
+                    "delivered": {
+                      "type": "string",
+                      "pattern": "[a-z0-9][a-z0-9_]*"
+                    }
+                  }
+                }
+              },
+              "capital_allocation": {
+                "description": "The id of the tier-2 passage on buybacks, dividends, acquisitions and dilution over three years, figures literal.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              }
+            }
+          },
+          "competitive_position": {
+            "description": "The id of the tier-2 passage on market structure, the company's share bucket, why it wins or loses, and the do-nothing alternative. Facts, not adjectives.",
+            "type": "string",
+            "pattern": "[a-z0-9][a-z0-9_]*"
+          },
+          "archetype": {
+            "description": "Owner ruling AC15 (P2, unit U3e): what KIND of business this is, which decides the rating basis the third canonical test uses. profitable_operator - rated on earnings against its own history and peers. ramping_infrastructure_builder - revenue has not arrived yet, so rated on enterprise value per unit of contracted capacity and contracted revenue per unit. stabilised_lessor - rated on enterprise value to operating income. no_earnings_asset - keeps the AB13/AB15 anchorless ladder, legal only for an anchorless subject. The archetype-to-measure table is data in council/floors/floors.json. Optional in this contract; the sufficiency gate requires it, and requires it to match the measure below, for a single name only.",
+            "enum": [
+              "profitable_operator",
+              "ramping_infrastructure_builder",
+              "stabilised_lessor",
+              "no_earnings_asset"
+            ]
+          },
+          "archetype_because": {
+            "description": "Owner ruling AC15 (P2): why this archetype, in at most forty words, citing the facts it rests on. The gate counts the words; it never reads whether the archetype is TRUE, only that the capture states its ground.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "archetype_because_figures": {
+            "description": "Owner ruling AC13.1 (unit U3e closing pass): every figure written into archetype_because, declared here and standing in that text word for word, and equal to the value of a fact this frame's name carries - the rule what_it_does_figures already meets, checked by the same matcher. Optional; absent or empty where the ground carries no figure.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "cycle_dependence": {
+            "description": "Owner ruling AC15 (P4, unit U3e): whether this single name's thesis rests on an identifiable capital or commodity cycle. identified - the capture carries the top-level 'cycle' block (three to five dated series, or a declared gap). none - no such cycle, and no block is carried. Optional in this contract; the gate requires it, with cycle_dependence_because, for a single name, and the sufficiency gate ties 'identified' to a cycle block.",
+            "enum": [
+              "identified",
+              "none"
+            ]
+          },
+          "cycle_dependence_because": {
+            "description": "Owner ruling AC15 (P4): why the thesis does or does not rest on a cycle, in at most twenty-five words. The gate counts the words.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "cycle_dependence_because_figures": {
+            "description": "Owner ruling AC13.1 (unit U3e closing pass): every figure written into cycle_dependence_because, declared here and standing in that text word for word, and equal to the value of a fact this frame's name carries - the same rule and the same matcher as archetype_because_figures. Optional; absent or empty where the reason carries no figure.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "evidence_challenge": {
+      "description": "What the outside auditor said about this evidence, and what the capture session did about every point (owner ruling AC2). Written into the capture by 'python -m council.bridge.codex_bridge evidence-record', never by hand, so the auditor's words stay its own and the pack hash covers them. Each finding carries the shape of council/schemas/evidence_findings_schema.json exactly. A failed call is recorded as status 'failed' with the bridge's own status word and does not stop the sitting; the report's front then says the outside auditor did not check the evidence. The block is OPTIONAL in this contract because the capture is written and gated BEFORE the call is made; the sufficiency gate is where a sitting that never asked the auditor refuses.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "model", "failure_status", "failure_reason", "findings", "overall", "resolutions", "nonce", "evidence_sha256", "post_audit_changes", "post_audit_sha256"],
+      "properties": {
+        "status": {
+          "enum": ["success", "failed"],
+          "description": "success: the auditor answered and its answer validated against its own schema. failed: the call produced no usable answer."
+        },
+        "nonce": {
+          "type": ["string", "null"],
+          "description": "Owner ruling AC13.3: the one-time token the bridge issued for this call, copied here out of the bridge's own result. Null only in a block nothing wrote from such a result - which the sufficiency gate refuses by name. A cost-raiser, not a proof: no deterministic check can show that a paid call happened, because the capture session writes every file in that folder.",
+          "minLength": 1
+        },
+        "evidence_sha256": {
+          "type": ["string", "null"],
+          "description": "Owner ruling AC13.3: the hash of the evidence the outside auditor was given - the capture WITHOUT this block, the one part of the file that recording an answer does not touch. Null only in a block nothing wrote from a bridge result. Where it differs from the pack's own hash at sufficiency, post_audit_changes is what says which figures moved.",
+          "minLength": 1
+        },
+        "post_audit_sha256": {
+          "type": ["string", "null"],
+          "description": "Owner ruling AC13.2, audit round 1: the hash of the evidence as RECORDED - the capture without this block, at the moment 'evidence-record' wrote the list below. It says which evidence that list was written for. Where it does not equal the pack's own hash at sufficiency, the evidence moved AGAIN after the list was made and what moved since is on no record at all.",
+          "minLength": 1
+        },
+        "post_audit_changes": {
+          "description": "Owner ruling AC13.2: every fact or passage that changed, was added or was removed between the moment the outside auditor was sent this evidence and the moment its answer was recorded. Written by 'evidence-record', which holds both readings; empty where nothing moved. The capture MAY change what the auditor did not ask about - and every such change is listed here, in each seat's case file and on the owner's report. A pack whose evidence hash moved with an empty list is refused at sufficiency.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "change", "old", "new"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The tier-1 fact id or tier-2 passage id that moved."
+              },
+              "change": {
+                "enum": ["changed", "added", "removed"]
+              },
+              "old": {
+                "type": ["string", "null"],
+                "description": "The value the auditor was shown - a fact's value, or a passage's text. Null for an entry that was added."
+              },
+              "new": {
+                "type": ["string", "null"],
+                "description": "The value the council sat on. Null for an entry that was removed. Equal to old where the value stands and something else about the entry - its unit, its date, its source - moved."
+              }
+            }
+          }
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The model asked, as it was requested. Not independently confirmed - the CLI does not echo the model it served."
+        },
+        "failure_status": {
+          "type": ["string", "null"],
+          "enum": [null, "launch_failure", "timeout", "malformed_output", "schema_failure", "binding_failure", "internal_failure"],
+          "description": "The bridge's own status word for a failed call; null on success."
+        },
+        "failure_reason": {
+          "type": ["string", "null"],
+          "description": "What actually went wrong, in the bridge's own words - the six status words stand for eight different causes, and the runbook promises the reason. Null on success. It can carry the outside model's own text verbatim, so it reaches the owner's report escaped and never a seat's prompt."
+        },
+        "findings": {
+          "type": "array",
+          "description": "The auditor's findings, verbatim. Empty on a failed call, and legitimately empty where the auditor found nothing to say.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "kind", "severity", "detail", "fact_ids", "where_it_likely_lives", "source_url", "figure_at_source"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {
+                "type": "string",
+                "enum": ["missing_decisive_fact", "suspect_figure", "framing_error", "missing_checklist_row", "source_doubt"]
+              },
+              "severity": {"type": "string", "enum": ["blocking", "material", "minor"]},
+              "detail": {"type": "string", "minLength": 1},
+              "fact_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "where_it_likely_lives": {"type": ["string", "null"]},
+              "source_url": {"type": ["string", "null"]},
+              "figure_at_source": {"type": ["string", "null"]}
+            }
+          }
+        },
+        "overall": {
+          "type": ["string", "null"],
+          "description": "The auditor's paragraph on the evidence as a whole, verbatim, or null."
+        },
+        "resolutions": {
+          "description": "One entry per finding, keyed by that finding's own id: what the capture session did about it. Empty on a failed call.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["disposition", "fact_ids", "reason", "weakened_test"],
+            "properties": {
+              "disposition": {
+                "enum": ["captured", "gap_declared", "overruled"],
+                "description": "captured: the evidence was gathered and is now in the pack, and fact_ids names it. gap_declared: it could not be gathered, and reason and weakened_test say why and which test suffers. overruled: the capture session disagrees with the auditor and says why, in at least 25 words."
+              },
+              "fact_ids": {
+                "type": "array",
+                "description": "For 'captured': the ids now in the pack that answer the point. Empty otherwise.",
+                "items": {"type": "string", "pattern": "[a-z0-9][a-z0-9_]*"}
+              },
+              "reason": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "description": "For 'gap_declared' and 'overruled': why, in the capture session's own words. Null for 'captured'."
+              },
+              "weakened_test": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "description": "For 'gap_declared': which test the missing evidence weakens. Null otherwise."
+              }
+            }
+          }
+        },
+        "scope": {
+          "enum": ["full", "delta"],
+          "description": "Owner ruling AC15 (P8): what the CURRENT (latest) pass audited. 'full' - the whole evidence, as owner ruling AC2's first audit always did. 'delta' - only the facts a correction changed, the figures struck from them, and the frame passages that cite them, with the prior pass's findings staged. Optional; a block that omits it is a full audit, which is what every pass before this contract was."
+        },
+        "current_pass": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Owner ruling AC15 (per-pass archive): which pass the flat fields above are. The current pass is these fields; earlier passes are in prior_passes below. Optional; a block that omits it is pass 1 and carries no prior passes."
+        },
+        "prior_passes": {
+          "description": "Owner ruling AC15 (per-pass archive, the debrief's defect 6): every audit pass BEFORE the current one, so a re-dispatched audit no longer overwrites the first. Each carries that pass's own findings and resolutions and the nonce and evidence hash that bound it. Written by 'evidence-record' from the result.pass<N>.json and resolution.pass<N>.json files the bridge keeps on disk; a copy of already-validated passes, so the finding and resolution shapes are not re-declared here. Empty or absent where the audit ran once.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pass", "status", "model", "failure_status", "failure_reason", "findings", "overall", "resolutions", "nonce", "evidence_sha256"],
+            "properties": {
+              "pass": {"type": "integer", "minimum": 1},
+              "scope": {"enum": ["full", "delta"]},
+              "status": {"enum": ["success", "failed"]},
+              "model": {"type": ["string", "null"]},
+              "failure_status": {"type": ["string", "null"]},
+              "failure_reason": {"type": ["string", "null"]},
+              "findings": {"type": "array"},
+              "overall": {"type": ["string", "null"]},
+              "resolutions": {"type": "object"},
+              "nonce": {"type": ["string", "null"]},
+              "evidence_sha256": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "corrections": {
+      "description": "Owner ruling AC15 (P7): every user correction applied to this pack in place, so a fix never rebuilds it. One entry per 'python -m council.evidence.correct' invocation, recording who made it, when, which fact, its old and new value, and why; the derived figures struck from the corrected fact are re-struck by the command and listed in the evidence_challenge block's post_audit_changes, not here. 'classification' is the deterministic reading of whether the correction only narrows a claim (no re-audit needed) or rebuilds what the seats reason from (a delta re-audit is required before the sufficiency gate passes, owner ruling AC15 P8); its rule is data in council/floors/floors.json. 'reaudited' is set true by 'evidence-record' after a delta re-audit covers a rebuilding correction, or a successful full re-audit folds in every correction it re-read. Optional; a pack that was never corrected carries none.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fact_id", "old", "new", "source", "reason", "by", "at", "classification", "reaudited"],
+        "properties": {
+          "fact_id": {
+            "type": "string",
+            "pattern": "[a-z0-9][a-z0-9_]*"
+          },
+          "old": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The corrected fact's value before this correction, byte for byte."
+          },
+          "new": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The corrected fact's value after this correction, byte for byte - the same string now standing in tier1."
+          },
+          "source": {
+            "type": ["string", "null"],
+            "description": "The corrected fact's new source sentence, where the correction gave one; null where the source was left as it was and the reading is now stale until re-gathered."
+          },
+          "reason": {
+            "type": ["string", "null"],
+            "description": "Why the correction was made, in the correcting session's own words, or null."
+          },
+          "by": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Who made the correction."
+          },
+          "at": {
+            "type": "string",
+            "pattern": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?Z"
+          },
+          "classification": {
+            "enum": ["narrowing", "rebuilding"],
+            "description": "narrowing: the correction only narrows a claim - no new fact, no new derived chain, no fact the frame's reading rests on - so no outside re-audit is needed. rebuilding: it changes what the seats reason from, so a delta re-audit is required before sufficiency passes."
+          },
+          "reaudited": {
+            "type": "boolean",
+            "description": "Whether an outside re-audit has folded this correction into the audited baseline. Always false when recorded; set true by 'evidence-record' after a delta re-audit covers a rebuilding correction, or after a successful full re-audit folds in every correction it re-read (audit round 5, r5-4). A narrowing correction needs no delta re-audit for the sufficiency gate, but a full re-audit still folds it so the post-audit record stops calling a reverted figure changed."
+          }
+        }
+      }
+    },
+    "cycle": {
+      "description": "Owner ruling AC15 (P4, unit U3e): the capital or commodity cycle a single name's thesis rests on, carried as EVIDENCE the seats read - never a computed indicator, a reading, or an instruction to a seat. Present only where the business frame declares cycle_dependence 'identified'; a single name with no identifiable cycle carries none. Names the cycle and why it matters, then either 'series' (three to five dated, public, re-fetchable series, hard cap five - the owner's own bound) or 'gap' (a reason no series is carried). The gate checks the shape, the strictly increasing dates and at least eight points per series, and refuses a block that carries both series and gap or neither; the sufficiency gate checks each series' freshness against the class's price-freshness rule and ties this block to cycle_dependence. Optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "why_it_matters"
+      ],
+      "properties": {
+        "name": {
+          "description": "The cycle in one line, at most twenty-five words.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "why_it_matters": {
+          "description": "Why this single name's thesis rests on the cycle, at most forty words, citing facts.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "series": {
+          "description": "Three to five dated, public, re-fetchable series for the cycle. The hard cap of five is the owner's own bound (AC15.3). Each series is at least eight points with strictly increasing dates, each point a date and the value as the exact string observed.",
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "source",
+              "as_of",
+              "unit",
+              "points",
+              "refetch_url_or_source_line"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "as_of": {
+                "type": "string",
+                "pattern": "\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?Z)?"
+              },
+              "unit": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "points": {
+                "description": "At least eight dated observations, dates strictly increasing (the gate checks the order), each value the exact string observed.",
+                "type": "array",
+                "minItems": 8,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "date",
+                    "value"
+                  ],
+                  "properties": {
+                    "date": {
+                      "type": "string",
+                      "pattern": "\\d{4}-\\d{2}-\\d{2}"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    }
+                  }
+                }
+              },
+              "refetch_url_or_source_line": {
+                "description": "The public URL or source line the series can be re-fetched from - the honesty the owner asked for (AC15.3): a series that cannot be re-fetched is a claim, not evidence.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              }
+            }
+          }
+        },
+        "gap": {
+          "description": "Declared where the cycle is identified but no series is carried: the reason no dated series is in the pack. The gate refuses a block that carries both series and gap.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        }
+      }
+    },
     "tier1": {
       "type": "array",
       "minItems": 1,
@@ -303,6 +1017,23 @@
           "id": {
             "type": "string",
             "pattern": "[a-z0-9][a-z0-9_]*"
+          },
+          "label": {
+            "description": "Owner ruling AC15 (P5): an optional plain-English name for this fact, at most 8 words, written once at capture. The owner-facing full evidence document prints the label instead of the machine key wherever one exists (the owner ruled the machine keys wasted space). The gate refuses a label that is empty or that merely repeats the id.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "period_basis": {
+            "description": "Owner ruling AC15 (P3): what period a figure covers, so an average is never published as an annual figure. Required on a derived fact whose id or label presents it as an annual, per-year or run-rate figure (the signal words are data in council/floors/floors.json), and refused where such a fact declares a multi-year or lifetime average basis - the conflation the owner flagged, a multi-decade average run rate read as the first year's billing. Optional on any other fact. per_year_average_over_term: a total spread evenly over its whole term. trailing_twelve_months / quarter / annualized_quarter / lifetime_total / other as named.",
+            "enum": [
+              "per_year_average_over_term",
+              "trailing_twelve_months",
+              "quarter",
+              "annualized_quarter",
+              "lifetime_total",
+              "other"
+            ]
           },
           "value": {
             "type": "string",
@@ -543,6 +1274,35 @@
               "weakened_test": {
                 "type": "string",
                 "minLength": 1
+              },
+              "measure": {
+                "description": "Owner ruling AC15 (P2, unit U3e): the rating basis the third canonical test uses, which must match the subject's archetype in the business frame. earnings_vs_history_and_peers for a profitable operator; ev_per_contracted_capacity_and_contracted_revenue_per_unit for a ramping infrastructure builder; ev_to_operating_income for a stabilised lessor; anchorless_ladder for an asset with no earnings. Carried on the 'rating_vs_history_or_peers' row only. Optional in this contract; the sufficiency gate requires it there, and requires the match, for a single name.",
+                "enum": [
+                  "earnings_vs_history_and_peers",
+                  "ev_per_contracted_capacity_and_contracted_revenue_per_unit",
+                  "ev_to_operating_income",
+                  "anchorless_ladder"
+                ]
+              },
+              "peer_denominator_metrics": {
+                "description": "Owner ruling AC15 (P2), architect ruling 2026-09-20: the peer-side denominator metric(s) the rating measure divides its numerator by, named the way the capturer used them - one or two. Carried on the 'rating_vs_history_or_peers' row beside 'measure'. A ratio is not computable from its numerator alone, so the sufficiency gate requires, for a single name with a real peer set and no declared 'peer_' gap, that the list hold exactly the measure's denominators_required count and that every peer carry the numerator fact AND each named denominator fact under the peer_<metric>__<ticker> convention; the declared 'peer_' gap lifts the whole peer half. For a profitable_operator the denominator is an earnings metric (the price/earnings comparator). Optional in this contract; enforced by the sufficiency gate for a single name.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "subject_denominator_facts": {
+                "description": "Owner ruling AC15 (P2), architect ruling 2026-09-20 (unit U3e, closing round-1 findings r1-1 and r1-3): the subject's OWN tier-1 denominator fact id(s) the rating measure divides its numerator by - the subject-side counterpart of peer_denominator_metrics. Carried on the 'rating_vs_history_or_peers' row beside 'measure'. A ratio is not computable from its numerator alone, so the sufficiency gate requires, for a single name, that the list hold exactly the measure's denominators_required count and that each named fact clear the numerator's bar - a tier-1 reading, fresh, and a finite number. The subject half is never lifted by a peer gap. Optional in this contract; enforced by the sufficiency gate for a single name.",
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             }
           }

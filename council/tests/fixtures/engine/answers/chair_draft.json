@@ -1,10 +1,10 @@
 {
   "draft_verdict": {
     "rating": "buy",
-    "conviction_rationale": "The record shows profit growing faster than revenue, a self-funding balance sheet with 150000000 of net cash, and a dated, falsifiable outlook. The price near the high is the honest cost of that record. Not strong_buy: the growth record is one quarter and free cash flow is a declared gap; not hold: the near results date gives a cheap, scoreable test and the earnings yield clears the risk-free rate with room.",
+    "conviction_rationale": "Reported net income rose to $120M in the June 2026 quarter, ahead of the 8% revenue gain. Net cash stands at $150M, per the balance sheet. The outlook is dated to the 20 Oct 2026 results and is falsifiable. At $100 the price sits near its high, the honest cost of that record. The rating is buy: the earnings yield near 9% clears the risk-free rate with room. One quarter of growth and a declared free cash flow gap hold conviction below strong_buy.",
     "mispricing": {
       "read": "cheap",
-      "magnitude": "roughly a tenth below a defensible value",
+      "magnitude": "about $10 below a defensible value near $110.",
       "arithmetic": "roughly 110 per share of defensible value against the 100.00 asked: twelve times an annualized earnings run-rate of about 9.20 per share, taking the reported quarter's 120000000 of net income four times over the invented share count"
     },
     "tripwires": {

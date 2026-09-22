@@ -13,10 +13,10 @@
   ],
   "final_verdict": {
     "rating": "buy",
-    "conviction_rationale": "The record shows profit growing faster than revenue, a self-funding balance sheet with 150000000 of net cash, and a dated, falsifiable outlook. The run-rate behind the value arithmetic is one reported quarter taken four times - the 2026-10-20 results are the test of it, and the tripwires are set there. Not strong_buy: one quarter of growth and a declared free-cash-flow gap cap conviction; not hold: the earnings yield clears the risk-free rate with room and the thesis is scoreable within two months.",
+    "conviction_rationale": "Reported net income was $120M in the June 2026 quarter, four times the run-rate behind the value arithmetic. Net cash stands at $150M, per the balance sheet. The 20 Oct 2026 results are the test, and the tripwires sit there. At $100 the price sits near its high. The rating is buy: the earnings yield near 9% clears the risk-free rate with room. One quarter of growth and a declared free cash flow gap hold conviction below strong_buy.",
     "mispricing": {
       "read": "cheap",
-      "magnitude": "roughly a tenth below a defensible value",
+      "magnitude": "about $10 below a defensible value near $110.",
       "arithmetic": "roughly 110 per share of defensible value against the 100.00 asked: twelve times an annualized earnings run-rate of about 9.20 per share, taking the reported quarter's 120000000 of net income four times over the invented share count"
     },
     "tripwires": {

@@ -1,0 +1,34 @@
+{
+  "comment": "Data for the deterministic prose measure (council/lib/prose.py), owner ruling AC6 and spec sections U6.2/U6.3 with the number-style rules of the report design audit section C2. Thresholds, banned patterns, source cues, month names and sentence-splitter abbreviations live here as data so the council's voice is carried by its briefs and this file, never by a host machine's own instructions.",
+  "chair_thresholds": {
+    "antithesis_max": 0,
+    "dashes_per_1000_words_max": 3,
+    "long_sentence_share_max": 0.20,
+    "rhetorical_questions_max": 0,
+    "grounded_share_min": 0.70
+  },
+  "rationale_word_cap": 600,
+  "lede_sentence_max": 5,
+  "long_sentence_words": 25,
+  "banned_patterns": [
+    {"id": "thousand_dollars", "regex": "\\d[\\d,]*\\s+thousand dollars", "flags": "i", "message": "money written as a reporting unit: convert it to $K/$M/$B, never 'N thousand dollars'"},
+    {"id": "percent_in_words", "regex": "\\b(per cent|percent)\\b", "flags": "i", "message": "the word for a percentage: use the % sign, one decimal, never the word 'percent'"},
+    {"id": "iso_date", "regex": "\\b\\d{4}-\\d{2}-\\d{2}\\b", "flags": "", "message": "a machine date: write it in words, day first (30 Jun 2026), never 2026-06-30"}
+  ],
+  "source_cues": [
+    "as of", "as at", "filing", "filed", "10-k", "10-q", "8-k", "annual report",
+    "quarterly report", "prospectus", "press release", "guidance", "reported",
+    "disclosed", "per the", "according to", "balance sheet", "cash flow",
+    "income statement", "earnings call", "management", "sec"
+  ],
+  "months": [
+    "january", "february", "march", "april", "may", "june", "july", "august",
+    "september", "october", "november", "december", "jan", "feb", "mar", "apr",
+    "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec"
+  ],
+  "abbreviations": [
+    "inc.", "corp.", "co.", "ltd.", "llc.", "plc.", "u.s.", "u.k.", "vs.",
+    "e.g.", "i.e.", "no.", "mr.", "ms.", "mrs.", "dr.", "approx.", "etc.",
+    "st.", "jr.", "sr.", "fig.", "al."
+  ]
+}

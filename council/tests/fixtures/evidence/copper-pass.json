@@ -1,5 +1,5 @@
 {
- "capture_version": "1.3.0",
+ "capture_version": "1.6.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [],
  "market_state": {
@@ -267,5 +267,18 @@
    "source": "INVENTED FIXTURE - the two venues' own published prices",
    "text": "INVENTED FIXTURE - The same metal settled at 14370.00 dollars a tonne in London and 14800.00 dollars a tonne in New York on the same day, a gap of 430.00 dollars that border-tax policy, not scarcity, opened."
   }
- ]
+ ],
+ "evidence_challenge": {
+  "status": "success",
+  "model": "gpt-5.6-sol",
+  "failure_status": null,
+  "findings": [],
+  "overall": null,
+  "resolutions": {},
+  "failure_reason": null,
+  "nonce": "a1b2c3d4e5f60718636f707065722d70",
+  "evidence_sha256": "7a9ec47ef4f4c0f2afe3af2a3296aee610956f48d7286f6ba7af04adfdab81f5",
+  "post_audit_changes": [],
+  "post_audit_sha256": "7a9ec47ef4f4c0f2afe3af2a3296aee610956f48d7286f6ba7af04adfdab81f5"
+ }
 }

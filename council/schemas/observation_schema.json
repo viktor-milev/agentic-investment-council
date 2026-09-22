@@ -1,0 +1,101 @@
+{
+  "$schema": "council-validator-subset",
+  "title": "Council ledger observations 1.0.0 - what happened after a verdict (UPGRADE-2 U7.2)",
+  "description": "One file per verdict, captured by a session the way evidence is captured: for each due horizon the subject's close and the benchmark's close on the due date, each an exact string with its source and as-of date; the published figure for each falsifier with its source and the session's three-way resolution; and whether each tripwire and each named reopening trigger fired, with the date and source. The scoring script reads this file and the ledger row it names; the script never fetches. A missing horizon simply is not scored yet.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observation_version",
+    "ledger_row_id",
+    "run_id",
+    "horizon_observations",
+    "falsifier_observations",
+    "tripwire_events",
+    "trigger_events"
+  ],
+  "properties": {
+    "observation_version": {"const": "1.0.0"},
+    "ledger_row_id": {"type": "string", "pattern": "[a-z0-9][a-z0-9-]*"},
+    "run_id": {"type": "string", "pattern": "[a-z0-9][a-z0-9-]*"},
+    "horizon_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trading_days", "due_date", "subject_close", "benchmark_close"],
+        "properties": {
+          "trading_days": {"type": "integer", "minimum": 1},
+          "due_date": {"type": "string", "pattern": "[0-9]{4}-[0-9]{2}-[0-9]{2}"},
+          "subject_close": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "unit", "as_of", "source"],
+            "properties": {
+              "value": {"type": "string", "minLength": 1},
+              "unit": {"type": ["string", "null"]},
+              "as_of": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1}
+            }
+          },
+          "benchmark_close": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["value", "unit", "as_of", "source"],
+            "properties": {
+              "value": {"type": "string", "minLength": 1},
+              "unit": {"type": ["string", "null"]},
+              "as_of": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "falsifier_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["figure_name", "published_value", "unit", "date", "source", "resolved"],
+        "properties": {
+          "figure_name": {"type": "string", "minLength": 1},
+          "published_value": {"type": ["string", "null"]},
+          "unit": {"type": ["string", "null"]},
+          "date": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "resolved": {"enum": ["for", "against", "unresolved"]}
+        }
+      }
+    },
+    "tripwire_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["detail", "level", "unit", "fired", "date", "source"],
+        "properties": {
+          "detail": {"type": "string", "minLength": 1},
+          "level": {"type": ["string", "null"]},
+          "unit": {"type": ["string", "null"]},
+          "fired": {"type": "boolean"},
+          "date": {"type": ["string", "null"]},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "trigger_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["detail", "fired", "date", "source"],
+        "properties": {
+          "detail": {"type": "string", "minLength": 1},
+          "fired": {"type": "boolean"},
+          "date": {"type": ["string", "null"]},
+          "source": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
