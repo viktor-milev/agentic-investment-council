@@ -174,7 +174,7 @@ class TestCommandSurface(BridgeCase):
         self.assertTrue(ok, detail)
         self.assertEqual(fake.calls[0]["argv"], [
             "codex", "exec",
-            "-m", "gpt-5.6-sol",
+            "-m", _seats_doc()["seats"]["challenger"]["model"],
             "--ignore-user-config",
             "--skip-git-repo-check",
             "--sandbox", "read-only",
@@ -610,8 +610,9 @@ class TestEvidenceCommandSurface(EvidenceCase):
         isolated = os.path.join(out_abs, "isolated")
         self.assertEqual(calls[0]["argv"], [
             "codex", "exec",
-            "--model", "gpt-5.6-sol",
-            "-c", "model_reasoning_effort=high",
+            "--model", _seats_doc()["seats"]["challenger"]["model"],
+            "-c", "model_reasoning_effort="
+            + _seats_doc()["seats"]["challenger"]["effort"],
             "--sandbox", "read-only",
             "--skip-git-repo-check",
             "--ephemeral",
@@ -929,7 +930,8 @@ class TestEvidenceRecord(EvidenceCase):
         self.assertEqual(code, 0, printed)
         block = canonical.read_json(capture_path)["evidence_challenge"]
         self.assertEqual(block["status"], "success")
-        self.assertEqual(block["model"], "gpt-5.6-sol")
+        self.assertEqual(block["model"],
+                         _seats_doc()["seats"]["challenger"]["model"])
         self.assertIsNone(block["failure_status"])
         self.assertEqual(block["overall"],
                          "INVENTED - thin on unit economics.")
@@ -1880,6 +1882,138 @@ class TestDeltaReaudit(ArchiveCase):
             ["evidence", capture, self.out_path(), "--delta"])
         self.assertEqual(code, 0, printed)
         self.assertNotIn("SUCCESSFUL full", printed)
+
+
+
+# ---------------------------------------------------------------------------
+# SEATS (owner ruling AC24 with item 6): the challenger is a setting.
+# The suggested default lives in council/floors/seats.json; an operator
+# overrides it. Precedence: explicit argument > environment > file.
+# ---------------------------------------------------------------------------
+
+SEATS_PATH = os.path.join(ROOT, "council", "floors", "seats.json")
+_SEAT_ENV = ("COUNCIL_CHALLENGER_MODEL", "COUNCIL_CHALLENGER_EFFORT")
+# The suite asserts the FILE's default: an override in the operator's own
+# shell must not leak into it.
+for _key in _SEAT_ENV:
+    os.environ.pop(_key, None)
+
+
+def _seats_doc():
+    with open(SEATS_PATH, "rb") as handle:
+        return json.loads(handle.read().decode("utf-8"))
+
+
+class SeatEnvCase(unittest.TestCase):
+    """Each test starts with no operator override in the environment."""
+
+    def setUp(self):
+        self._saved = {k: os.environ.pop(k) for k in _SEAT_ENV
+                       if k in os.environ}
+
+    def tearDown(self):
+        for key in _SEAT_ENV:
+            os.environ.pop(key, None)
+        os.environ.update(self._saved)
+
+
+class TestSeatsFile(SeatEnvCase):
+    def test_the_file_loads_and_names_every_seat(self):
+        doc = bridge.load_seats()
+        self.assertEqual(doc["version"], "1.0.0")
+        self.assertIsInstance(doc["note"], str)
+        self.assertIn("override", doc["note"])
+        self.assertEqual(sorted(doc["seats"]), sorted(bridge.SEAT_NAMES))
+        for name in ("advisor_bear", "advisor_bull", "advisor_base_rate",
+                     "advisor_market_structure", "advisor_risk",
+                     "reviewer", "chair", "frame", "challenger"):
+            seat = doc["seats"][name]
+            self.assertIsInstance(seat["model"], str)
+            self.assertIsInstance(seat["effort"], str)
+            self.assertTrue(seat["model"] and seat["effort"])
+
+    def test_the_suggested_defaults_are_the_owners(self):
+        seats = bridge.load_seats()["seats"]
+        for name, seat in seats.items():
+            if name == "challenger":
+                self.assertEqual(seat, {"model": "gpt-6-sol",
+                                        "effort": "high"})
+            elif name == "chair":
+                self.assertEqual(seat, {"model": "claude-opus-5-5",
+                                        "effort": "xhigh"})
+            else:
+                self.assertEqual(seat, {"model": "claude-opus-5-5",
+                                        "effort": "high"}, name)
+
+    def test_a_missing_seat_or_a_bad_entry_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "seats.json")
+            for mutate in (lambda d: d["seats"].pop("chair"),
+                           lambda d: d["seats"]["frame"].pop("effort"),
+                           lambda d: d["seats"]["reviewer"].update(model=""),
+                           lambda d: d.update(version="2.0.0"),
+                           lambda d: d["seats"].update(extra={
+                               "model": "m", "effort": "e"})):
+                doc = _seats_doc()
+                mutate(doc)
+                with open(path, "w", encoding="utf-8") as handle:
+                    json.dump(doc, handle)
+                with self.assertRaises(ValueError):
+                    bridge.load_seats(path)
+
+
+class TestChallengerChoice(SeatEnvCase):
+    def test_the_bridge_default_is_the_files_challenger(self):
+        seat = _seats_doc()["seats"]["challenger"]
+        self.assertEqual(bridge.DEFAULT_MODEL, seat["model"])
+        self.assertEqual(bridge.DEFAULT_EFFORT, seat["effort"])
+        self.assertEqual(bridge.challenger_choice(),
+                         (seat["model"], seat["effort"]))
+
+    def test_the_environment_wins_over_the_file(self):
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = "env-model"
+        os.environ["COUNCIL_CHALLENGER_EFFORT"] = "xhigh"
+        self.assertEqual(bridge.challenger_choice(), ("env-model", "xhigh"))
+
+    def test_an_empty_environment_value_is_no_override(self):
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = ""
+        seat = _seats_doc()["seats"]["challenger"]
+        self.assertEqual(bridge.challenger_choice()[0], seat["model"])
+
+    def test_an_explicit_argument_wins_over_both(self):
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = "env-model"
+        os.environ["COUNCIL_CHALLENGER_EFFORT"] = "xhigh"
+        self.assertEqual(bridge.challenger_choice("arg-model", "low"),
+                         ("arg-model", "low"))
+
+    def test_smoke_without_a_model_uses_the_chosen_one(self):
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = "env-model"
+        fake = FakeLauncher()
+        ok, detail = bridge.smoke(launcher=fake)
+        self.assertTrue(ok, detail)
+        self.assertEqual(fake.calls[0]["argv"][3], "env-model")
+
+
+class TestEvidenceRequestCarriesTheChoice(EvidenceCase):
+    def test_the_evidence_request_carries_the_env_choice(self):
+        saved = {k: os.environ.pop(k) for k in _SEAT_ENV if k in os.environ}
+        try:
+            os.environ["COUNCIL_CHALLENGER_MODEL"] = "env-model"
+            os.environ["COUNCIL_CHALLENGER_EFFORT"] = "medium"
+            fake = EvidenceLauncher()
+            _, code, printed = self.run_evidence(fake)
+            self.assertEqual(code, 0, printed)
+            request = canonical.read_json(os.path.join(
+                self.out_path(), bridge.REQUEST_NAME))
+            self.assertEqual(request["model"], "env-model")
+            self.assertEqual(request["effort"], "medium")
+            argv = fake.challenge_calls()[0]["argv"]
+            self.assertEqual(argv[3], "env-model")
+            self.assertEqual(argv[5], "model_reasoning_effort=medium")
+        finally:
+            for key in _SEAT_ENV:
+                os.environ.pop(key, None)
+            os.environ.update(saved)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "note": "Suggested defaults only (owner ruling AC24); the operator may override any seat. Whoever runs the council makes their own settings: the host session may seat any Claude seat on a different model or effort, stating it in the sitting's dispatch; the challenger is overridden with the environment variables COUNCIL_CHALLENGER_MODEL and COUNCIL_CHALLENGER_EFFORT. The verdict records the model each seat was actually asked to run on.",
+  "seats": {
+    "advisor_bear": {"model": "claude-opus-5-5", "effort": "high"},
+    "advisor_bull": {"model": "claude-opus-5-5", "effort": "high"},
+    "advisor_base_rate": {"model": "claude-opus-5-5", "effort": "high"},
+    "advisor_market_structure": {"model": "claude-opus-5-5", "effort": "high"},
+    "advisor_risk": {"model": "claude-opus-5-5", "effort": "high"},
+    "reviewer": {"model": "claude-opus-5-5", "effort": "high"},
+    "chair": {"model": "claude-opus-5-5", "effort": "xhigh"},
+    "frame": {"model": "claude-opus-5-5", "effort": "high"},
+    "challenger": {"model": "gpt-6-sol", "effort": "high"}
+  }
+}

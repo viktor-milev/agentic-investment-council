@@ -26,6 +26,9 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 This snapshot adds several stages and rules to the pipeline. In plain terms:
 
+- **Every seat's model is now a setting.** The council suggests a model and effort for each seat in
+  one file and the operator may override any of them; the outside challenger's default is now
+  GPT-6 Sol. See *Seating the council* below.
 - **The business comes before the numbers.** Every pack now opens with a short description of what
   the business is and the handful of metrics the decision actually turns on, so a seat reasons
   about a company, not a column of figures.
@@ -93,6 +96,21 @@ a human's, and the file says so. A product nobody has ruled on still refuses.
 
 ---
 
+## Seating the council: defaults and how to override them
+
+Every seat in the council runs on a model and effort you choose. The council only suggests
+defaults, in `council/floors/seats.json`: the five advisors, the peer reviewer and the business-frame
+writer on Claude Opus 5.5 at high effort, the chairman on Claude Opus 5.5 at extra-high effort, and
+the outside challenger on GPT-6 Sol at high effort. These are recommendations, not requirements —
+make your own settings. The Claude seats are launched by the session hosting the sitting, so you
+change them by telling that session which model and effort to give each seat (see
+`council/RUNBOOK.md`, "Seating the council"). The challenger is changed by setting
+`COUNCIL_CHALLENGER_MODEL` and `COUNCIL_CHALLENGER_EFFORT` in the environment, or by editing the
+file. Whatever you choose, the published verdict records the model each seat was actually asked to
+run on, so every decision carries its own record of who made it.
+
+---
+
 ## Running it
 
 Python 3.14, **standard library only** — no dependencies, no package install, nothing to build.
@@ -106,13 +124,13 @@ The seven suites, what each covers, and the command to run it:
 |---|---|---|---|
 | `test_foundations` | 32 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python council/tests/test_foundations.py` |
 | `test_evidence` | 676 | the provenance gate, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python council/tests/test_evidence.py` |
-| `test_engine` | 466 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python council/tests/test_engine.py` |
-| `test_bridge` | 92 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_bridge.py` |
+| `test_engine` | 468 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python council/tests/test_engine.py` |
+| `test_bridge` | 101 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_bridge.py` |
 | `test_report` | 297 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the executive-summary front | `PYTHONIOENCODING=utf-8 python council/tests/test_report.py` |
 | `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_e2e_rehearsal.py` |
 | `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python council/tests/test_ledger.py` |
 
-1631 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+1642 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
 
 **Clean skips.** Nineteen tests skip here and only here, each with its reason printed, because they
 read material this copy does not publish. Seventeen read *live run records*: `test_evidence` skips

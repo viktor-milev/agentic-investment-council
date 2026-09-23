@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.abspath(
 from council.lib import canonical, prose, subjects, validate  # noqa: E402
 from council.engine import briefs, ladder, publisher  # noqa: E402
 from council.engine import runrecord, seal  # noqa: E402
+from council.bridge import codex_bridge  # noqa: E402
 from council.evidence import brief, gate  # noqa: E402
 from council.evidence import sufficiency as sufficiency_check  # noqa: E402
 
@@ -39,7 +40,10 @@ SCHEMA_DIR = os.path.join(ROOT, "council", "schemas")
 FLOORS_PATH = os.path.join(ROOT, "council", "floors", "floors.json")
 
 ADVISOR_SEATS = briefs.ADVISOR_SEATS
-CHALLENGER_MODEL = "gpt-5.6-sol"
+# The SUGGESTED challenger model, from council/floors/seats.json (owner
+# ruling AC24 with item 6). The request is written with the operator's
+# choice - codex_bridge.challenger_choice: environment over the file.
+CHALLENGER_MODEL = codex_bridge.DEFAULT_MODEL
 CHALLENGE_STATUSES = ("success", "launch_failure", "timeout",
                       "malformed_output", "schema_failure",
                       "binding_failure", "internal_failure")
@@ -1849,7 +1853,10 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
             kwargs["findings"] = findings
             kwargs["endorsement"] = endorsement
             kwargs["summary"] = summary
-            kwargs["challenger_model"] = CHALLENGER_MODEL
+            # The model the request actually named - the record, not
+            # whatever the environment says now.
+            kwargs["challenger_model"] = canonical.read_json(os.path.join(
+                ctx.run_dir, "challenge", "request.json"))["model"]
     try:
         brief = briefs.build_brief(seat, ctx.invocation["run_id"],
                                    answer_path, **kwargs)
@@ -2359,6 +2366,7 @@ def _write_challenge(ctx):
     # hash). The bridge sends the file verbatim and verifies the echo
     # against the request value.
     body_hash = canonical.sha256_bytes(body_bytes)
+    model, effort = codex_bridge.challenger_choice()
     case_bytes = body_bytes + (
         "\ncasefile_sha256: %s\n" % body_hash).encode("utf-8")
     case_path = os.path.join(ctx.run_dir, "challenge", "casefile.md")
@@ -2368,14 +2376,14 @@ def _write_challenge(ctx):
                "casefile_sha256": body_hash,
                "schema_path": os.path.abspath(os.path.join(
                    SCHEMA_DIR, "challenge_findings_schema.json")),
-               "model": CHALLENGER_MODEL, "effort": "high",
+               "model": model, "effort": effort,
                "timeout_s": 1800}
     canonical.write_canonical_json(
         os.path.join(ctx.run_dir, "challenge", "request.json"), request)
     runrecord.append_event(ctx.run_dir, "challenge_requested",
                            {"nonce": nonce,
                             "casefile_sha256": request["casefile_sha256"],
-                            "model": CHALLENGER_MODEL})
+                            "model": model})
     ctx.say("challenge request written; the session must now run the "
             "bridge: python -m council.bridge.codex_bridge challenge %s"
             % ctx.run_dir)

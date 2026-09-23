@@ -709,6 +709,26 @@ approved is provenance. The report's front page prints either "Reviewed by
 &lt;name&gt; before the council sat." or, in the warning style, "Auto-mode: no
 human reviewed the evidence before the council sat."
 
+### Seating the council (owner ruling AC24)
+
+Which model and effort each seat runs on is a setting, not a rule. The
+suggested defaults live in `council/floors/seats.json`: the five advisors,
+the reviewer and the frame writer on `claude-opus-5-5` at `high`, the
+chairman (draft and resolve) at `xhigh`, the outside challenger `gpt-6-sol`
+at `high`. Nothing a seat DOES changes with its model.
+
+- **Claude seats.** You launch them, so you seat them: dispatch each on the
+  file's model and effort unless the sitting's dispatch says otherwise. An
+  override (a different effort, a higher model tier) is stated in the
+  dispatch, seat by seat, and each seat's usage sidecar records the model it
+  actually ran on (step 3 below) — that is what the verdict's
+  `models_per_seat` shows.
+- **The challenger.** The council writes the file's choice into both outside
+  requests. To override it for a sitting, set `COUNCIL_CHALLENGER_MODEL`
+  and/or `COUNCIL_CHALLENGER_EFFORT` in the environment of every `host step`
+  and `codex_bridge` command. The model the request named is what the
+  verdict records as `challenger_model_requested`.
+
 The host is never a long-running process: each `step` advances as far as
 the files on disk allow, then exits — there is nothing for a timeout to
 kill. Loop until DONE:

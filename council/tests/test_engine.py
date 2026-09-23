@@ -496,6 +496,7 @@ class TestOwnPossessionSealedWords(EngineTest):
     the net), and the two company rows are proved untouched, because an
     over-firing net would delete council evidence with no backstop."""
 
+    # The owner's actual sentence, from the first live theme sitting -
     # An example of the sentence the ruling exists for: the question's
     # author saying he owns the thing. [Example sentence altered for
     # the public copy; the mechanism and the ruling are unchanged.]
@@ -1356,6 +1357,56 @@ class TestChairDraftChecks(EngineTest):
         self.assertIn("EVENT", rejected[0]["reason"])
 
 
+# SEATS (owner ruling AC24 with item 6): the challenger's model and effort
+# are a setting - council/floors/seats.json suggests, the operator's
+# environment overrides. The suite asserts the FILE's default, so an
+# override in the operator's own shell must not leak into it.
+_SEAT_ENV = ("COUNCIL_CHALLENGER_MODEL", "COUNCIL_CHALLENGER_EFFORT")
+for _key in _SEAT_ENV:
+    os.environ.pop(_key, None)
+with open(os.path.join(ROOT, "council", "floors", "seats.json"),
+          "rb") as _handle:
+    _SEATS = json.loads(_handle.read().decode("utf-8"))
+
+
+class TestChallengerSeatIsASetting(EngineTest):
+    def tearDown(self):
+        for key in _SEAT_ENV:
+            os.environ.pop(key, None)
+        super().tearDown()
+
+    def test_the_host_constant_is_the_files_default(self):
+        self.assertEqual(host.CHALLENGER_MODEL,
+                         _SEATS["seats"]["challenger"]["model"])
+
+    def test_the_request_and_the_provenance_carry_the_chosen_model(self):
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = "operator-model"
+        os.environ["COUNCIL_CHALLENGER_EFFORT"] = "xhigh"
+        run = self.harness(run_id="seat-run")
+        run.drive(until="CHALLENGE")
+        request = canonical.read_json(
+            os.path.join(run.run_dir, "challenge", "request.json"))
+        self.assertEqual(request["model"], "operator-model")
+        self.assertEqual(request["effort"], "xhigh")
+        requested = [e for e in run.events()
+                     if e["event"] == "challenge_requested"]
+        self.assertEqual(requested[-1]["model"], "operator-model")
+        # The override is read once, when the request is written: a
+        # change of environment mid-sitting does not rewrite the record.
+        os.environ["COUNCIL_CHALLENGER_MODEL"] = "changed-later"
+        last = run.drive(until="DONE")
+        self.assertEqual(last["state"], "DONE")
+        provenance = run.verdict()["provenance"]
+        self.assertEqual(provenance["challenger_model_requested"],
+                         "operator-model")
+        resolve = [text for name, text in run.briefs_text().items()
+                   if "chair_resolve" in name]
+        self.assertTrue(resolve)
+        for text in resolve:
+            self.assertIn("operator-model", text)
+            self.assertNotIn("changed-later", text)
+
+
 class TestChallenge(EngineTest):
     def test_challenge_request_contract(self):
         run = self.harness(run_id="challenge-run")
@@ -1364,8 +1415,9 @@ class TestChallenge(EngineTest):
             os.path.join(run.run_dir, "challenge", "request.json"))
         self.assertEqual(request["run_id"], "challenge-run")
         self.assertEqual(len(request["nonce"]), 32)
-        self.assertEqual(request["model"], "gpt-5.6-sol")
-        self.assertEqual(request["effort"], "high")
+        seat = _SEATS["seats"]["challenger"]
+        self.assertEqual(request["model"], seat["model"])
+        self.assertEqual(request["effort"], seat["effort"])
         self.assertEqual(request["timeout_s"], 1800)
         self.assertTrue(os.path.isabs(request["casefile"]))
         self.assertTrue(os.path.isabs(request["schema_path"]))

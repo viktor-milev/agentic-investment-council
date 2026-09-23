@@ -52,7 +52,56 @@ import threading
 from council.evidence import gate
 from council.lib import canonical, validate
 
-DEFAULT_MODEL = "gpt-5.6-sol"
+# SEATS (owner ruling AC24 with item 6): the challenger is a setting like
+# every other seat. council/floors/seats.json holds the SUGGESTED model and
+# effort; an operator overrides them. Precedence: an explicit argument (a
+# request's own model, a caller's parameter) > the environment variables
+# COUNCIL_CHALLENGER_MODEL / COUNCIL_CHALLENGER_EFFORT > the file.
+SEATS_PATH = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "floors", "seats.json"))
+SEATS_VERSION = "1.0.0"
+SEAT_NAMES = ("advisor_bear", "advisor_bull", "advisor_base_rate",
+              "advisor_market_structure", "advisor_risk",
+              "reviewer", "chair", "frame", "challenger")
+
+
+def load_seats(path=SEATS_PATH):
+    """The seats file, checked: its version, a note, and every seat with
+    a model and an effort. Anything else is refused (ValueError)."""
+    doc = canonical.read_json(path)
+    if not isinstance(doc, dict) or doc.get("version") != SEATS_VERSION:
+        raise ValueError("%s: version must be %s" % (path, SEATS_VERSION))
+    if not isinstance(doc.get("note"), str):
+        raise ValueError("%s: the note is missing" % path)
+    seats = doc.get("seats")
+    if not isinstance(seats, dict) or sorted(seats) != sorted(SEAT_NAMES):
+        raise ValueError("%s: the seats must be exactly %s"
+                         % (path, ", ".join(SEAT_NAMES)))
+    for name, seat in seats.items():
+        if not isinstance(seat, dict) or sorted(seat) != ["effort", "model"]:
+            raise ValueError("%s: seat %s needs a model and an effort"
+                             % (path, name))
+        for key in ("model", "effort"):
+            if not isinstance(seat[key], str) or not seat[key].strip():
+                raise ValueError("%s: seat %s has no %s"
+                                 % (path, name, key))
+    return doc
+
+
+_CHALLENGER_SEAT = load_seats()["seats"]["challenger"]
+DEFAULT_MODEL = _CHALLENGER_SEAT["model"]
+DEFAULT_EFFORT = _CHALLENGER_SEAT["effort"]
+
+
+def challenger_choice(model=None, effort=None):
+    """(model, effort) for an outside call: argument > environment >
+    seats.json. An empty environment value is no override."""
+    return (model or os.environ.get("COUNCIL_CHALLENGER_MODEL")
+            or DEFAULT_MODEL,
+            effort or os.environ.get("COUNCIL_CHALLENGER_EFFORT")
+            or DEFAULT_EFFORT)
+
+
 SMOKE_TIMEOUT_S = 120
 # How much of the prompt is written into the child at a time. A prompt
 # larger than the operating system's pipe buffer (typically 65,536
@@ -444,8 +493,9 @@ def run_evidence(request, brief_bytes, out_dir, launcher=None):
 # The standing smoke test: unpaid, precedes every paid call.
 # ---------------------------------------------------------------------------
 
-def smoke(launcher=None, model=DEFAULT_MODEL):
+def smoke(launcher=None, model=None):
     """Returns (ok, detail). Success = exit 0 and "OK" in stdout."""
+    model = challenger_choice(model)[0]
     if launcher is None:
         launcher = default_launcher
     workdir = tempfile.mkdtemp(prefix="council-smoke-")
@@ -519,7 +569,7 @@ def _cli_challenge(run_dir, no_smoke):
         casefile_bytes = handle.read()
 
     if not no_smoke:
-        ok, detail = smoke(model=request.get("model", DEFAULT_MODEL))
+        ok, detail = smoke(model=request.get("model"))
         if not ok:
             result = _new_result()
             _fail(result, "launch_failure", "smoke test failed: " + detail)
@@ -780,6 +830,7 @@ def _cli_evidence(capture_path, out_dir, no_smoke, delta=False):
     canonical.write_bytes_atomic(os.path.join(out_dir, BRIEF_NAME),
                                  brief_bytes)
     body_sha256 = gate.evidence_body_sha256(capture)
+    chosen_model, chosen_effort = challenger_choice()
     request = {"nonce": nonce,
                "capture": os.path.abspath(capture_path),
                "capture_sha256": capture_sha256,
@@ -795,7 +846,7 @@ def _cli_evidence(capture_path, out_dir, no_smoke, delta=False):
                # (audit round 6, r6-1).
                "pass": pass_number,
                "schema_path": os.path.join(SCHEMA_DIR, EVIDENCE_SCHEMA_NAME),
-               "model": DEFAULT_MODEL, "effort": "high",
+               "model": chosen_model, "effort": chosen_effort,
                "timeout_s": EVIDENCE_TIMEOUT_S}
     canonical.write_canonical_json(os.path.join(out_dir, REQUEST_NAME),
                                    request)
@@ -1115,7 +1166,7 @@ def _cli_evidence_record(capture_path, out_dir, resolution_path):
               % (_identity_words(request.get("capture_identity")),
                  _identity_words(identity)))
         return 3
-    model = request.get("model") or DEFAULT_MODEL
+    model = request.get("model") or challenger_choice()[0]
     sent = request.get("capture_body_sha256")
     if not sent or request.get("capture_entry_values") is None:
         print("evidence-record: %s does not say which evidence was sent, "
