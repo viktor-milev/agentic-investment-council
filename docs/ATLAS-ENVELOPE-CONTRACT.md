@@ -246,3 +246,43 @@ value traded on an average day, and the anchorless rehearsal fixture had been po
 INTEREST — a stock of contracts, not a day's turnover. The pin caught a mislabelling the fixture had
 carried since it was written. Captures state the four sizing facts in the pinned units
 (`council/RUNBOOK.md` §1).
+
+---
+
+## Addendum, 2026-09-23 — what changed for the consumer since the 2026-09-06 text (rulings AC18(2), AC24, AC25)
+
+The package's **envelope keys are unchanged** since verdict contract 1.3.0. The verdict's
+`schema_version` is now **1.4.0** (unit U7, 2026-09-20): `provenance` gained `evidence` (the
+evidence stage's record), `ledger_row_id` (the row this verdict wrote in the outcomes ledger) and
+`seat_cost` (per-seat tokens, tool calls, brief bytes). A consumer that reads only
+`atlas_envelope` needs no change; a consumer that pins `schema_version` must accept `1.4.0`.
+
+**Starting a sitting.** `python -m council.engine.host init` now REQUIRES `--evidence-dir <dir>`
+(beside `--question-file` and `--subject-json`). That folder carries the mode file
+(`{"mode": "unattended", "chosen_by": "atlas", "at": "<iso now>"}` for a sitting Atlas starts),
+the capture-usage sidecar, and the evidence documents. **A sitting Atlas starts in unattended
+evidence mode must first file the full evidence document rendered from the handed pack:**
+
+```
+python -m council.evidence.brief <pack.json> --out <evidence-dir>/EVIDENCE-FULL.md --full
+```
+
+`host init` verifies that this file IS that pack's own rendering (the same render-and-compare the
+reviewed mode runs) and refuses otherwise, naming the command above; no approval is involved
+(owner ruling AC18(2), unit U6). The one-page brief (`--out <evidence-dir>/brief.md`, without
+`--full`) is generated in both modes as part of the record.
+
+**Seats (ruling AC24).** Which model and effort each seat runs on is a SETTING. The council's
+suggested defaults live in `council/floors/seats.json` (advisors, reviewer, frame writer
+`claude-opus-5-5` at `high`; chairman `xhigh`; challenger `gpt-6-sol` at `high`). The Claude seats
+are launched by the HOSTING session, so the host's own pin wins by construction — Atlas seats them
+from its `config/council.yaml` and states the model and effort per seat in the dispatch; the
+council records what each seat was asked to run on in `provenance.models_per_seat`. The
+challenger's model and effort resolve in this order: an explicit argument the host passes >
+the environment variables `COUNCIL_CHALLENGER_MODEL` / `COUNCIL_CHALLENGER_EFFORT` > the file;
+the model requested is recorded in `provenance.challenger_model_requested` as before.
+
+**Codex (ruling AC25).** The council no longer pins a `codex` CLI version; the bridge's unpaid
+smoke test before the paid challenger call is the acceptance for whatever version is installed
+(0.156.0 on this host at the time of writing). Recording the version in each sitting's
+provenance is queued as a small change; it will not alter the envelope.
