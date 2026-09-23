@@ -72,7 +72,7 @@ EVIDENCE (session research → capture)          — §5
   → ADVISORS ×5 (parallel, tool-less)          — §6
   → REVIEW ×1 (blind, includes synopsis)       — §6
   → CHAIR SYNTHESIS                            — §6
-  → CHALLENGE ×1 (gpt-5.6-sol, full case file) — §7
+  → CHALLENGE ×1 (the outside challenger, full case file; the model is a setting, default GPT-6 Sol — ruling AC24) — §7
   → CHAIR RESOLVE (every finding by name)      — §7
   → PUBLISH (final doc + change appendix)      — §7, §8
   → READ-BACK (hash + finished-state proof)    — §10
@@ -152,7 +152,8 @@ a stated reason and the named test it weakens.
 ## 7. The challenge round (AB4) — one cycle, transparency instead of freeze
 
 - **One paid challenge cycle by default.** The full unredacted case file goes to
-  `gpt-5.6-sol` through a Python codex-CLI bridge (proven flag surface: `exec --model -c
+  the outside challenger (its model and effort are settings in `council/floors/seats.json`,
+  suggested default `gpt-6-sol` at high; owner ruling AC24) through a Python codex-CLI bridge (proven flag surface: `exec --model -c
   --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config -C
   --output-schema --json -o`; prompts >32KB via stdin; one unpaid smoke test precedes every
   paid call; structured findings against a JSON schema).
