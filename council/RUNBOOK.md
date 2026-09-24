@@ -191,13 +191,133 @@ theme, suffix the passage ids the way the facts are suffixed
 (`t2_capital_allocation__achp`). The word limits are counted by the gate and a
 breach names the count.
 
+### 1.0a A financial institution (owner rulings AC28, AC30)
+
+**Which firms qualify (AC30(2)).** A firm is a financial institution when a
+prudential regulator sets the capital it must hold (a bank, a card lender, a
+broker that owns a bank, an insurer, a reinsurer), when its product is managing
+other people's money for a fee, or when it is a holding company whose assets are
+mostly such firms. Card networks, exchanges, rating agencies, market-data vendors
+and payments or fintech software firms are NOT: they stay `profitable_operator`.
+The worked list and the custody-bank and card-lender cases are in
+`docs/FI-ARCHETYPE-BRIEF-2026-09-23.md` §B0.
+
+**The sub-type, and a hybrid's other engine.** Set `archetype:
+financial_institution` and `fi_subtype` to one of `bank`, `insurer`,
+`reinsurer`, `traditional_asset_manager`, `alternative_asset_manager`,
+`financial_holding`; the ground goes in `archetype_because`. The sub-type is
+where the binding capital requirement sits; for a capital-light firm, the engine
+its own segment reporting shows as the largest. Declare the other engine in
+`fi_secondary_subtype` with the segment facts that carry its share in
+`fi_secondary_share_facts`.
+
+**The measure and its facts.** The sub-type's row in `council/floors/floors.json`
+(`archetype_measures.table.financial_institution`) names the `measure` to put on
+the `rating_vs_history_or_peers` row, and `denominator_ids` names the fact ids
+each role may use. Write `subject_denominator_facts` in the ORDER the rule reads
+them: the capital (or, for a manager, the client assets) FIRST, the earnings
+SECOND - a bank `tangible_common_equity` then `net_income_to_common_ttm`; an
+insurer `equity_for_operating_roe` then `operating_earnings_ttm`; a reinsurer
+`equity_for_roe` then `net_income_ttm`; a traditional manager `aum_period_end`
+then `adjusted_net_income_ttm`; an alternative manager
+`fee_earning_aum_period_end` then `fre_ttm`; a holding its one denominator,
+`nav_total`. The peers carry the same metrics as `peer_<metric>__<ticker>`, or
+the `peer_` gap is declared. The numerator is the market value of ALL the common
+equity; where there is more than one participating class or exchangeable units,
+carry `participating_share_count`, and declare it absent by design otherwise.
+
+**Trailing four quarters.** A `_ttm` figure is a derived fact with its
+arithmetic declared: the four quarterly columns of the latest supplement's trend
+table (`sum`), or the full year plus the year to date less the prior year to date.
+
+**Capital beside its requirement.** `fi_capital` names `ratio_facts` and
+`requirement_facts` in their families (`cet1_ratio_` beside `cet1_requirement_`,
+`solvency_ratio_` beside `solvency_requirement_`, and so on - each ratio beside
+the requirement FOR THAT RATIO, same suffix), the `regime` (at most twelve
+words), the `binding_constraint` (at most twenty-five) and, where carried,
+`target_fact`. Some decisive metric must rest on a capital ratio (kind
+`balance_sheet`). A capital `gap` with its reason is legal only for the two
+managers, and for a holding whose regulated subsidiary is declared absent by
+design. Write a ratio in the prose as a percentage ("15.2%" for a percent fact),
+or it is marked as not traced to a recorded fact.
+
+**The risk-cost line.** `fi_risk_cost`: `kind` `credit` for a bank,
+`underwriting` for an insurer or reinsurer, any of the three - `none_by_design`
+included - for a manager or a holding; its `facts` in the risk-cost families
+(`provision_for_credit_losses_q`, `credit_cost_`, `combined_ratio_`,
+`large_loss_actual_`, `reserve_development_`), and `because` in at most
+twenty-five words.
+
+**The earnings split.** Every `how_it_earns` line carries a `nature`: `spread`,
+`fee`, `underwriting`, `investment`, `trading`, `performance` or `other`. The
+lines still point only at revenue facts.
+
+**A holding's net asset value (AC30(3)).** `nav_bridge`: each component with its
+`name`, `value_fact` and `method` (`listed_at_market`, `company_reported_value`,
+`carrying_value`), the `holdco_net_debt_fact`, the derived `nav_total_fact`,
+where published the `published_nav_fact`, and the derived `discount_fact`. The
+owned companies are not rated in the same sitting and every page says so.
+Sufficiency checks the bridge as a chain of captured facts (AC28, AC30 G3): the
+rating's one denominator is the bridge's `nav_total_fact`; that total is
+derived, never typed in; every component's `value_fact` and the
+`holdco_net_debt_fact` sit inside its arithmetic, directly or through a
+subtotal; and the chain ends in recorded readings, not numbers written into the
+capture. The discount's own history is the `nav_published_hist_`/`price_hist_`
+floor: eight quarter-end pairs, or the gap declared absent by design. What no
+machine can check is that the bridge lists EVERY holding the company owns - the
+outside auditor and the owner carry that.
+
+**The free-cash test (AC30(1)).** For a bank, insurer, reinsurer or holding the
+second canonical test is answered by capital the firm can pay out and still stay
+above its regulator's minimum: a `distributable_capital_` fact on the
+`free_cash_flow` row, its arithmetic declared where derived. Carry NO operating
+cash flow or capital spending for a bank - the capital-spending floor is lifted
+for these four. A manager keeps the ordinary test.
+
+**A model transition (AC30(4)).** Where `what_is_changing.kind` is
+`model_transition`, the earnings and client-asset denominators are the
+CONTINUING business's: the same id ending `_continuing`. The capital and
+net-asset-value denominators are exempt.
+
+**The regulator's own bad year (AC30(5)).** A bank inside a published
+supervisory stress test carries its `stress_` facts (the stress capital buffer,
+the minimum projected capital ratio, the projected loss rate); a bank outside one
+declares `stress_` absent by design with the reason. They are evidence; nothing
+reads them.
+
+**Guidance (AC30(6)).** On every guidance row `guided` is the FIRST guidance for
+that period; each later revision stands in `revisions`, oldest first, each with
+its `date` and its `guidance_revised_<metric>_<period>` fact - a metric the row
+guides, the row's own period, dated no later than the capture. A metric revised
+more than once keeps that id for its first revision and adds `_r2`, `_r3` and on
+for each later one, none dated before the one it follows. An empty list says
+the guidance was never revised. Delivery is judged against the first.
+
+**Decisive-metric kinds** (brief §D, a mapping, not a rule): capital ratio
+`balance_sheet`; return on tangible equity or on equity `unit_economics`;
+combined ratio `margin`; fee rate `pricing`; flows and organic growth `growth`;
+credit cost `other`.
+
+**The cycle.** Every sub-type has an identifiable cycle, so `cycle_dependence`
+is `identified`. The per-sub-type series in brief §C are SUGGESTIONS, never a
+rule. A quarterly series read at the sitting passes the freshness check though
+its latest point is months old, so every page prints the last point's date
+beside the date the series was read.
+
+**The one-line question (AC32) - every capture, not only a financial
+institution.** `question_line` is the owner's question as he asked it, on one
+line, at most sixty words, uncut; the report's masthead prints it.
+
+Sources: brief §B (the per-sub-type facts and where to find them), §E (the floors)
+and §F (the JPMorgan list). Do not copy their tables here.
+
 ### 1.1 Gather, then write the capture
 
 Derive what THIS question needs: the four valuation tests for a priced
 asset (profit growth · free cash flow · rating against own history or
 peers · earnings/cash yield against the risk-free rate) plus whatever the
 owner's thesis turns on, on top of the ruled floors in
-`council/floors/floors.json` (floors 1.4.0). Gather live: filings WITH their
+`council/floors/floors.json` (floors 1.7.0). Gather live: filings WITH their
 prior-year comparatives, guidance, the dated events calendar, the risk-free
 rate, market data from the broker, short interest where the class has it, and
 — new at floors 1.3.0, all conditional, so present or declared absent with a
@@ -205,7 +325,13 @@ reason — segment revenue (`segment_revenue_*`), the guided figure beside the
 delivered one (`guided_*` / `delivered_*`), the peer set (`peer_*`), and what
 management owns (`insider_ownership_pct`). Two more are advisory and never
 block: `ceo_tenure_years` and the published consensus
-(`analyst_consensus_*`).
+(`analyst_consensus_*`). New at floors 1.7.0 (owner ruling AC4), for a single
+stock and also conditional: insiders' dealings over the last twelve months
+(`insider_flow_*`, a US name's Form 4 filings) and the company's own buying of
+its shares (`buyback_*`) — each present, or declared absent-by-design with the
+gap's `fact_class` exactly `insider_flow_` or `buyback_`; a gap with any other
+reason reads as a gathering failure and refuses, and what management owns
+(`insider_ownership_pct`) does not answer the insider-dealing floor.
 
 **The third canonical test keeps its id `rating_vs_history_or_peers` and its
 meaning — but peers are now EXPECTED wherever a peer set exists, and it now
@@ -273,8 +399,9 @@ rules that matter most in practice:
   — copy its arithmetic and its source sentences, but note that it was
   written to an older contract (`capture_version` 1.2.0) and carries neither
   the tags nor a business frame, because runs on record are never rewritten.
-  Your capture is 1.4.1 and needs both. The migration is set out in
-  `council/tests/test_evidence.py::to_contract_1_4_1`, and the same file prints
+  Your capture is 1.8.0 and needs both. The migrations are set out in
+  `council/tests/test_evidence.py`, `to_contract_1_4_1` through
+  `to_contract_1_8_0`, and the same file prints
   exactly which frame rows the two single-name sittings on record would have
   needed.
 - **The four sizing facts, in the units the hand-off is pinned to (ruling
@@ -422,8 +549,9 @@ python -m council.bridge.codex_bridge evidence <capture.json> <run>/evidence/cha
 
 The command builds the brief, sends it on stdin, and writes what came back into
 `<run>/evidence/challenge/`: `brief.md` (exactly what the auditor read),
-`request.json`, `response.json`, `events.jsonl` and `result.json`. It runs the
-standing smoke test first and refuses the paid call if that fails. **One audit
+`request.json`, `response.json`, `events.jsonl`, `probe.json` and `result.json`. It runs the
+standing smoke test first and refuses the paid call if that fails or lists a forbidden tool
+(see "The challenger's tool posture", §3 step 5). **One audit
 per sitting:** a `result.json` that already stands refuses a second call, the
 same rule the verdict challenge lives under. Deliberately re-dispatching means
 deleting that file first.
@@ -600,7 +728,31 @@ python -m council.evidence.sufficiency <out_a>/pack.json --out <out_a>/sufficien
 ```
 
 Freeze builds twice and must report byte-identical with one hash (recorded
-in `<out_a>/freeze-record.json`). A sufficiency refusal (exit 3) is itself
+in `<out_a>/freeze-record.json`).
+
+**The tape is computed here, at the freeze (spec U4.3, owner ruling AC4).**
+When the capture carries the subject's daily closes (`price_series`, and the
+ruled benchmark's `benchmark_series` beside it), the freeze turns them into
+25 tape figures and appends them to the pack's tier1, each a derived fact
+(`series_stat`) with its window in trading days, its arithmetic printed as
+its note, and a plain-English label the owner's evidence document prints:
+the price against its 50-, 100- and 200-day averages; the 200-day average's
+slope over 60 days; the place in the 52-week range; the fall from the
+52-week closing high; the price return over 21, 63, 126 and 252 trading
+days, and the same four against the benchmark; realized volatility over 21,
+63 and 252 trading days; recent volume against its usual level; the largest
+one-day fall, the highest and the lowest close in 52 weeks; the days
+closing above the 200-day average; and the 50-, 100- and 200-day average
+prices themselves, so a seat can name the level (the report page's tape table
+keeps its fifteen rows; its chart draws each average as a line). A figure the history is too short for
+(or, on an absolute sitting, a figure against a benchmark) becomes a
+declared gap. Never write a tape figure by hand: the gate recomputes every
+one from the series and refuses any that differs. The broker's price-history
+call is a MARKET-DATA call and is allowed for the series; the two calls that
+read the owner's book stay forbidden. Each tape figure takes its unit from
+the `price_last` fact, which a capture with a series must carry, and its
+freshness rule from the series: fresh for as long as the gate accepts the
+series itself. A capture without a series freezes exactly as before. A sufficiency refusal (exit 3) is itself
 the product: what is missing, why, where it likely lives — fix the capture
 and repeat. No seat is paid before it passes.
 
@@ -774,6 +926,31 @@ python -m council.bridge.codex_bridge challenge <run_dir>
    Run it yourself (detached or in the background if you prefer — its
    result lands durably in `challenge/result.json` either way). It smokes
    the model first and refuses the paid call on a failed smoke.
+
+   **The challenger's tool posture.** The challenger reads the case file it is
+   sent and nothing else: no web search, no reach into the owner's connected
+   apps (mail, code, calendar, files). Both commands switch web search, the connected apps, sub-agents and image generation off, and
+   the smoke test doubles as a probe: the model replies exactly OK, then NONE or
+   one bare tool name per line; any other reply refuses the paid call and quotes the line.
+   A tool of a forbidden kind (the list is data, `council/floors/challenger-posture.json`)
+   refuses the paid call and names the tool; the reply is kept as
+   `challenge/probe.json`. After the call, every tool it used is listed by name
+   in `result.json`, and the raw event stream stays beside it as `events.jsonl`
+   — the sitting's only session record. A call beyond reading the case file
+   marks the result `posture_breach`, handled exactly as an unreadable answer:
+   the sitting publishes unaudited, capped at hold. **Operator's check before a
+   sitting:** `python -m council.bridge.codex_bridge smoke` must print `ok` and
+   a tool list with nothing of a forbidden kind. Measured 2026-09-23 (codex
+   0.156.0, before the sub-agent and image switches): no search, browser or app
+   tool, but a shell, a patch tool, sub-agent and image tools remained. Measured
+   again 2026-09-24 on codex 0.156.0: the sub-agent (`collaboration.*`) and local
+   image-viewing tools stay listed whatever is switched off; they run inside the
+   same sandbox, and any call to them voids the answer after the fact. The
+   operator's check is that the list shows no search, browser, mail, app or
+   connector tool. The evidence audit (§1a)
+   carries the same switches and probe, but keeps its web reader for the
+   `source_doubt` point: the posture file's `evidence_audit_reads_the_web`
+   is true by owner ruling AC29 (web reading kept, apps off).
 6. Keep stepping: chair resolve, then publish happen on the following
    steps. On a failed challenge the host skips resolve and publishes
    degraded — nothing stronger than hold, with the warning on the page.

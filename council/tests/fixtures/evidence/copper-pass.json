@@ -1,11 +1,12 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [],
  "market_state": {
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is copper worth committing new capital to through the three-month contract at today's price?",
  "question_verbatim": "Is copper worth committing new capital to through the three-month contract at today's price? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "commodity",
@@ -277,8 +278,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f60718636f707065722d70",
-  "evidence_sha256": "7a9ec47ef4f4c0f2afe3af2a3296aee610956f48d7286f6ba7af04adfdab81f5",
+  "evidence_sha256": "943d7fc5fd5e2c2498f22e5fc34a3e6f7148d654ebc8148be895b0c1eda012e9",
   "post_audit_changes": [],
-  "post_audit_sha256": "7a9ec47ef4f4c0f2afe3af2a3296aee610956f48d7286f6ba7af04adfdab81f5"
+  "post_audit_sha256": "943d7fc5fd5e2c2498f22e5fc34a3e6f7148d654ebc8148be895b0c1eda012e9"
  }
 }

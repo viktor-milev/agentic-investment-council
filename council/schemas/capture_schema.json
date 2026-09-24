@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Evidence capture contract 1.6.0 - what the evidence session hands the gate",
-  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 added the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. 1.4.0 adds business_frame (owner ruling AC1): the pack states what the business IS, how it earns, what is changing, the three to five numbers that decide THIS question, the peer set or an honest gap, and management's delivery against its own guidance. The frame is keyed by ticker - the subject's own for a single instrument, one key per constituent for a basket or a theme universe - so one contract carries a single name and an expression of several without a second shape. 1.4.1 adds the frame's own figures lists (owner ruling AC12.2): a figure written in the frame's prose is DECLARED beside that prose and must appear in it word for word, exactly as a tier-2 passage's figures already must. what_it_does_figures carries them for what_it_does; what_is_changing, each revenue line and each decisive-metric row carries its own list. The lists may be empty - prose with no figure in it declares none. 1.4.2 adds evidence_challenge (owner ruling AC2): a genuinely different model audits the evidence BEFORE any seat is paid, and what it said and what the capture session did about every point travel INSIDE the capture, so the pack hash covers them. 1.4.3 makes that block traceable and honest about what moved after it (owner ruling AC13): it carries the one-time nonce the bridge issued for the call and the hash of the evidence the auditor was given, and it lists every fact that changed, was added or was removed between the call and the recording of its answer. 1.5.0 (owner ruling AC15, unit U3d) adds four things and forces none of them on a capture that has none: an optional plain-English 'label' on any tier-1 fact and an optional 'period_basis' on a derived one (P5, P3); optional 'comparable_because' and 'not_comparable_on' statements on each peer (P1); an optional 'corrections' list recording each user correction (who, when, fact, old, new, reason, and whether it narrows a claim or rebuilds what the seats reason from) so a fix patches the pack in place instead of rebuilding it (P7); and, in the evidence_challenge block, the archive of every audit pass - prior_passes with the current pass marked - so a re-dispatched audit no longer overwrites the first (per-pass archive), plus the scope of the current pass (a full audit or a delta re-audit of a correction, P8). The gate and the sufficiency gate enforce these where they bite; the block and the list stay optional because a pack that was never corrected and never re-audited carries neither. 1.6.0 (owner ruling AC15, unit U3e) adds two meaning changes for a single name and forces neither on any other subject. The business frame gains 'archetype' - what kind of business this is (a profitable operator, a ramping infrastructure builder, a stabilised lessor, or an asset with no earnings) - with 'archetype_because' citing facts in at most forty words; the third canonical test gains 'measure', the rating basis that archetype calls for, and council/floors/floors.json carries the archetype-to-measure table as data (P2, AC15.2); the same row names the measure's denominators on both sides - 'subject_denominator_facts' (the subject's own tier-1 denominator fact ids) and 'peer_denominator_metrics' (the peer-side metric names), each holding exactly the measure's denominators_required count - so the rating is required computable for the subject AND every peer, the numerator and each denominator, not the numerator alone (architect ruling 2026-09-20; unit U3e round-1 findings r1-1 and r1-3). The frame also gains 'cycle_dependence' - whether this single name's thesis rests on an identifiable capital or commodity cycle - with 'cycle_dependence_because' in at most twenty-five words, and an optional top-level 'cycle' carries three to five dated, re-fetchable series for that cycle (hard cap five), or declares the gap with a reason (P4, AC15.3). All four frame fields and the measure are optional in this contract and enforced by the gate and the sufficiency gate for a single name only; a basket, a theme, a fund and an asset with no earnings carry none. 1.6.0 also carries, beside each of those two rationale prose fields, an optional figures list - archetype_because_figures and cycle_dependence_because_figures - so a figure written into either stands in its own text word for word and equals the value of a fact the frame carries, exactly as what_it_does_figures already binds (owner ruling AC13.1, unit U3e closing pass); both lists are absent or empty where the prose carries no figure.",
+  "title": "Evidence capture contract 1.8.0 - what the evidence session hands the gate",
+  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 added the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. 1.4.0 adds business_frame (owner ruling AC1): the pack states what the business IS, how it earns, what is changing, the three to five numbers that decide THIS question, the peer set or an honest gap, and management's delivery against its own guidance. The frame is keyed by ticker - the subject's own for a single instrument, one key per constituent for a basket or a theme universe - so one contract carries a single name and an expression of several without a second shape. 1.4.1 adds the frame's own figures lists (owner ruling AC12.2): a figure written in the frame's prose is DECLARED beside that prose and must appear in it word for word, exactly as a tier-2 passage's figures already must. what_it_does_figures carries them for what_it_does; what_is_changing, each revenue line and each decisive-metric row carries its own list. The lists may be empty - prose with no figure in it declares none. 1.4.2 adds evidence_challenge (owner ruling AC2): a genuinely different model audits the evidence BEFORE any seat is paid, and what it said and what the capture session did about every point travel INSIDE the capture, so the pack hash covers them. 1.4.3 makes that block traceable and honest about what moved after it (owner ruling AC13): it carries the one-time nonce the bridge issued for the call and the hash of the evidence the auditor was given, and it lists every fact that changed, was added or was removed between the call and the recording of its answer. 1.5.0 (owner ruling AC15, unit U3d) adds four things and forces none of them on a capture that has none: an optional plain-English 'label' on any tier-1 fact and an optional 'period_basis' on a derived one (P5, P3); optional 'comparable_because' and 'not_comparable_on' statements on each peer (P1); an optional 'corrections' list recording each user correction (who, when, fact, old, new, reason, and whether it narrows a claim or rebuilds what the seats reason from) so a fix patches the pack in place instead of rebuilding it (P7); and, in the evidence_challenge block, the archive of every audit pass - prior_passes with the current pass marked - so a re-dispatched audit no longer overwrites the first (per-pass archive), plus the scope of the current pass (a full audit or a delta re-audit of a correction, P8). The gate and the sufficiency gate enforce these where they bite; the block and the list stay optional because a pack that was never corrected and never re-audited carries neither. 1.6.0 (owner ruling AC15, unit U3e) adds two meaning changes for a single name and forces neither on any other subject. The business frame gains 'archetype' - what kind of business this is (a profitable operator, a ramping infrastructure builder, a stabilised lessor, or an asset with no earnings) - with 'archetype_because' citing facts in at most forty words; the third canonical test gains 'measure', the rating basis that archetype calls for, and council/floors/floors.json carries the archetype-to-measure table as data (P2, AC15.2); the same row names the measure's denominators on both sides - 'subject_denominator_facts' (the subject's own tier-1 denominator fact ids) and 'peer_denominator_metrics' (the peer-side metric names), each holding exactly the measure's denominators_required count - so the rating is required computable for the subject AND every peer, the numerator and each denominator, not the numerator alone (architect ruling 2026-09-20; unit U3e round-1 findings r1-1 and r1-3). The frame also gains 'cycle_dependence' - whether this single name's thesis rests on an identifiable capital or commodity cycle - with 'cycle_dependence_because' in at most twenty-five words, and an optional top-level 'cycle' carries three to five dated, re-fetchable series for that cycle (hard cap five), or declares the gap with a reason (P4, AC15.3). All four frame fields and the measure are optional in this contract and enforced by the gate and the sufficiency gate for a single name only; a basket, a theme, a fund and an asset with no earnings carry none. 1.6.0 also carries, beside each of those two rationale prose fields, an optional figures list - archetype_because_figures and cycle_dependence_because_figures - so a figure written into either stands in its own text word for word and equals the value of a fact the frame carries, exactly as what_it_does_figures already binds (owner ruling AC13.1, unit U3e closing pass); both lists are absent or empty where the prose carries no figure. 1.7.0 (owner ruling AC4, unit U4(a)) adds the price history and forces it on no capture: an optional 'price_series' - the subject's own daily closes, each bar a date, a close and a volume as the exact strings observed, at least 500 bars or a declared gap for a recent listing - and an optional 'benchmark_series' of the same shape for the benchmark the floors rule for the asset class (council/floors/floors.json, 'benchmarks'), plus an optional top-level 'benchmark' that names the benchmark for this sitting: the broad-index ETF of a non-US primary listing, or the owner's per-sitting override, which wins over the class default (a null ticker rules the sitting absolute). The override sits at the top level, not inside 'subject', because the subject block must stay equal to the verdict's own subject. The provenance gate refuses a series whose dates do not strictly increase, that has a hole longer than five calendar days beyond the declared exchange holidays, whose last bar is more than three exchange days before its as_of, that carries a close of zero, or whose benchmark is not the ruled one or does not span the subject's window. Every capture written before 1.7.0 carries none of the three and stays valid on the version string alone. 1.8.0 (owner rulings AC28, AC30 and AC32, unit FI-ARCHETYPE) adds a fifth archetype, 'financial_institution', in six sub-types, each with its own rating measure, and the frame fields such a business declares: 'fi_subtype' (and, for a hybrid, 'fi_secondary_subtype' with the segment facts that carry the other engine's share), 'fi_capital' (the capital ratio facts beside their requirement facts, the regime and the binding constraint - or a declared gap), 'fi_risk_cost' (the credit or underwriting cost line, or none by design) and, for a financial holding, 'nav_bridge' (the parts its net asset value is struck from). A revenue line may say what KIND of earnings it is ('nature': spread, fee, underwriting, investment, trading, performance or other), and a guidance row may carry its 'revisions' beside the first guidance for the period. Every one of these is optional in this contract: the provenance gate requires them of a single name whose frame declares the financial-institution archetype (the sub-type, the capital, the cost of risk, a nature on every revenue line, revisions on every guidance row, and the bridge for a holding only), refuses them on any other single name's frame, and the sufficiency gate holds them to the floors. On a basket, a theme or a fund they stay optional and unvalidated. 1.8.0 also adds a top-level 'question_line' (owner ruling AC32): the owner's question to the council, as he asked it, on one line. It is optional in this contract so a capture on record still validates under its own version; the provenance gate requires it of every capture written to this one - present, non-empty, no line break, at most sixty words - a masthead safety bound, not a meaning; the line is his question uncut.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
   ],
   "properties": {
     "capture_version": {
-      "const": "1.6.0"
+      "const": "1.8.0"
     },
     "subject": {
       "type": "object",
@@ -243,6 +243,10 @@
       "type": "string",
       "minLength": 1
     },
+    "question_line": {
+      "description": "Owner ruling AC32 (contract 1.8.0): the owner's question to the council, as he asked it, on one line - the line the report's masthead carries. Optional in this contract so a capture on record still validates under its own version; the provenance gate requires it of a capture written to this one: present, not blank, no line break, at most sixty words (a masthead safety bound, not a meaning - the line is the question uncut, derived for a sitting on record exactly as the masthead derives it).",
+      "type": "string"
+    },
     "captured_at": {
       "type": "string",
       "pattern": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?Z"
@@ -359,6 +363,18 @@
                     "type": "string",
                     "minLength": 1
                   }
+                },
+                "nature": {
+                  "description": "Owner rulings AC28 and AC30 (contract 1.8.0): what KIND of earnings this line is - the split a financial institution is read by (spread against fee against underwriting). Optional in this contract; the gate requires it on every line of a single name whose frame declares the financial-institution archetype, and it stays optional for every other archetype.",
+                  "enum": [
+                    "spread",
+                    "fee",
+                    "underwriting",
+                    "investment",
+                    "trading",
+                    "performance",
+                    "other"
+                  ]
                 }
               }
             }
@@ -624,6 +640,32 @@
                     "delivered": {
                       "type": "string",
                       "pattern": "[a-z0-9][a-z0-9_]*"
+                    },
+                    "revisions": {
+                      "description": "Owner ruling AC30(6) (G6, contract 1.8.0): for a financial institution 'guided' is the FIRST guidance given for this period, and every later revision stands here beside it, oldest first - each the date it was given and the tier-1 fact(s) carrying it, named 'guidance_revised_<metric>_<period>' (never 'guided_', which the delivered-partner rule reads). Delivery is still judged against 'guided'. An empty list states the guidance was never revised. Optional in this contract; the gate requires it on every row of a single name whose frame declares the financial-institution archetype, and checks it wherever it is carried: the prefix, the row's own period, a real date, dates strictly increasing.",
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "date",
+                          "guided"
+                        ],
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "pattern": "\\d{4}-\\d{2}-\\d{2}"
+                          },
+                          "guided": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "string",
+                              "pattern": "[a-z0-9][a-z0-9_]*"
+                            }
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -641,12 +683,13 @@
             "pattern": "[a-z0-9][a-z0-9_]*"
           },
           "archetype": {
-            "description": "Owner ruling AC15 (P2, unit U3e): what KIND of business this is, which decides the rating basis the third canonical test uses. profitable_operator - rated on earnings against its own history and peers. ramping_infrastructure_builder - revenue has not arrived yet, so rated on enterprise value per unit of contracted capacity and contracted revenue per unit. stabilised_lessor - rated on enterprise value to operating income. no_earnings_asset - keeps the AB13/AB15 anchorless ladder, legal only for an anchorless subject. The archetype-to-measure table is data in council/floors/floors.json. Optional in this contract; the sufficiency gate requires it, and requires it to match the measure below, for a single name only.",
+            "description": "Owner ruling AC15 (P2, unit U3e): what KIND of business this is, which decides the rating basis the third canonical test uses. profitable_operator - rated on earnings against its own history and peers. ramping_infrastructure_builder - revenue has not arrived yet, so rated on enterprise value per unit of contracted capacity and contracted revenue per unit. stabilised_lessor - rated on enterprise value to operating income. no_earnings_asset - keeps the AB13/AB15 anchorless ladder, legal only for an anchorless subject. financial_institution (owner rulings AC28 and AC30, contract 1.8.0) - a bank, insurer, reinsurer, traditional or alternative asset manager, or financial holding, rated on the return it earns on the capital it must hold (a manager: the clients' capital) against the price the market pays for that capital; its fi_subtype selects the measure. The archetype-to-measure table is data in council/floors/floors.json. Optional in this contract; the sufficiency gate requires it, and requires it to match the measure below, for a single name only.",
             "enum": [
               "profitable_operator",
               "ramping_infrastructure_builder",
               "stabilised_lessor",
-              "no_earnings_asset"
+              "no_earnings_asset",
+              "financial_institution"
             ]
           },
           "archetype_because": {
@@ -682,6 +725,209 @@
             "items": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          "fi_subtype": {
+            "description": "Owner rulings AC28 and AC30 (contract 1.8.0): which of the six kinds of financial institution this is - it selects the rating measure from the archetype table's sub-type rows in council/floors/floors.json. The ground is written in archetype_because. Optional in this contract; the gate requires it of a single name whose archetype is financial_institution and refuses it on any other single name's frame.",
+            "enum": [
+              "bank",
+              "insurer",
+              "reinsurer",
+              "traditional_asset_manager",
+              "alternative_asset_manager",
+              "financial_holding"
+            ]
+          },
+          "fi_secondary_subtype": {
+            "description": "Owner rulings AC28 and AC30: for a hybrid, the OTHER engine - a different sub-type from fi_subtype, which is the larger. Where set, fi_secondary_share_facts names the segment facts that carry that engine's share of earnings. Optional.",
+            "enum": [
+              "bank",
+              "insurer",
+              "reinsurer",
+              "traditional_asset_manager",
+              "alternative_asset_manager",
+              "financial_holding"
+            ]
+          },
+          "fi_secondary_share_facts": {
+            "description": "Owner rulings AC28 and AC30: the tier-1 segment facts that carry the secondary engine's share of earnings. The gate requires at least one where fi_secondary_subtype is set, and every id to be in tier1.",
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "[a-z0-9][a-z0-9_]*"
+            }
+          },
+          "fi_capital": {
+            "description": "Owner rulings AC28 and AC30 (contract 1.8.0): the capital the firm must hold, shown beside its requirement. EITHER ratio_facts, requirement_facts, regime, binding_constraint and figures (target_fact optional) OR a declared gap alone - never both, never neither (the gate checks the shape, the word limits, the figures and that every id is in tier1). Optional in this contract; required by the gate of a single name whose archetype is financial_institution.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ratio_facts": {
+                "description": "The tier-1 capital ratio fact(s) - each in a capital family (floors.json fi_families.capital_ratio_prefixes).",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "requirement_facts": {
+                "description": "The tier-1 fact(s) carrying this firm's own requirement for those ratios - each in a requirement family (fi_families.capital_requirement_prefixes).",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "regime": {
+                "description": "The capital regime in at most twelve words, e.g. the Basel approach and the buffers that apply.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "binding_constraint": {
+                "description": "Which requirement binds and why, in at most twenty-five words.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "target_fact": {
+                "description": "Optional: the tier-1 fact carrying management's own capital target.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "figures": {
+                "description": "Owner ruling AC13.1: every figure written into regime and binding_constraint, declared here, standing in that text word for word and carried by a fact this block cites - the one matcher the frame's other prose meets. Empty where the prose carries no figure.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "gap": {
+                "description": "Declared INSTEAD of every field above where the firm carries no regulatory capital to show; the sufficiency gate decides for which sub-types a gap is legal.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "reason"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                  }
+                }
+              }
+            }
+          },
+          "fi_risk_cost": {
+            "description": "Owner rulings AC28 and AC30 (contract 1.8.0): the line where the credit or underwriting cycle enters the firm's earnings. Optional in this contract; required by the gate of a single name whose archetype is financial_institution, its kind fitted to the sub-type.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "facts",
+              "kind",
+              "because",
+              "figures"
+            ],
+            "properties": {
+              "facts": {
+                "description": "The tier-1 cost-of-risk fact(s) - each in fi_families.risk_cost_ids or a risk_cost_prefixes family. None for kind none_by_design; at least one otherwise.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "kind": {
+                "description": "credit for a bank; underwriting for an insurer or reinsurer; any of the three for an asset manager or a financial holding.",
+                "enum": [
+                  "credit",
+                  "underwriting",
+                  "none_by_design"
+                ]
+              },
+              "because": {
+                "description": "Why this is the cost of risk to read, in at most twenty-five words.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "figures": {
+                "description": "Owner ruling AC13.1: every figure written into because, declared here, standing in that text word for word and carried by a fact this block cites. Empty where the prose carries no figure.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "nav_bridge": {
+            "description": "Owner rulings AC28 and AC30(3) (contract 1.8.0): for a financial holding, the parts its net asset value is struck from and the discount the market applies to it. Optional in this contract; the gate requires it of a financial_holding and refuses it on any other sub-type or archetype; the sufficiency gate walks the chain.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "components",
+              "holdco_net_debt_fact",
+              "nav_total_fact",
+              "discount_fact"
+            ],
+            "properties": {
+              "components": {
+                "description": "Each holding in the bridge: its name, the tier-1 fact carrying its value, and how that value is struck.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "value_fact",
+                    "method"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "value_fact": {
+                      "type": "string",
+                      "pattern": "[a-z0-9][a-z0-9_]*"
+                    },
+                    "method": {
+                      "enum": [
+                        "listed_at_market",
+                        "company_reported_value",
+                        "carrying_value"
+                      ]
+                    }
+                  }
+                }
+              },
+              "holdco_net_debt_fact": {
+                "description": "The tier-1 fact carrying the holding company's own net debt and preferred.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "nav_total_fact": {
+                "description": "The tier-1 fact carrying the net asset value - a derived fact struck from the components and the net debt; the rating row's one subject denominator.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "published_nav_fact": {
+                "description": "Optional: the tier-1 fact carrying the company's own published net asset value.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "discount_fact": {
+                "description": "The tier-1 fact carrying the discount - derived from the market value and the net asset value.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              }
             }
           }
         }
@@ -998,6 +1244,196 @@
         }
       }
     },
+    "benchmark": {
+      "description": "Owner ruling AC4 (spec U4.2): the benchmark named for THIS sitting - the broad-index ETF of a non-US primary listing, or the owner's per-sitting override, which wins over the class default in council/floors/floors.json. A null ticker rules the sitting absolute: judged on its own return, with no benchmark series. Optional; absent, the floors' class default applies.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticker",
+        "why"
+      ],
+      "properties": {
+        "ticker": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+        },
+        "listing": {
+          "description": "Architect ruling closing P-U4a1-8: the exchange the named benchmark lists on, as the floors' calendars_by_listing names it; its series is judged on that listing's calendar. A benchmark with a ticker and no listing, or a listing the floors do not map, refuses a price series.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "why": {
+          "description": "Why this benchmark, in the capture session's or the owner's own words.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        }
+      }
+    },
+    "price_series": {
+      "description": "Owner ruling AC4 (spec U4.1): the subject's own daily closes, the input of the tape table computed at freeze. Optional in 1.7.0; the gate refuses one that contradicts itself.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticker",
+        "calendar",
+        "source",
+        "as_of",
+        "bars"
+      ],
+      "properties": {
+        "ticker": {
+          "description": "The instrument whose closes these are.",
+          "type": "string",
+          "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+        },
+        "calendar": {
+          "description": "The exchange calendar the bars trade on, named as in council/floors/floors.json price_series.exchange_calendars (XNYS for US equity); its declared holidays are excused from the gap rule and do not count against freshness.",
+          "type": "string",
+          "pattern": "[A-Z0-9][A-Z0-9_]*"
+        },
+        "source": {
+          "description": "Where the series was read: the broker's get_price_history (a market-data call) or a named public source.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "as_of": {
+          "description": "When the series was read; not after the capture itself, and the last bar is at most three exchange days before it.",
+          "type": "string",
+          "pattern": "\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?Z)?"
+        },
+        "bars": {
+          "description": "Daily bars, dates strictly increasing (the gate checks the order, the gaps and the freshness). At least 500 bars, or a declared_gap.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "date",
+              "close",
+              "volume"
+            ],
+            "properties": {
+              "date": {
+                "type": "string",
+                "pattern": "\\d{4}-\\d{2}-\\d{2}"
+              },
+              "close": {
+                "description": "The close as the exact string observed, a plain decimal number; the gate refuses a close of zero.",
+                "type": "string",
+                "pattern": "[0-9]+(\\.[0-9]+)?"
+              },
+              "volume": {
+                "description": "The day's volume as the exact string observed.",
+                "type": "string",
+                "pattern": "[0-9]+(\\.[0-9]+)?"
+              }
+            }
+          }
+        },
+        "declared_gap": {
+          "description": "Declared where fewer than 500 bars exist - a recent listing: the reason the history is shorter.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        }
+      }
+    },
+    "benchmark_series": {
+      "description": "Owner ruling AC4 (spec U4.2): the ruled benchmark's daily closes, the same shape as price_series, spanning the subject's window. Carried only beside a price_series and only where a benchmark is ruled (none for an absolute subject).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ticker",
+        "calendar",
+        "source",
+        "as_of",
+        "bars"
+      ],
+      "properties": {
+        "ticker": {
+          "description": "The instrument whose closes these are.",
+          "type": "string",
+          "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+        },
+        "calendar": {
+          "description": "The exchange calendar the bars trade on, named as in council/floors/floors.json price_series.exchange_calendars (XNYS for US equity); its declared holidays are excused from the gap rule and do not count against freshness.",
+          "type": "string",
+          "pattern": "[A-Z0-9][A-Z0-9_]*"
+        },
+        "source": {
+          "description": "Where the series was read: the broker's get_price_history (a market-data call) or a named public source.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        },
+        "as_of": {
+          "description": "When the series was read; not after the capture itself, and the last bar is at most three exchange days before it.",
+          "type": "string",
+          "pattern": "\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?Z)?"
+        },
+        "bars": {
+          "description": "Daily bars, dates strictly increasing (the gate checks the order, the gaps and the freshness). At least 500 bars, or a declared_gap.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "date",
+              "close",
+              "volume"
+            ],
+            "properties": {
+              "date": {
+                "type": "string",
+                "pattern": "\\d{4}-\\d{2}-\\d{2}"
+              },
+              "close": {
+                "description": "The close as the exact string observed, a plain decimal number; the gate refuses a close of zero.",
+                "type": "string",
+                "pattern": "[0-9]+(\\.[0-9]+)?"
+              },
+              "volume": {
+                "description": "The day's volume as the exact string observed.",
+                "type": "string",
+                "pattern": "[0-9]+(\\.[0-9]+)?"
+              }
+            }
+          }
+        },
+        "declared_gap": {
+          "description": "Declared where fewer than 500 bars exist - a recent listing: the reason the history is shorter.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        }
+      }
+    },
     "tier1": {
       "type": "array",
       "minItems": 1,
@@ -1075,12 +1511,29 @@
                   "subtract",
                   "multiply",
                   "divide",
-                  "sum"
+                  "sum",
+                  "series_stat"
                 ]
               },
+              "window": {
+                "description": "Unit U4(a2), spec U4.3: a tape row's window, counted in bars (trading days), with its first and last dates. Written by the freeze; the gate recomputes it.",
+                "type": "string",
+                "minLength": 1
+              },
+              "formula": {
+                "description": "Unit U4(a2): a tape row's arithmetic, printed with the closes it was computed from. Written by the freeze; the gate recomputes it.",
+                "type": "string",
+                "minLength": 1
+              },
+              "date": {
+                "description": "Unit U4(a2): the bar a dated tape row names (the largest fall, the highest and the lowest close).",
+                "type": "string",
+                "pattern": "\\d{4}-\\d{2}-\\d{2}"
+              },
               "operands": {
+                "description": "At least two for arithmetic (the gate refuses fewer); a tape row (series_stat) names the one or two series it was read from.",
                 "type": "array",
-                "minItems": 2,
+                "minItems": 1,
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
@@ -1276,12 +1729,18 @@
                 "minLength": 1
               },
               "measure": {
-                "description": "Owner ruling AC15 (P2, unit U3e): the rating basis the third canonical test uses, which must match the subject's archetype in the business frame. earnings_vs_history_and_peers for a profitable operator; ev_per_contracted_capacity_and_contracted_revenue_per_unit for a ramping infrastructure builder; ev_to_operating_income for a stabilised lessor; anchorless_ladder for an asset with no earnings. Carried on the 'rating_vs_history_or_peers' row only. Optional in this contract; the sufficiency gate requires it there, and requires the match, for a single name.",
+                "description": "Owner ruling AC15 (P2, unit U3e): the rating basis the third canonical test uses, which must match the subject's archetype in the business frame. earnings_vs_history_and_peers for a profitable operator; ev_per_contracted_capacity_and_contracted_revenue_per_unit for a ramping infrastructure builder; ev_to_operating_income for a stabilised lessor; anchorless_ladder for an asset with no earnings; for a financial institution (contract 1.8.0) the measure its fi_subtype's row names - price_to_tangible_book_against_return_on_tangible_equity (bank), price_to_book_against_operating_return_on_equity (insurer), price_to_book_against_return_on_equity (reinsurer), price_to_earnings_against_return_on_client_assets (traditional asset manager), price_to_fee_earnings_against_fee_earning_assets (alternative asset manager), price_to_net_asset_value (financial holding). Carried on the 'rating_vs_history_or_peers' row only. Optional in this contract; the sufficiency gate requires it there, and requires the match, for a single name.",
                 "enum": [
                   "earnings_vs_history_and_peers",
                   "ev_per_contracted_capacity_and_contracted_revenue_per_unit",
                   "ev_to_operating_income",
-                  "anchorless_ladder"
+                  "anchorless_ladder",
+                  "price_to_tangible_book_against_return_on_tangible_equity",
+                  "price_to_book_against_operating_return_on_equity",
+                  "price_to_book_against_return_on_equity",
+                  "price_to_earnings_against_return_on_client_assets",
+                  "price_to_fee_earnings_against_fee_earning_assets",
+                  "price_to_net_asset_value"
                 ]
               },
               "peer_denominator_metrics": {

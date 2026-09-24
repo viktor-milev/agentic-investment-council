@@ -16,7 +16,7 @@ Exit codes: 0 accepted, 3 refused, 1 crash.
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, Inexact, InvalidOperation, localcontext
 
 # Far above any honest financial figure's digits; the Inexact trap is
@@ -30,6 +30,7 @@ _EXACT_PRECISION = 200
 # allowance for clock skew (audit finding r1-10).
 _CLOCK_SKEW_SECONDS = 600
 
+from council.evidence import tape
 from council.lib import canonical, subjects, validate
 
 _REPO_ROOT = os.path.abspath(
@@ -97,6 +98,46 @@ _ARCHETYPE_BECAUSE_WORDS = 40
 _CYCLE_DEPENDENCE_BECAUSE_WORDS = 25
 _CYCLE_NAME_WORDS = 25
 _CYCLE_WHY_WORDS = 40
+
+# Owner rulings AC28 and AC30 (unit FI-ARCHETYPE): a single name whose
+# frame declares the financial-institution archetype says which of the six
+# kinds it is, shows its capital beside the requirement (or a declared
+# gap), names its cost of risk, says what kind of earnings each revenue
+# line is, and - a financial holding only - the bridge its net asset value
+# is struck from. The word limits below are the ones the schema cannot
+# state; the kind of risk cost each sub-type may declare is the seed's
+# ruled fit (a bank lends, an insurer underwrites, a manager or a holding
+# may carry either or neither).
+_FI_ARCHETYPE = "financial_institution"
+_FI_HOLDING = "financial_holding"
+_FI_REGIME_WORDS = 12
+_FI_BINDING_CONSTRAINT_WORDS = 25
+_FI_RISK_COST_BECAUSE_WORDS = 25
+_FI_FIELDS = ("fi_subtype", "fi_secondary_subtype", "fi_secondary_share_facts",
+              "fi_capital", "fi_risk_cost", "nav_bridge")
+_FI_CAPITAL_SHAPE = ("ratio_facts", "requirement_facts", "regime",
+                     "binding_constraint", "figures")
+_FI_NO_RISK_COST = "none_by_design"
+_FI_ANY_RISK_COST = ("credit", "underwriting", _FI_NO_RISK_COST)
+_FI_RISK_COST_KINDS = {
+    "bank": ("credit",),
+    "insurer": ("underwriting",),
+    "reinsurer": ("underwriting",),
+    "traditional_asset_manager": _FI_ANY_RISK_COST,
+    "alternative_asset_manager": _FI_ANY_RISK_COST,
+    _FI_HOLDING: _FI_ANY_RISK_COST,
+}
+# Owner ruling AC30(6) (G6): a revision of a period's guidance is its own
+# family, never 'guided_' - that prefix is the FIRST promise, the one the
+# table scores against its delivered partner.
+_REVISED_PREFIX = "guidance_revised_"
+# A later revision of one guided metric in one period carries an ordinal
+# tail: '_r2', '_r3' and on (architect ruling, FI-ARCHETYPE (c) item 11).
+_REVISION_ORDINAL = re.compile(r"_r([2-9]|[1-9][0-9]+)$")
+
+# Owner ruling AC32: the owner's question on one line of its own. A masthead
+# safety bound, not a meaning - the ruling says one line and sets no count.
+_QUESTION_LINE_WORDS = 60
 
 # The three headline figures whose fall obliges a reading (AC1). Each
 # is read against its own prior-year pair; a member of an expression
@@ -455,6 +496,15 @@ def evidence_body_sha256(capture):
     body = dict(capture)
     body.pop("evidence_challenge", None)
     body.pop("corrections", None)
+    # Unit U4(a2): the tape the freeze appends is left out too. The
+    # auditor reads the capture BEFORE the freeze, and every tape entry
+    # is recomputed by this gate from the series the hash does cover, so
+    # the pack's hash stays the hash of the evidence the auditor was sent.
+    for key, name in (("tier1", "id"), ("gaps", "fact_class")):
+        if isinstance(body.get(key), list):
+            body[key] = [entry for entry in body[key]
+                         if not (isinstance(entry, dict)
+                                 and entry.get(name) in tape.ROW_IDS)]
     return canonical.sha256_bytes(canonical.canonical_bytes(body))
 
 
@@ -903,11 +953,14 @@ def _check_business_frame(capture):
             ones. A narrower pool would be empty, and an empty pool
             makes declaring a figure there illegal while writing one
             undeclared stays legal - a rule that punishes the honest
-            capture and closes nothing."""
+            capture and closes nothing. On a single name (no frame
+            suffix) every fact is the subject's own, a double-underscore
+            tail on its id included (register item P-FIb-4)."""
             if cited is None:
                 return [str(fact["value"]).strip()
                         for fact_id, fact in facts_by_id.items()
-                        if _id_suffix(fact_id) in ("", suffix)]
+                        if not suffix
+                        or _id_suffix(fact_id) in ("", suffix)]
             values, _ = _share_carriers(list(cited), facts_by_id, suffix)
             for entry_id in cited:
                 passage = passages_by_id.get(entry_id)
@@ -977,6 +1030,23 @@ def _check_business_frame(capture):
             figures_bind("the cycle-dependence reason",
                          frame.get("cycle_dependence_because_figures") or [],
                          frame["cycle_dependence_because"], None)
+
+        # ---- a financial institution's own declarations (owner rulings
+        #      AC28 and AC30) - a single name only, as AC15's are ----
+        if subject.get("kind") == "single_stock":
+            if frame.get("archetype") == _FI_ARCHETYPE:
+                _check_fi_frame(frame, where, reasons, missing_fact,
+                                figures_bind)
+            else:
+                stray = [field for field in _FI_FIELDS if field in frame]
+                if stray:
+                    reasons.append(
+                        "%s carries %s and does not declare the archetype "
+                        "'%s' - these fields describe a financial "
+                        "institution's capital, cost of risk and holdings, "
+                        "and on any other business the seats would read "
+                        "them as ground the rating does not stand on"
+                        % (where, ", ".join(stray), _FI_ARCHETYPE))
 
         # ---- how it earns ----
         for line in frame["how_it_earns"]:
@@ -1438,6 +1508,14 @@ def _check_business_frame(capture):
                         "both rows under it"
                         % (where, quarter["period"],
                            ", ".join("'%s'" % item for item in shared)))
+            # Owner ruling AC30(6) (G6): where a row carries the revisions
+            # of its guidance beside the first promise, each is its own
+            # family, dated, in order, and bound to the row's own period -
+            # checked wherever the list is carried; a financial
+            # institution must carry it (_check_fi_frame).
+            _check_revisions(quarter, where, reasons, missing_fact,
+                             without_suffix, suffix,
+                             _moment(capture["captured_at"]).date())
             # EVERY guided figure in the row is scored, not just one:
             # the delivered id had only to partner ONE of them, so a
             # second promise in the same row could stand with no outcome
@@ -1646,6 +1724,310 @@ def _check_business_frame(capture):
     return reasons
 
 
+def _check_fi_frame(frame, where, reasons, missing_fact, figures_bind):
+    """A financial institution's frame declarations (owner rulings AC28
+    and AC30, unit FI-ARCHETYPE), for a single name whose frame declares
+    the archetype. Shape only, like the rest of this gate: it never asks
+    whether the firm IS that sub-type or whether the ratio shown is the
+    one that binds - no machine here reads a filing - only that the frame
+    says what the rule asks, in the words allowed, pointing at figures the
+    record carries. The families the facts belong to, the floors and the
+    capital gap's legality per sub-type are the sufficiency gate's, which
+    reads the floors. `missing_fact` and `figures_bind` are the frame
+    check's own, so one member bound and one figure matcher serve all."""
+    subtype = frame.get("fi_subtype")
+    if not subtype:
+        reasons.append(
+            "%s declares the archetype '%s' and carries no fi_subtype - "
+            "owner rulings AC28 and AC30 rate each of the six kinds of "
+            "financial institution on its own measure, so the frame says "
+            "which kind this is" % (where, _FI_ARCHETYPE))
+    for field, what in (
+            ("fi_capital", "the capital it must hold, beside its "
+                           "requirement, or the declared gap"),
+            ("fi_risk_cost", "the line where the credit or underwriting "
+                             "cycle enters its earnings, or none by "
+                             "design")):
+        if not frame.get(field):
+            reasons.append(
+                "%s declares the archetype '%s' and carries no %s - a "
+                "financial institution states %s before the seats read "
+                "its rating" % (where, _FI_ARCHETYPE, field, what))
+
+    secondary = frame.get("fi_secondary_subtype")
+    if secondary and secondary == subtype:
+        reasons.append(
+            "%s names '%s' as both its sub-type and its secondary sub-type "
+            "- the secondary is the OTHER engine of a hybrid, or it is not "
+            "named at all" % (where, secondary))
+    if secondary and not frame.get("fi_secondary_share_facts"):
+        reasons.append(
+            "%s names the secondary sub-type '%s' and no fact carrying that "
+            "engine's share of earnings - a hybrid's other engine is shown "
+            "by its size, or the seats cannot tell how much it matters"
+            % (where, secondary))
+    for fact_id in frame.get("fi_secondary_share_facts") or []:
+        missing_fact("a fact behind the secondary engine's share", fact_id)
+
+    capital = frame.get("fi_capital")
+    if capital:
+        gap = capital.get("gap")
+        shaped = [field for field in _FI_CAPITAL_SHAPE + ("target_fact",)
+                  if field in capital]
+        if gap and shaped:
+            reasons.append(
+                "%s carries both a capital gap and %s in fi_capital - the "
+                "capital is shown beside its requirement or declared a gap "
+                "with its reason, never both" % (where, ", ".join(shaped)))
+        elif not gap:
+            absent = [field for field in _FI_CAPITAL_SHAPE
+                      if field not in capital]
+            if absent:
+                reasons.append(
+                    "%s carries fi_capital without %s - the capital is "
+                    "shown as its ratio beside the firm's own requirement, "
+                    "the regime and what binds, with the figures its prose "
+                    "writes, or declared a gap with its reason"
+                    % (where, ", ".join(absent)))
+            for field, limit in (("regime", _FI_REGIME_WORDS),
+                                 ("binding_constraint",
+                                  _FI_BINDING_CONSTRAINT_WORDS)):
+                counted = _words(capital.get(field, ""))
+                if counted > limit:
+                    reasons.append(
+                        "%s writes %d words for fi_capital.%s; the ruled "
+                        "limit is %d" % (where, counted, field, limit))
+            cited = (list(capital.get("ratio_facts") or [])
+                     + list(capital.get("requirement_facts") or [])
+                     + ([capital["target_fact"]]
+                        if capital.get("target_fact") else []))
+            for fact_id in cited:
+                missing_fact("a fact behind the capital block", fact_id)
+            # The prose binds to the facts the block itself cites - the
+            # rule the what-is-changing and decisive-metric prose meet
+            # (architect ruling, unit FI-ARCHETYPE).
+            figures_bind("the fi_capital prose, whose figures bind to the "
+                         "facts the block itself cites",
+                         capital.get("figures") or [],
+                         "%s\n%s" % (capital.get("regime", ""),
+                                     capital.get("binding_constraint", "")),
+                         cited)
+
+    risk = frame.get("fi_risk_cost")
+    if risk:
+        counted = _words(risk["because"])
+        if counted > _FI_RISK_COST_BECAUSE_WORDS:
+            reasons.append(
+                "%s writes %d words for fi_risk_cost.because; the ruled "
+                "limit is %d"
+                % (where, counted, _FI_RISK_COST_BECAUSE_WORDS))
+        allowed = _FI_RISK_COST_KINDS.get(subtype)
+        if allowed is not None and risk["kind"] not in allowed:
+            reasons.append(
+                "%s declares its cost of risk as '%s', and a '%s' reads its "
+                "cost of risk as %s - the line is where the firm's own "
+                "cycle enters its earnings, and this one is the wrong cycle"
+                % (where, risk["kind"], subtype,
+                   " or ".join("'%s'" % kind for kind in allowed)))
+        if risk["kind"] == _FI_NO_RISK_COST and risk["facts"]:
+            reasons.append(
+                "%s declares no cost of risk by design and still cites %s - "
+                "a line that is absent by design points at nothing"
+                % (where, ", ".join("'%s'" % item for item in risk["facts"])))
+        elif risk["kind"] != _FI_NO_RISK_COST and not risk["facts"]:
+            reasons.append(
+                "%s declares a %s cost of risk and cites no fact for it - "
+                "the cost of risk is a figure of the pack, or it is none by "
+                "design" % (where, risk["kind"]))
+        for fact_id in risk["facts"]:
+            missing_fact("a fact behind the cost of risk", fact_id)
+        figures_bind("the fi_risk_cost prose, whose figures bind to the "
+                     "facts the line itself cites",
+                     risk["figures"], risk["because"], risk["facts"])
+
+    bridge = frame.get("nav_bridge")
+    if subtype == _FI_HOLDING and not bridge:
+        reasons.append(
+            "%s is a financial holding and carries no nav_bridge - owner "
+            "ruling AC30(3) rates a holding on its discount to the value of "
+            "what it owns, so the frame names the parts that value is "
+            "struck from" % where)
+    elif bridge and subtype and subtype != _FI_HOLDING:
+        reasons.append(
+            "%s carries a nav_bridge on a '%s' - the bridge is a financial "
+            "holding's own measure, and on any other sub-type the seats "
+            "would read a net asset value the rating does not stand on"
+            % (where, subtype))
+    if bridge:
+        for component in bridge["components"]:
+            missing_fact("the value of '%s' in the nav_bridge"
+                         % component["name"], component["value_fact"])
+        for field in ("holdco_net_debt_fact", "nav_total_fact",
+                      "published_nav_fact", "discount_fact"):
+            if bridge.get(field):
+                missing_fact("the nav_bridge's %s" % field, bridge[field])
+
+    for line in frame["how_it_earns"]:
+        if not line.get("nature"):
+            reasons.append(
+                "%s carries the revenue line '%s' with no nature - a "
+                "financial institution is read by the split of its earnings "
+                "between spread, fee, underwriting and the rest, so every "
+                "line says which it is" % (where, line["line"]))
+    for quarter in frame["management"]["guidance_vs_delivery"]:
+        if "revisions" not in quarter:
+            reasons.append(
+                "%s carries the guidance for %s with no revisions list - "
+                "owner ruling AC30(6) judges management against its FIRST "
+                "guidance with every revision shown beside it, so the row "
+                "lists them, or an empty list says the guidance was never "
+                "revised" % (where, quarter["period"]))
+
+
+def _check_revisions(quarter, where, reasons, missing_fact, without_suffix,
+                     suffix, captured_on):
+    """One guidance row's revisions, wherever the list is carried (owner
+    ruling AC30(6), G6): each revision's ids are in the record and each
+    is BOUND TO ITS ROW (architect ruling closing P-FIa-6, stated whole
+    once here) - named 'guidance_revised_<metric>_<period>', where
+    <metric> is one the row's own guided ids name and <period> is the
+    row's own period, and dated a real date on or before the capture's
+    own day; the dates strictly increase, oldest first."""
+    revisions = quarter.get("revisions")
+    if not revisions:
+        return
+    slug = period_slug(quarter["period"])
+    tail = "_" + slug
+    metrics = {without_suffix(guided)[len(_GUIDED_PREFIX):-len(tail)]
+               for guided in quarter["guided"]
+               if slug and guided.startswith(_GUIDED_PREFIX)
+               and without_suffix(guided).endswith(tail)}
+    dates = []
+    for revision in revisions:
+        for fact_id in revision["guided"]:
+            missing_fact("a revision of the guidance for %s"
+                         % quarter["period"], fact_id)
+        for subject, reason in _revision_unbound(
+                revision, without_suffix, metrics, slug, captured_on):
+            reasons.append("%s puts %s among the revisions of the guidance "
+                           "for %s: %s" % (where, subject, quarter["period"],
+                                           reason))
+        try:
+            dates.append(datetime.strptime(revision["date"], "%Y-%m-%d"))
+        except ValueError:
+            reasons.append(
+                "%s dates a revision of the guidance for %s '%s', which is "
+                "not a real date" % (where, quarter["period"],
+                                     revision["date"]))
+    if any(later <= earlier for earlier, later in zip(dates, dates[1:])):
+        reasons.append(
+            "%s lists the revisions of the guidance for %s out of date "
+            "order - the record of how a promise moved runs oldest first, "
+            "each on its own date" % (where, quarter["period"]))
+    # Several revisions of one metric: the first keeps the bare id, each
+    # later one the next ordinal tail, each once, dated no earlier than the
+    # one it follows (owner ruling AC30(6): every revision beside the first).
+    by_metric = {}
+    for revision in revisions:
+        for fact_id in revision["guided"]:
+            bare, ordinal = _revision_ordinal(without_suffix(fact_id))
+            by_metric.setdefault(bare, []).append(
+                (ordinal, revision["date"], fact_id))
+    for bare, entries in sorted(by_metric.items()):
+        entries.sort()
+        if [entry[0] for entry in entries] != list(range(1, len(entries) + 1)):
+            reasons.append(
+                "%s revises '%s' for %s as %s - the first revision keeps that "
+                "id and each later one carries the next tail, '_r2', '_r3' "
+                "and on, each once" % (where, bare, quarter["period"],
+                                       ", ".join("'%s'" % entry[2]
+                                                 for entry in entries)))
+        for earlier, later in zip(entries, entries[1:]):
+            if later[1] < earlier[1]:
+                reasons.append(
+                    "%s dates '%s' %s, before '%s' (%s), the revision it "
+                    "follows - each later revision of a promise is dated no "
+                    "earlier than the one before it"
+                    % (where, later[2], later[1], earlier[2], earlier[1]))
+
+
+def _revision_ordinal(fact_id):
+    """(the revision id without its ordinal tail, the ordinal) - 1 for the
+    first revision, which wears none."""
+    found = _REVISION_ORDINAL.search(fact_id)
+    if not found:
+        return fact_id, 1
+    return fact_id[:found.start()], int(found.group(1))
+
+
+def _revision_unbound(revision, without_suffix, metrics, slug,
+                      captured_on):
+    """Why one revision is not bound to its row, as (what, why) pairs:
+    each id in the family, on a metric the row guides, for the row's own
+    period; the date not after the capture (architect ruling closing
+    P-FIa-6)."""
+    for fact_id in revision["guided"]:
+        what = "'%s'" % fact_id
+        body = _revision_ordinal(
+            without_suffix(fact_id))[0][len(_REVISED_PREFIX):]
+        if not fact_id.startswith(_REVISED_PREFIX):
+            yield what, ("a revision is named '%s<metric>_<period>' - never "
+                         "'%s', which is the FIRST promise the table scores "
+                         "against its outcome"
+                         % (_REVISED_PREFIX, _GUIDED_PREFIX))
+        elif slug and body not in {m + "_" + slug for m in metrics}:
+            if not body.endswith("_" + slug):
+                yield what, ("a revision for another period - that id does "
+                             "not end '_%s', and a revision belongs to the "
+                             "period its row displays" % slug)
+            elif any(body.startswith(m + "_") for m in metrics):
+                yield what, ("a revision for another period - that id "
+                             "names a period other than '%s', the one its "
+                             "row displays" % slug)
+            else:
+                yield what, ("a revision on a metric this row does not "
+                             "guide - a revision moves a promise the row "
+                             "itself carries")
+    try:
+        dated = datetime.strptime(revision["date"], "%Y-%m-%d").date()
+    except ValueError:
+        return  # refused once, by name, as no real date
+    if dated > captured_on:
+        yield ("one dated %s" % revision["date"],
+               "a revision dated after the capture itself (%s) - a revision "
+               "is a record of what management said, and cannot come from "
+               "the future" % captured_on.isoformat())
+
+
+def _check_question_line(capture):
+    """Owner ruling AC32: the owner's question to the council stands on one
+    line of its own - present, not blank, no line break, within the
+    masthead's safety bound. The gate never asks whether the line IS his
+    question as he asked it; the evidence auditor and the owner see it."""
+    line = capture.get("question_line")
+    if line is None:
+        return ["the capture carries no question_line - owner ruling AC32: "
+                "the owner's question to the council, as he asked it, stands "
+                "on one line of its own, the line the report's masthead "
+                "carries"]
+    if not line.strip():
+        return ["the capture's question_line is blank - it is the owner's "
+                "question as he asked it, on one line"]
+    reasons = []
+    if "".join(line.splitlines()) != line:
+        reasons.append(
+            "the capture's question_line runs over more than one line - it "
+            "is ONE line, the one the masthead prints")
+    counted = _words(line)
+    if counted > _QUESTION_LINE_WORDS:
+        reasons.append(
+            "the capture writes %d words for its question_line; the "
+            "masthead's bound is %d - the line is the owner's question as "
+            "he asked it, uncut, and one that long is not one line"
+            % (counted, _QUESTION_LINE_WORDS))
+    return reasons
+
+
 def _check_cycle(capture):
     """The optional top-level cycle block's own consistency (owner ruling
     AC15, P4, unit U3e).
@@ -1704,6 +2086,490 @@ def _check_cycle(capture):
                 "increasing dates - a dated series read as evidence is "
                 "ordered, or two readings sit on one date and the seats "
                 "cannot tell which came first" % entry["id"])
+    return reasons
+
+
+# ---------------------------------------------------------------------
+# The price series and its benchmark (owner ruling AC4; spec U4.1 and
+# U4.2; unit U4(a)). A capture may carry the subject's daily closes and
+# its ruled benchmark's; the tape table is computed from them at freeze.
+# A series that contradicts itself is a declared-data contradiction, so
+# it REFUSES the pack in plain words - the same character as a derived
+# figure that does not recompute. The rules and the exchange-holiday
+# lists are floors DATA; the gate reads the bars as the exact strings
+# observed and never rewrites one.
+# ---------------------------------------------------------------------
+
+_SERIES = (("price_series", "the subject's price series"),
+           ("benchmark_series", "the benchmark series"))
+
+
+def _norm_listing(text):
+    return " ".join(str(text).split()).casefold()
+
+
+def _listing_calendar(listing, rules):
+    """The calendar calendars_by_listing binds to `listing`, or None."""
+    return {_norm_listing(name): calendar for name, calendar
+            in rules["calendars_by_listing"].items()}.get(
+                _norm_listing(listing))
+
+
+def _listings(subject):
+    """The listings the subject trades on: each named member's for a
+    basket or theme, the vehicle's for a theme carried through one, else
+    the subject's own. An unrecorded listing is None."""
+    if subject.get("constituents"):
+        return [member.get("listing") for member in subject["constituents"]]
+    if subject.get("vehicle"):
+        return [subject["vehicle"].get("listing")]
+    return [subject.get("listing")]
+
+
+def _series_calendars(subject, series_ticker, rules):
+    """(calendars the subject's own series may name, refusal). The
+    series binds to the instrument whose ticker it carries - the
+    subject, its vehicle, or a named member: that instrument's listing
+    binds the calendar through calendars_by_listing, an instrument with
+    no listing binds by the subject's asset class, and a series naming
+    none of them refuses (architect rulings closing P-U4a1-5 and
+    P-U4a1-6). A basket or a theme is never itself a candidate: its own
+    ticker is a label, as the frame check treats it (P-U4a1-7)."""
+    collective = subject.get("kind") in ("basket", "theme")
+    instruments = (([] if collective else [subject]) + ([subject[
+        "vehicle"]] if subject.get("vehicle") else []) + list(
+            subject.get("constituents") or []))
+    named = [each for each in instruments if each.get("ticker")]
+    if named or subject.get("ticker"):
+        match = [each for each in named if each["ticker"] == series_ticker]
+        if not match:
+            return None, (
+                "the series names %s, which is not the subject or one of "
+                "its members - the tape would be computed from another "
+                "instrument's history" % series_ticker)
+        listing = match[0].get("listing")
+    else:
+        # A subject with no ticker recorded anywhere (a spot coin,
+        # bullion): today's behaviour - its own listing, else its class.
+        # Which coin the series is stays open (P-U4a1-1, registered).
+        listing = subject.get("listing")
+    if listing is not None:
+        calendar = _listing_calendar(listing, rules)
+        if calendar is None:
+            return None, (
+                "the subject's price series cannot be judged: the listing "
+                "'%s' has no calendar in the floors' calendars_by_listing, "
+                "so its trading days and holidays are unknown - a non-US "
+                "exchange is added there, as data, at the first sitting "
+                "that carries its series" % listing)
+        return [calendar], None
+    allowed = rules["calendars_by_asset_class"].get(subject["asset_class"])
+    if allowed is None:
+        return None, (
+            "the subject's price series cannot be judged: %s has no "
+            "listing recorded and the floors define no calendar for "
+            "the unlisted %s class in calendars_by_asset_class"
+            % (series_ticker, subject["asset_class"]))
+    return allowed, None
+
+
+def ruled_benchmark(capture, floors):
+    """The benchmark this capture's price series is judged against
+    (owner ruling AC4, spec U4.2), from the floors' `benchmarks` data.
+
+    Returns {"ticker", "why", "refusal"}: `ticker` is None for an
+    absolute sitting (a coin, bullion, a commodity, or an override that
+    rules it so); `refusal` is a plain reason where no benchmark can be
+    ruled - a non-US listing that names none. The per-sitting override
+    (the capture's top-level `benchmark`) wins over every default. A
+    basket or theme takes its members' class benchmark; a fund, or a
+    theme carried through one vehicle, is read by that listing."""
+    named = capture.get("benchmark")
+    if named:
+        refusal = None
+        if named["ticker"] and not named.get("listing"):
+            refusal = ("the benchmark named for this sitting (%s) names no "
+                       "listing - its series is judged on its exchange's "
+                       "calendar: add its listing to the capture's "
+                       "top-level benchmark block" % named["ticker"])
+        return {"ticker": named["ticker"], "refusal": refusal,
+                "listing": named.get("listing"),
+                "why": "named for this sitting: " + named["why"]}
+    data = floors["benchmarks"]
+    subject = capture["subject"]
+    asset_class = subject["asset_class"]
+    rule = data["by_asset_class"].get(asset_class)
+    if rule is None:
+        return {"ticker": None, "refusal": None,
+                "why": "the %s class is judged on its own return "
+                       "(absolute)" % asset_class}
+    listings = _listings(subject)
+    us = {_norm_listing(name) for name in data["us_listings"]}
+    foreign = [str(listing) for listing in listings
+               if listing is None or _norm_listing(listing) not in us]
+    if not foreign:
+        default = rule["us_listing"]
+        return {"ticker": default["ticker"], "refusal": None,
+                "listing": default["listing"],
+                "why": "the %s class default for a US listing, %s"
+                       % (asset_class, default["name"])}
+    return {"ticker": None, "why": None,
+            "refusal": "the capture carries a price series, but no "
+                       "benchmark can be ruled for it: the listing %s is "
+                       "not among the US listings the floors name, and a "
+                       "non-US listing names its broad-index ETF for the "
+                       "sitting in the capture's top-level benchmark "
+                       "block (owner ruling AC4)"
+                       % ", ".join("'%s'" % text for text in foreign)}
+
+
+def _exchange_days_after(start, end, holidays, trades):
+    """How many exchange days lie after `start`, up to and including
+    `end`: days on the calendar's trading weekdays (`trades`, ISO
+    numbering) that the calendar does not declare a holiday."""
+    count = 0
+    day = start + timedelta(days=1)
+    while day <= end:
+        if day.isoweekday() in trades and day.isoformat() not in holidays:
+            count += 1
+        day += timedelta(days=1)
+    return count
+
+
+def _check_one_series(series, where, captured_at, rules, allowed=None):
+    """One series' own consistency: real dates, strictly increasing,
+    no hole beyond the ruled gap once declared holidays are set aside,
+    the last bar fresh against the capture's date, every close above
+    zero, and enough bars or a declared gap. The calendar must be one
+    the floors define and, where `allowed` is given, one of those
+    (architect ruling closing P-U4a1-2)."""
+    name = series["calendar"]
+    calendar = rules["exchange_calendars"].get(name)
+    if calendar is None:
+        return ["%s names the calendar %s, which the floors do not define "
+                "- its trading days and holidays are unknown, so its gaps "
+                "and freshness cannot be judged; the defined calendars are "
+                "%s" % (where, name,
+                        ", ".join(sorted(rules["exchange_calendars"])))]
+    if allowed is not None and name not in allowed:
+        return ["%s names the calendar %s, but its instrument "
+                "trades on %s - the wrong calendar misjudges its gaps and "
+                "freshness" % (where, name, ", ".join(allowed))]
+    reasons = []
+    holidays = frozenset(calendar["holidays"])
+    trades = frozenset(calendar["trading_weekdays"])
+    days = []
+    closed = []
+    for bar in series["bars"]:
+        try:
+            days.append(date.fromisoformat(bar["date"]))
+        except ValueError:
+            return ["%s carries a bar dated %s, which is not a calendar "
+                    "date" % (where, bar["date"])]
+        # A calendar trades its weekdays except its holidays; a bar on
+        # any other day is a mis-dated reading (r1-3).
+        if (days[-1].isoweekday() not in trades
+                or bar["date"] in holidays):
+            closed.append(bar["date"])
+        if Decimal(bar["close"]) <= 0:
+            reasons.append(
+                "%s carries a close of %s on %s - a traded price is above "
+                "zero; a zero close is a missing reading written as a "
+                "figure" % (where, bar["close"], bar["date"]))
+    if closed:
+        reasons.append(
+            "%s carries a bar dated %s (%d bar(s) in all), a day calendar "
+            "%s does not trade - a weekend or a declared holiday: the bar "
+            "is mis-dated" % (where, closed[0], len(closed),
+                              series["calendar"]))
+    backwards = [(earlier, later) for earlier, later in zip(days, days[1:])
+                 if later <= earlier]
+    if backwards:
+        earlier, later = backwards[0]
+        return reasons + [
+            "%s does not run in strictly increasing dates: %s follows %s "
+            "(%d place(s)) - a series read as evidence is ordered, one "
+            "bar a day" % (where, later.isoformat(), earlier.isoformat(),
+                           len(backwards))]
+    limit = rules["max_gap_calendar_days"]
+    for earlier, later in zip(days, days[1:]):
+        span = (later - earlier).days
+        excused = sum(1 for step in range(1, span)
+                      if (earlier + timedelta(days=step)).isoformat()
+                      in holidays)
+        if span - excused > limit:
+            reasons.append(
+                "%s jumps from %s to %s - bars %d calendar days apart, %d "
+                "of the days between a declared holiday of calendar %s; "
+                "the ruled limit is %d: a hole in the history is missing "
+                "evidence, not a quiet week" % (where, earlier.isoformat(),
+                                      later.isoformat(), span, excused,
+                                      series["calendar"], limit))
+    minimum = rules["min_bars"]
+    if len(days) < minimum and not series.get("declared_gap"):
+        reasons.append(
+            "%s carries %d daily bars and declares no gap - the rule is at "
+            "least %d bars (about two trading years), or a declared gap "
+            "for a recent listing" % (where, len(days), minimum))
+    try:
+        read_at = _moment(series["as_of"])
+    except ValueError:
+        return reasons + ["%s is dated %s, which is not a calendar date"
+                          % (where, series["as_of"])]
+    if read_at > captured_at:
+        reasons.append(
+            "%s is dated %s, after the capture itself - evidence cannot "
+            "come from the future" % (where, series["as_of"]))
+    last = days[-1]
+    if last > read_at.date():
+        reasons.append(
+            "%s ends on a bar dated %s, after the series' own as_of (%s)"
+            % (where, last.isoformat(), series["as_of"]))
+    else:
+        # Freshness runs to the CAPTURE's date (architect ruling before
+        # U4(a1) round 1): a series whose own as_of is as old as its last
+        # bar is still stale when the council sits on the capture.
+        until = max(read_at, captured_at).date()
+        age = _exchange_days_after(last, until, holidays, trades)
+        stale = rules["max_staleness_exchange_days"]
+        if age > stale:
+            reasons.append(
+                "%s ends on %s, %d exchange days before the capture's "
+                "date (%s); the ruled limit is %d - a stale series "
+                "describes a market that has moved on"
+                % (where, last.isoformat(), age, until.isoformat(), stale))
+    return reasons
+
+
+def _check_price_series(capture, floors):
+    """Both series' own consistency, then their relation to the subject
+    and to each other: the subject's series is the subject's, a benchmark
+    series sits only beside it, is the ruled benchmark, and spans its
+    window. A capture with neither series is untouched."""
+    rules = floors["price_series"]
+    captured_at = _moment(capture["captured_at"])
+    reasons = []
+    allowed = None
+    if capture.get("price_series"):
+        allowed, refusal = _series_calendars(
+            capture["subject"], capture["price_series"]["ticker"], rules)
+        if refusal:
+            reasons.append(refusal)
+    # The benchmark series binds through its benchmark's listing, as the
+    # subject's does (architect ruling closing P-U4a1-8).
+    ruled = ruled_benchmark(capture, floors)
+    bench_allowed = None
+    if (capture.get("benchmark_series") and ruled["ticker"]
+            and ruled["listing"]):
+        calendar = _listing_calendar(ruled["listing"], rules)
+        if calendar is None:
+            reasons.append(
+                "the benchmark series cannot be judged: its listing '%s' "
+                "has no calendar in the floors' calendars_by_listing, so "
+                "its trading days and holidays are unknown"
+                % ruled["listing"])
+        else:
+            bench_allowed = [calendar]
+    for key, where in _SERIES:
+        if capture.get(key):
+            reasons.extend(_check_one_series(
+                capture[key], where, captured_at, rules,
+                allowed if key == "price_series" else bench_allowed))
+    price = capture.get("price_series")
+    bench = capture.get("benchmark_series")
+    if not price:
+        return reasons + [
+            "the capture carries a benchmark series but no price series "
+            "of its own - a benchmark is read against the subject's own "
+            "history"]
+    if ruled["refusal"]:
+        return reasons + [ruled["refusal"]]
+    if ruled["ticker"] is None:
+        if bench:
+            reasons.append(
+                "the capture carries a benchmark series (%s), but this "
+                "sitting is absolute - %s - so it has no benchmark: drop "
+                "the series, or name one for the sitting in the top-level "
+                "benchmark block" % (bench["ticker"], ruled["why"]))
+        return reasons
+    if not bench:
+        return reasons + [
+            "the subject's price series has no benchmark series beside it "
+            "- the ruled benchmark is %s (%s); carry its daily closes over "
+            "the same window" % (ruled["ticker"], ruled["why"])]
+    if bench["ticker"] != ruled["ticker"]:
+        reasons.append(
+            "the benchmark series is for %s, but the ruled benchmark is %s "
+            "(%s)" % (bench["ticker"], ruled["ticker"], ruled["why"]))
+    first, last = price["bars"][0]["date"], price["bars"][-1]["date"]
+    b_first, b_last = bench["bars"][0]["date"], bench["bars"][-1]["date"]
+    if b_first > first or b_last < last:
+        reasons.append(
+            "the benchmark series (%s) runs %s to %s, which does not cover "
+            "the subject's window (%s to %s) - every return set against "
+            "the benchmark needs a benchmark close at both ends"
+            % (bench["ticker"], b_first, b_last, first, last))
+    return reasons
+
+
+def expected_tape(capture, floors):
+    """The tape table (spec U4.3, unit U4(a2)) the freeze computes for
+    this capture - {"facts", "gaps"} from its price series and, where the
+    sitting has a ruled benchmark, the benchmark's - or None without a
+    price series. The unit comes from the price fact of the instrument
+    the series is for (its member's, in an expression); the freshness
+    rule from the series itself (audit round 1, r1-1). Raises
+    ValueError, in plain words, where there is none."""
+    price = capture.get("price_series")
+    if not price:
+        return None
+    facts = {fact["id"]: fact for fact in capture["tier1"]}
+    fact = (facts.get("price_last" + frame_suffix(capture["subject"],
+                                                  price["ticker"]))
+            or facts.get("price_last"))
+    if fact is None:
+        raise ValueError(
+            "the capture carries a price series for %s but no 'price_last' "
+            "fact for it: the tape takes its price unit from that fact"
+            % price["ticker"])
+    bench = (capture.get("benchmark_series")
+             if ruled_benchmark(capture, floors)["ticker"] else None)
+    return tape.tape_table(
+        price, bench, price_unit=fact["unit"],
+        freshness_rule_days=_series_rule_days(price, floors["price_series"]))
+
+
+def _series_rule_days(series, rules):
+    """The series' own staleness limit, counted in exchange days, as the
+    calendar days the freeze's freshness arithmetic counts: the most
+    calendar days after the last bar on which the gate still accepts the
+    series (r1-1). A tape figure is as fresh as the closes it is
+    computed from - not as the quote beside it."""
+    calendar = rules["exchange_calendars"].get(series["calendar"])
+    if calendar is None:
+        raise ValueError(
+            "the price series for %s names the calendar %s, which the "
+            "floors do not define - the tape's freshness cannot be judged"
+            % (series["ticker"], series["calendar"]))
+    holidays = frozenset(calendar["holidays"])
+    trades = frozenset(calendar["trading_weekdays"])
+    last = date.fromisoformat(series["bars"][-1]["date"])
+    day = last
+    while _exchange_days_after(last, day + timedelta(days=1), holidays,
+                               trades) <= rules["max_staleness_exchange_days"]:
+        day += timedelta(days=1)
+    return (day - last).days
+
+
+def _differences(carried, wanted):
+    """The fields in which a carried tape fact differs from the one the
+    freeze computes, the derived block's by name."""
+    fields = []
+    for key in sorted(set(carried) | set(wanted)):
+        mine, theirs = carried.get(key), wanted.get(key)
+        if key == "derived" and isinstance(mine, dict):
+            fields += ["derived." + sub for sub in sorted(set(mine) | set(
+                theirs)) if mine.get(sub) != theirs.get(sub)]
+        elif mine != theirs:
+            fields.append(key)
+    return fields
+
+
+def _check_tape(capture, floors):
+    """Every tape figure and declared tape gap a capture carries is
+    exactly what the freeze computes from its price series (unit
+    U4(a2)): the table is recomputed and each entry compared whole -
+    value, unit, window, formula, date, label - so a figure no series
+    supports never reaches a seat. A capture with a price series must
+    let the freeze compute its tape (its price fact is there)."""
+    table = None
+    if capture.get("price_series"):
+        try:
+            table = expected_tape(capture, floors)
+        except ValueError as exc:
+            return [str(exc)]
+    carried = [fact for fact in capture["tier1"]
+               if fact["id"] in tape.ROW_IDS or (
+                   fact["derived"]
+                   and fact["derived"]["operation"] == tape.OPERATION)]
+    gaps = [gap for gap in capture["gaps"]
+            if gap["fact_class"] in tape.ROW_IDS]
+    if not carried and not gaps:
+        return []
+    if not capture.get("price_series"):
+        return ["the capture carries tape figures (%s) but no price series "
+                "to compute them from - a tape figure is computed at the "
+                "freeze from the subject's daily closes, never written by "
+                "hand" % ", ".join([fact["id"] for fact in carried]
+                                   + [gap["fact_class"] for gap in gaps])]
+    want_facts = {fact["id"]: fact for fact in table["facts"]}
+    want_gaps = {gap["fact_class"]: gap for gap in table["gaps"]}
+    reasons = []
+    for fact in carried:
+        fact_id = fact["id"]
+        want = want_facts.get(fact_id)
+        if fact_id not in tape.ROW_IDS:
+            reasons.append(
+                "derived fact '%s' is a series figure but not one of the "
+                "tape's %d figures - the tape is what the freeze computes, "
+                "no more" % (fact_id, len(tape.ROW_IDS)))
+        elif want is None:
+            reasons.append(
+                "tape figure '%s' (%s) cannot be computed from this price "
+                "series - %s - so it is a declared gap, not a figure"
+                % (fact_id, tape.LABELS[fact_id],
+                   want_gaps[fact_id]["reason"]))
+        elif fact != want:
+            reasons.append(
+                "tape figure '%s' (%s) does not recompute from the price "
+                "series: the freeze computes %s %s, the capture says %s %s "
+                "(it differs in: %s)"
+                % (fact_id, tape.LABELS[fact_id], want["value"],
+                   want["unit"], fact.get("value"), fact.get("unit"),
+                   ", ".join(_differences(fact, want))))
+    for gap in gaps:
+        fact_class = gap["fact_class"]
+        if fact_class in want_facts:
+            reasons.append(
+                "tape figure '%s' (%s) is declared a gap, but the price "
+                "series gives it: the freeze computes %s %s"
+                % (fact_class, tape.LABELS[fact_class],
+                   want_facts[fact_class]["value"],
+                   want_facts[fact_class]["unit"]))
+        elif gap != want_gaps[fact_class]:
+            reasons.append(
+                "the declared gap for tape figure '%s' (%s) is not the one "
+                "the freeze writes from this series: %s"
+                % (fact_class, tape.LABELS[fact_class],
+                   want_gaps[fact_class]["reason"]))
+    return reasons
+
+
+# A fact's unit is printed unfenced beside its figure on every view the
+# seats and the outside auditor read, so it is admitted only as a short
+# token (architect ruling closing P-FIc-4). These bounds are an injection
+# bound, not a meaning: they keep an instruction out of the unit.
+_UNIT_MAX_CHARS = 40
+_UNIT_MAX_WORDS = 6
+_UNIT_TOKEN = re.compile(r"[A-Za-z0-9_%$/. -]+")
+
+
+def _check_unit_tokens(capture):
+    """Every fact's unit is a short token: letters, digits, spaces and
+    `_ % $ / . -` only, within the length and word bounds above."""
+    reasons = []
+    for fact in capture["tier1"]:
+        unit = str(fact.get("unit") or "")
+        if (len(unit) > _UNIT_MAX_CHARS
+                or len(unit.split()) > _UNIT_MAX_WORDS
+                or not _UNIT_TOKEN.fullmatch(unit)):
+            reasons.append(
+                "fact '%s' has a unit that is not a short token ('%s') - a "
+                "unit is at most %d characters and %d words of letters, "
+                "digits, spaces and _ %% $ / . - only, because it is printed "
+                "beside the figure on every page a seat or the auditor reads"
+                % (fact.get("id"), unit[:_UNIT_MAX_CHARS], _UNIT_MAX_CHARS,
+                   _UNIT_MAX_WORDS))
     return reasons
 
 
@@ -1899,6 +2765,13 @@ def _check_arithmetic(capture):
             continue
         operation = derived["operation"]
         operands = derived["operands"]
+        if operation == tape.OPERATION:
+            continue  # a tape figure: recomputed by _check_tape
+        if len(operands) < 2:
+            reasons.append(
+                "derived fact '%s' declares '%s' over one operand - "
+                "arithmetic takes at least two" % (fact["id"], operation))
+            continue
         if operation in _EXACTLY_TWO and len(operands) != 2:
             reasons.append(
                 "derived fact '%s' declares '%s' over %d operands - "
@@ -2296,8 +3169,11 @@ def _check_dates(capture):
     return reasons
 
 
-def validate_capture(capture, schema):
+def validate_capture(capture, schema, floors=None):
     """Run every provenance check over a capture document.
+
+    `floors` is the ruled floors data; read from disk when not given, and
+    only for a capture that carries a price or benchmark series.
 
     Returns {"result": "accepted"|"refused", "reasons": [...]}. The
     ruled constituent bound is pre-checked so its refusal reads plainly
@@ -2316,12 +3192,22 @@ def validate_capture(capture, schema):
                             "contract: " + error
                             for error in shape_errors]}
     reasons = []
+    reasons.extend(_check_question_line(capture))
     reasons.extend(_check_subject_kind(capture))
     reasons.extend(_check_business_frame(capture))
     reasons.extend(_check_cycle(capture))
+    series_reasons = []
+    if capture.get("price_series") or capture.get("benchmark_series"):
+        floors = floors or canonical.read_json(_FLOORS_PATH)
+        series_reasons = _check_price_series(capture, floors)
+        reasons.extend(series_reasons)
+    if not series_reasons:
+        # A tape is computed only from a series the gate has accepted.
+        reasons.extend(_check_tape(capture, floors))
     reasons.extend(_check_evidence_challenge(capture))
     reasons.extend(_check_id_uniqueness(capture))
     reasons.extend(_check_labels(capture))
+    reasons.extend(_check_unit_tokens(capture))
     reasons.extend(_check_period_basis(capture))
     reasons.extend(_check_arithmetic(capture))
     reasons.extend(_check_operand_references(capture))

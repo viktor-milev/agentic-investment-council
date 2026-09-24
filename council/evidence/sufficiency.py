@@ -115,6 +115,16 @@ _DECISIVE_METRIC_MINIMUM = 3
 # for every peer.
 _PEER_GAP_CLASS = "peer_"
 
+# Owner rulings AC28 and AC30: a financial institution declares its
+# capital a gap only where it holds no regulatory capital of its own -
+# the two managers of clients' capital. A financial holding may do so
+# only where no principal holding is itself a regulated institution,
+# which the capture states by declaring this fact class absent by design.
+_FI_CAPITAL_GAP_SUBTYPES = ("traditional_asset_manager",
+                            "alternative_asset_manager")
+_FI_HOLDING = "financial_holding"
+_FI_HOLDING_CAPITAL_GAP_CLASS = "subsidiary_capital_ratio_"
+
 # The plain words a rating-measure component fails on, keyed by the fault
 # measure_component_fault returns. Owner ruling AC15 (P2); architect
 # ruling 2026-09-20: the peer half of a ratio is brought to the same bar as
@@ -557,13 +567,431 @@ def _subject_label(subject):
     return subject["name"]
 
 
-def _merged_floors(floors, subject):
+def _subtyped_archetype(floors, capture):
+    """(the archetype, the sub-type) where a single name's frame declares
+    an archetype whose row carries sub-types - the financial institution
+    (owner rulings AC28 and AC30) - or None. The sub-type is None where
+    the frame names none or one the row does not know; the archetype
+    block of check() refuses that in plain words."""
+    subject = capture["subject"]
+    if subject["kind"] != "single_stock":
+        return None
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    archetype = frame.get("archetype") if isinstance(frame, dict) else None
+    row = (((floors.get("archetype_measures") or {}).get("table") or {})
+           .get(archetype) if isinstance(archetype, str) else None)
+    if not isinstance(row, dict) or not row.get("subtypes"):
+        return None
+    subtype = frame.get(row.get("subtype_field"))
+    if not isinstance(subtype, str) or subtype not in row["subtypes"]:
+        subtype = None
+    return archetype, subtype
+
+
+def _archetype_lifts(floors, declared):
+    """The lifts block (owner ruling AC30(1), G1) where it applies to
+    the declared sub-type, else an empty dict."""
+    if not declared:
+        return {}
+    lifts = (((floors.get("archetype_floors") or {}).get(declared[0]) or {})
+             .get("lifts") or {})
+    return lifts if declared[1] in (lifts.get("subtypes") or ()) else {}
+
+
+def _merged_floors(floors, subject, capture=None):
     entries = list(floors["classes"][subject["kind"]]["floors"])
+    declared = _subtyped_archetype(floors, capture) if capture else None
+    # Owner ruling AC30(1) (G1): the one SUBTRACTIVE step in the merge.
+    # For a lifted sub-type the class floors named in the lifts block are
+    # dropped - the class's own list only, so no per-name ruling is ever
+    # undone by it.
+    lifted = set(_archetype_lifts(floors, declared)
+                 .get("single_stock_floor_ids_lifted") or ())
+    entries = [entry for entry in entries
+               if not (entry.get("kind") == "id"
+                       and entry.get("id") in lifted)]
     ticker = subject.get("ticker")
     named = floors.get("names", {})
     if ticker and ticker in named:
         entries += list(named[ticker]["floors"])
+    # Owner rulings AC28 and AC30: the third source, merged on top of the
+    # class and the name - what every financial institution carries,
+    # then what its own sub-type carries.
+    if declared:
+        block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
+        entries += list(block.get("all_subtypes") or [])
+        if declared[1]:
+            entries += list(block.get(declared[1]) or [])
     return entries
+
+
+def _rests_on(fact_id, targets, facts_by_id, seen=None):
+    """The first fact of `targets` this one rests on - itself or an
+    operand, transitively - or None. Operands without a fact reference
+    are inline constants and rest on nothing."""
+    if seen is None:
+        seen = set()
+    if fact_id in seen:
+        return None
+    seen.add(fact_id)
+    if fact_id in targets:
+        return fact_id
+    derived = (facts_by_id.get(fact_id) or {}).get("derived")
+    if derived:
+        for operand in derived.get("operands") or ():
+            reference = operand.get("fact_id")
+            if reference is not None and reference in facts_by_id:
+                hit = _rests_on(reference, targets, facts_by_id, seen)
+                if hit is not None:
+                    return hit
+    return None
+
+
+def _contributions(fact_id, facts_by_id, sign=1, path=()):
+    """{fact id: the list of signed contributions it makes to this fact}
+    - +1 added, -1 taken off, None reached through multiplication or
+    division - walked down every route, each route counted once, so a
+    part reached twice shows twice (audit round three, r3-1)."""
+    found = {fact_id: [sign]}
+    derived = (facts_by_id.get(fact_id) or {}).get("derived")
+    if fact_id in path or not derived:
+        return found
+    operation = derived.get("operation")
+    for place, operand in enumerate(derived.get("operands") or ()):
+        reference = operand.get("fact_id")
+        if reference is None or reference not in facts_by_id:
+            continue
+        step = None if sign is None or operation not in (
+            "add", "sum", "subtract") else (
+            -sign if operation == "subtract" and place else sign)
+        deeper = _contributions(reference, facts_by_id, step,
+                                path + (fact_id,))
+        for fid, steps in deeper.items():
+            found.setdefault(fid, []).extend(steps)
+    return found
+
+
+def _miscount(steps, want):
+    """Why a part's signed contributions are not exactly one `want` -
+    in plain words - or None where they are."""
+    times = "twice" if len(steps) == 2 else "%d times" % len(steps)
+    if None in steps:
+        return "reached by multiplication or division"
+    if len(steps) > 1:
+        return "counted " + times + (
+            "" if set(steps) == {want} else ", added and taken off")
+    if steps != [want]:
+        return "added" if want == -1 else "taken off"
+    return None
+
+
+def _nav_bridge_failures(frame, rating, facts_by_id):
+    """Why a financial holding's net-asset-value bridge is not a real
+    chain of captured facts - one (what, why, where) per breach - or
+    nothing where it holds (owner rulings AC28 and AC30 (G3)).
+
+    The holding is rated on its discount to what it owns at today's
+    prices, so the one figure the rating divides by must be the total
+    the bridge strikes; that total must show its arithmetic; every part
+    the bridge names - each holding and the holding company's own net
+    debt - must be inside it, however many steps down; and the chain
+    must end in readings the capture recorded. The discount's own
+    history is a floor in the data (archetype_floors), not code here.
+    What this cannot check is that the bridge lists EVERY holding: no
+    machine reads the list of what a company owns, so the outside
+    auditor and the owner carry that."""
+    bridge = frame.get("nav_bridge")
+    if not isinstance(bridge, dict):
+        return [(
+            "the bridge a financial holding's net asset value is struck "
+            "through",
+            "owner rulings AC28 and AC30 (G3): a financial holding is rated "
+            "on its discount to what it owns at today's prices, and this "
+            "frame names no nav_bridge, so nothing shows what that value "
+            "is made of",
+            "the business frame's nav_bridge: each holding with its value "
+            "fact, the holding company's net debt and the total")]
+    failures = []
+    total = bridge.get("nav_total_fact")
+    denominators = (rating or {}).get("subject_denominator_facts") or []
+    if denominators != [total]:
+        failures.append((
+            "the net asset value the rating divides by, struck through the "
+            "bridge",
+            "owner rulings AC28 and AC30 (G3): a financial holding is rated "
+            "on its discount to what it owns at today's prices, so the one "
+            "figure the rating divides by is the total its bridge strikes - "
+            "the rating names %s and the bridge's total is '%s'"
+            % (", ".join("'%s'" % fid for fid in denominators) or "nothing",
+               total),
+            "the rating_vs_history_or_peers row: 'subject_denominator_facts' "
+            "naming the nav_bridge's nav_total_fact alone"))
+    if not (facts_by_id.get(total) or {}).get("derived"):
+        failures.append((
+            "a net asset value struck from its parts",
+            "owner rulings AC28 and AC30 (G3): '%s' carries no arithmetic - "
+            "a total typed in shows nothing of the holdings and the debt it "
+            "claims to add up, so the discount would rest on a figure no "
+            "one can follow" % total,
+            "a derived fact for the total: the holdings' values less the "
+            "holding company's net debt, arithmetic shown"))
+    else:
+        parts = [(component.get("value_fact"), "the value of the holding "
+                  "'%s'" % component.get("name"))
+                 for component in bridge.get("components") or ()]
+        parts.append((bridge.get("holdco_net_debt_fact"),
+                      "the holding company's net debt"))
+        outside = ["'%s' (%s)" % (fid, words) for fid, words in parts
+                   if _rests_on(total, {fid}, facts_by_id) is None]
+        if outside:
+            failures.append((
+                "every part of the bridge inside the net asset value",
+                "owner rulings AC28 and AC30 (G3): the bridge names %s, and "
+                "'%s' is not struck from it at any step - a part left out "
+                "of the total makes the discount a figure of some other "
+                "company" % ("; ".join(outside), total),
+                "the total's arithmetic, directly or through a subtotal, "
+                "taking in every holding and the holding company's net "
+                "debt"))
+        # Inside is not enough: the value is the holdings LESS the net
+        # debt, so each holding must be added and the debt taken off,
+        # by every route the chain takes (audit round one, r1-2).
+        # Each holding must enter exactly once with a plus and the debt
+        # exactly once with a minus (round three, r3-1). A part outside
+        # the total is refused above. The net debt is the last part.
+        found = _contributions(total, facts_by_id)
+        wants = [1] * (len(parts) - 1) + [-1]
+        wrong = ["'%s' (%s: %s)" % (fid, words, _miscount(found[fid], want))
+                 for (fid, words), want in zip(parts, wants)
+                 if fid in found and _miscount(found[fid], want)]
+        if wrong:
+            failures.append((
+                "every holding added into the net asset value and the "
+                "holding company's net debt taken off it",
+                "owner rulings AC28 and AC30 (G3): the net asset value is "
+                "the holdings' values less the holding company's net debt, "
+                "and '%s' does not strike %s that way - the total would "
+                "recompute exactly and still be the wrong figure to divide "
+                "by" % (total, "; ".join(wrong)),
+                "the total's arithmetic, in sums and subtractions: every "
+                "holding added, the holding company's net debt subtracted"))
+        unsourced = _unsourced_leaf(total, facts_by_id)
+        if unsourced:
+            holder, label = unsourced
+            failures.append((
+                "a net asset value resting on recorded readings",
+                "owner rulings AC28 and AC30 (G3): followed down, '%s' "
+                "rests on %r - a number written into the capture, resting "
+                "on no captured reading at all. The arithmetic would "
+                "recompute exactly and still show nothing" % (holder, label),
+                "capture the figure itself as a fact, dated and sourced, "
+                "and strike the total from it"))
+    return failures
+
+
+def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
+                 decisive_ids, facts_by_id):
+    """Why a financial institution's frame breaks the rule the floors
+    set for it (owner rulings AC28 and AC30) - one (what, why, where)
+    per breach - or nothing where it holds. The frame's SHAPE is the
+    provenance gate's; this is the rule against the floors data."""
+    subtype = declared[1]
+    failures = []
+    families = floors.get("fi_families") or {}
+    capital = frame.get("fi_capital")
+    capital = capital if isinstance(capital, dict) else {}
+    risk_cost = frame.get("fi_risk_cost")
+    risk_cost = risk_cost if isinstance(risk_cost, dict) else {}
+
+    # A financial holding is rated on its net asset value, so the bridge
+    # that value is struck through is checked whole.
+    if row.get("requires_nav_bridge"):
+        failures.extend(_nav_bridge_failures(frame, rating, facts_by_id))
+
+    # Where the capital may be a gap: a manager holds no regulatory
+    # capital of its own; a holding only where no principal holding is
+    # regulated; a bank, insurer or reinsurer never.
+    if "gap" in capital:
+        declared_classes = gap_kinds.get(_FI_HOLDING_CAPITAL_GAP_CLASS) or ()
+        holding_exempt = (subtype == _FI_HOLDING and declared_classes
+                          and all(reason == "absent_by_design"
+                                  for reason in declared_classes))
+        if subtype not in _FI_CAPITAL_GAP_SUBTYPES and not holding_exempt:
+            failures.append((
+                "the capital a %s must hold, beside its requirement"
+                % subtype.replace("_", " "),
+                "owner rulings AC28 and AC30: the headroom above the "
+                "regulator's minimum decides what a %s can pay out and "
+                "whether it survives a bad year, so its capital is never "
+                "a gap - only a manager of clients' capital, or a holding "
+                "none of whose principal holdings is regulated (the fact "
+                "class '%s' declared absent by design), may declare one"
+                % (subtype.replace("_", " "), _FI_HOLDING_CAPITAL_GAP_CLASS),
+                "the capital section of the latest results: the capital "
+                "ratio beside its requirement, named in fi_capital"))
+
+    # The capital ratio is always decisive (architect ruling 6).
+    ratio_facts = [fid for fid in capital.get("ratio_facts") or ()
+                   if isinstance(fid, str)]
+    if ratio_facts and not set(ratio_facts) & decisive_ids:
+        failures.append((
+            "a decisive metric resting on the capital ratio",
+            "owner rulings AC28 and AC30: a financial institution's "
+            "capital beside its requirement always decides the case, and "
+            "no decisive metric in the business frame rests on %s"
+            % ", ".join("'%s'" % fid for fid in ratio_facts),
+            "name the capital ratio in the 'answered_by' of a decisive "
+            "metric"))
+
+    # The families (fi_families): a capital line cites capital, a
+    # requirement line a requirement, a risk-cost line a cost of risk.
+    for key, prefixes_key, words in (
+            ("ratio_facts", "capital_ratio_prefixes", "capital ratio"),
+            ("requirement_facts", "capital_requirement_prefixes",
+             "capital requirement")):
+        prefixes = tuple(families.get(prefixes_key) or ())
+        for fid in capital.get(key) or ():
+            if isinstance(fid, str) and not fid.startswith(prefixes):
+                failures.append((
+                    "a %s in its own fact family" % words,
+                    "owner rulings AC28 and AC30: fi_capital names '%s' as "
+                    "a %s, and a %s's id starts with one of %s - a capital "
+                    "line cannot cite a fact that is not one"
+                    % (fid, words, words, ", ".join(prefixes)),
+                    "the %s fact itself, named in its family" % words))
+    # Each ratio stands beside the requirement FOR THAT RATIO (the
+    # contract's own words), and each requirement beside its ratio: the
+    # two family lists run in parallel, and 'cet1_ratio_<x>' pairs with
+    # 'cet1_requirement_<x>' - the suffix rule the prefix_pairs floors
+    # already read. A ratio set beside another ratio's minimum shows a
+    # headroom that is not there.
+    requirement_ids = [fid for fid in capital.get("requirement_facts") or ()
+                       if isinstance(fid, str)]
+    prefix_pairs = list(zip(families.get("capital_ratio_prefixes") or (),
+                            families.get("capital_requirement_prefixes")
+                            or ()))
+    for fids, others, mine, theirs, words, other_words in (
+            (ratio_facts, requirement_ids, 0, 1, "ratio", "requirement"),
+            (requirement_ids, ratio_facts, 1, 0, "requirement", "ratio")):
+        for fid in fids:
+            pair = next((pair for pair in prefix_pairs
+                         if fid.startswith(pair[mine])), None)
+            if pair is None:
+                continue
+            partner = pair[theirs] + fid[len(pair[mine]):]
+            if partner not in others:
+                failures.append((
+                    "a capital %s beside its own %s" % (words, other_words),
+                    "owner rulings AC28 and AC30: fi_capital shows '%s' "
+                    "beside %s, and the %s for that %s is '%s' - a capital "
+                    "line set beside another line's figure shows a "
+                    "headroom that is not there"
+                    % (fid, ", ".join("'%s'" % item for item in others)
+                       or "nothing", other_words, words, partner),
+                    "fi_capital: '%s' named beside '%s'" % (partner, fid)))
+    risk_ids = set(families.get("risk_cost_ids") or ())
+    risk_prefixes = tuple(families.get("risk_cost_prefixes") or ())
+    for fid in risk_cost.get("facts") or ():
+        if (isinstance(fid, str) and fid not in risk_ids
+                and not fid.startswith(risk_prefixes)):
+            failures.append((
+                "a cost of risk in its own fact family",
+                "owner rulings AC28 and AC30: fi_risk_cost names '%s', and "
+                "a cost of risk is one of %s or starts with one of %s - a "
+                "risk-cost line cannot cite a fact that is not a cost of "
+                "risk" % (fid, ", ".join(sorted(risk_ids)),
+                          ", ".join(risk_prefixes)),
+                "the provision, credit cost, combined ratio, large loss or "
+                "reserve development fact itself"))
+    # The family matches the declared kind (architect ruling closing
+    # P-FIa-2): a credit line cites a credit fact, an underwriting line
+    # an underwriting fact. The gate already fits the kind to the sub-type.
+    by_kind = families.get("risk_cost_kinds") or {}
+    declared_kind = risk_cost.get("kind")
+    for fid in risk_cost.get("facts") or ():
+        if not isinstance(fid, str):
+            continue
+        kinds = sorted(
+            kind for kind, family in by_kind.items()
+            if isinstance(family, dict)
+            and (fid in (family.get("ids") or ())
+                 or fid.startswith(tuple(family.get("prefixes") or ()))))
+        if kinds and declared_kind in by_kind and declared_kind not in kinds:
+            failures.append((
+                "a cost of risk of the kind the frame declares",
+                "fi_risk_cost declares a %s cost of risk and cites '%s', "
+                "which is %s fact - a %s reads its cost of risk as the "
+                "line where its own cycle enters its earnings, and this "
+                "one is another business's cycle"
+                % (declared_kind, fid,
+                   " or ".join("an %s" % kind if kind[0] in "aeiou"
+                               else "a %s" % kind for kind in kinds),
+                   subtype.replace("_", " ")),
+                "the %s fact itself - %s" % (
+                    declared_kind,
+                    "a provision or credit cost" if declared_kind == "credit"
+                    else "a combined ratio, large loss or reserve "
+                         "development")))
+
+    exited = ((floors.get("archetype_measures") or {})
+              .get("fi_exited_business") or {})
+    # Each denominator is a fact its role allows (architect ruling closing
+    # P-FIa-1): the sub-type row names, per role, the ids the brief's row
+    # prescribes - on the subject's side and on the peers' alike. The
+    # continuing business's figure is the same id with its suffix.
+    suffix = exited.get("continuing_suffix") or ""
+    for side, named in (
+            ("the subject's side",
+             (rating or {}).get("subject_denominator_facts") or []),
+            ("the peers' side",
+             (rating or {}).get("peer_denominator_metrics") or [])):
+        for fid, role, allowed in zip(named, row.get("denominator_roles")
+                                      or (), row.get("denominator_ids")
+                                      or ()):
+            if not isinstance(fid, str):
+                continue
+            bare = (fid[:-len(suffix)] if suffix and fid.endswith(suffix)
+                    else fid)
+            if bare not in allowed:
+                who = subtype.replace("_", " ")
+                what = "%s %s's %s denominator" % (
+                    "an" if who[0] in "aeiou" else "a", who,
+                    role.replace("_", " "))
+                failures.append((
+                    what,
+                    "architect ruling closing P-FIa-1: the rating divides "
+                    "by '%s' on %s, and %s must be one of %s - the measure "
+                    "is struck on those, and any other fact is another "
+                    "measure" % (fid, side, what,
+                                 ", ".join("'%s'" % item
+                                           for item in allowed)),
+                    "the rating_vs_history_or_peers row: %s named as that "
+                    "denominator, in the role order the sub-type lists"
+                    % " or ".join("'%s'" % item for item in allowed)))
+
+    # Owner ruling AC30(4) (G4): on a model transition the exited
+    # business's earnings and client money are banned as its revenue is.
+    if changing == "model_transition" and exited:
+        suffix = exited.get("continuing_suffix") or ""
+        banned_roles = set(exited.get("roles") or ())
+        denominators = (rating or {}).get("subject_denominator_facts") or []
+        for fid, role in zip(denominators, row.get("denominator_roles") or ()):
+            if (role in banned_roles and isinstance(fid, str)
+                    and not fid.endswith(suffix)):
+                failures.append((
+                    "the continuing business's %s as the rating's "
+                    "denominator" % role.replace("_", " "),
+                    "owner ruling AC30(4): this business is changing its "
+                    "model, and the rating divides by '%s', the %s of the "
+                    "whole business - including the part being sold or "
+                    "run off. The %s the rating rests on is the continuing "
+                    "business's, its id ending '%s'"
+                    % (fid, role.replace("_", " "), role.replace("_", " "),
+                       suffix),
+                    "the continuing business's figure - a derived fact may "
+                    "strike it from the whole less the part being exited, "
+                    "arithmetic shown"))
+    return failures
 
 
 def _dedupe(items):
@@ -643,7 +1071,16 @@ def check(pack, floors):
                         "page and capture again." % label)}
 
     class_config = floors["classes"][subject["kind"]]
-    entries = _merged_floors(floors, subject)
+    entries = _merged_floors(floors, subject, capture)
+    declared = _subtyped_archetype(floors, capture)
+    # Owner ruling AC30(1) (G1): for a bank, insurer, reinsurer or
+    # financial holding the free-cash test is answered by distributable
+    # capital, and its refusal words come from the lifts data block. The
+    # guide itself is never changed: every other subject reads it as is.
+    lifts = _archetype_lifts(floors, declared)
+    guide = dict(_CANONICAL_GUIDE)
+    if lifts:
+        guide["free_cash_flow"] = tuple(lifts["free_cash_flow_test_words"])
 
     tier1_rules = {}
     tier1_order = []
@@ -1021,7 +1458,7 @@ def check(pack, floors):
                        == "absent_by_design_allowed"
                        or subjects.is_anchorless(subject))
     for test_id in CANONICAL_TEST_IDS:
-        guide_why, guide_where = _CANONICAL_GUIDE[test_id]
+        guide_why, guide_where = guide[test_id]
         requirement = requirements_by_id.get(test_id)
         if requirement is None or requirement["kind"] != "canonical_test":
             refuse(test_id,
@@ -1039,8 +1476,8 @@ def check(pack, floors):
     for requirement in requirements:
         requirement_id = requirement["id"]
         description = requirement["description"]
-        if requirement_id in _CANONICAL_GUIDE:
-            hint = _CANONICAL_GUIDE[requirement_id][1]
+        if requirement_id in guide:
+            hint = guide[requirement_id][1]
         else:
             hint = ("start from what the requirement itself describes: "
                     + description)
@@ -1050,6 +1487,17 @@ def check(pack, floors):
                 refuse(requirement_id,
                        "it is marked answered but names no supporting "
                        "facts (%s)" % description,
+                       hint)
+            prefix = lifts.get("free_cash_flow_test_answered_by_prefix")
+            if (requirement_id == "free_cash_flow" and prefix
+                    and requirement["kind"] == "canonical_test"
+                    and not any(fact_id.startswith(prefix)
+                                and fact_id in tier1_rules
+                                for fact_id in answered_by)):
+                refuse(requirement_id,
+                       "owner ruling AC30(1): %s - so this test is "
+                       "answered by a '%s' fact, and it names none (%s)"
+                       % (guide[requirement_id][0], prefix, description),
                        hint)
             for fact_id in answered_by:
                 if fact_id in tier1_rules:
@@ -1212,6 +1660,27 @@ def check(pack, floors):
         table = archetype_data.get("table") or {}
         archetype = frame.get("archetype")
         entry = table.get(archetype) if archetype else None
+        # Owner rulings AC28 and AC30 (architect ruling 1): an archetype
+        # row that carries sub-types - the financial institution - is
+        # resolved to the sub-type the frame names BEFORE anything reads
+        # the row's measure, and everything below runs unchanged on the
+        # resolved row. A missing or unknown sub-type is refused here.
+        if entry is not None and entry.get("subtypes"):
+            field = entry.get("subtype_field")
+            subtype = frame.get(field)
+            resolved = (entry["subtypes"].get(subtype)
+                        if isinstance(subtype, str) else None)
+            if resolved is None:
+                refuse("the sub-type of the declared archetype",
+                       "owner rulings AC28 and AC30: a '%s' is rated on the "
+                       "measure of its own sub-type - one of %s - and the "
+                       "frame %s, so neither the rating measure nor the "
+                       "evidence minimums of the sub-type can be chosen"
+                       % (archetype, ", ".join(sorted(entry["subtypes"])),
+                          "names none" if subtype is None else
+                          "names '%s', which is not one of them" % subtype),
+                       "the '%s' field in the business frame" % field)
+            entry = resolved
         rating = requirements_by_id.get("rating_vs_history_or_peers")
         measure = (rating or {}).get("measure")
         if not measure:
@@ -1422,31 +1891,54 @@ def check(pack, floors):
                                "declared gap for the fact class '%s'"
                                % (den_id, peer["ticker"], _PEER_GAP_CLASS))
         changing = (frame.get("what_is_changing") or {}).get("kind")
+        if declared and declared[1] and entry is not None:
+            decisive_ids = set()
+            for metric_row in frame["decisive_metrics"]:
+                decisive_ids.update(metric_row.get("answered_by") or [])
+            for what, why, where in _fi_failures(
+                    floors, declared, entry, frame, rating, changing,
+                    gap_kinds, decisive_ids, facts_by_id):
+                refuse(what, why, where)
+            # Every figure the frame shows as the firm's capital, its cost
+            # of risk or its second engine's share is read as the case
+            # stands, so each fact those blocks cite is fresh - one fresh
+            # member of a floor's family never vouches for another. A
+            # holding's bridge needs no loop here: every part of it and the
+            # holding company's net debt sit inside the net asset value's
+            # chain (_nav_bridge_failures), and that value is the rating's
+            # subject denominator, whose whole chain denominator_fault
+            # already walks for staleness.
+            capital = frame.get("fi_capital")
+            capital = capital if isinstance(capital, dict) else {}
+            risk_cost = frame.get("fi_risk_cost")
+            risk_cost = risk_cost if isinstance(risk_cost, dict) else {}
+            for block_words, cited in (
+                    ("capital block",
+                     list(capital.get("ratio_facts") or ())
+                     + list(capital.get("requirement_facts") or ())
+                     + [capital.get("target_fact")]),
+                    ("cost of risk", list(risk_cost.get("facts") or ())),
+                    ("secondary engine's share",
+                     list(frame.get("fi_secondary_share_facts") or ()))):
+                for fact_id in _dedupe(cited):
+                    if (isinstance(fact_id, str) and fact_id in tier1_rules
+                            and not fresh(fact_id)):
+                        refuse("a fresh reading of '%s', which the frame's "
+                               "%s cites" % (fact_id, block_words),
+                               stale_words(fact_id),
+                               "a fresher reading of '%s' from the source "
+                               "that produced it"
+                               % (stale_dependency(fact_id) or fact_id))
         forbidden = ((archetype_data.get("forbidden_on_model_transition")
                       or {}).get("trailing_revenue_fact_ids") or [])
 
-        def rests_on_forbidden(fact_id, seen=None):
+        def rests_on_forbidden(fact_id):
             """The first forbidden trailing-revenue fact this rating fact
             rests on - itself or an operand, transitively - or None. A
             derived fact struck from the exited business's revenue is that
             revenue, however many operands deep (owner ruling AC15 P2; the
             same operand walk stale_dependency does)."""
-            if seen is None:
-                seen = set()
-            if fact_id in seen:
-                return None
-            seen.add(fact_id)
-            if fact_id in forbidden:
-                return fact_id
-            derived = (facts_by_id.get(fact_id) or {}).get("derived")
-            if derived:
-                for operand in derived["operands"]:
-                    reference = operand.get("fact_id")
-                    if reference is not None and reference in facts_by_id:
-                        hit = rests_on_forbidden(reference, seen)
-                        if hit is not None:
-                            return hit
-            return None
+            return _rests_on(fact_id, forbidden, facts_by_id)
 
         if changing == "model_transition" and rating:
             # The ban walks every fact the rating rests on, not only

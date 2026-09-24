@@ -1,5 +1,5 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -13,6 +13,7 @@
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is the Example Thematic Robotics Fund attractive here?",
  "question_verbatim": "Is the Example Thematic Robotics Fund attractive here? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",
@@ -199,8 +200,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186574662d70617373",
-  "evidence_sha256": "12b2f7dbb0e799c174d67b4caf8d439e7066646b9c01481e8002376028065686",
+  "evidence_sha256": "491735d65f5dff59f8370ca85675aac4ab43b45b97ab7cd33b46a5f276a12e5d",
   "post_audit_changes": [],
-  "post_audit_sha256": "12b2f7dbb0e799c174d67b4caf8d439e7066646b9c01481e8002376028065686"
+  "post_audit_sha256": "491735d65f5dff59f8370ca85675aac4ab43b45b97ab7cd33b46a5f276a12e5d"
  }
 }

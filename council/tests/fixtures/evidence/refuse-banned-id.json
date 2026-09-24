@@ -1,5 +1,5 @@
 {
-  "capture_version": "1.6.0",
+  "capture_version": "1.8.0",
   "subject": {
     "kind": "single_stock",
     "asset_class": "equity",
@@ -8,6 +8,7 @@
     "listing": "NYSE (INVENTED)",
     "currency": "USD"
   },
+  "question_line": "One defect only: a fact id built from a word the council does not have. (INVENTED FIXTURE)",
   "question_verbatim": "One defect only: a fact id built from a word the council does not have. (INVENTED FIXTURE)",
   "captured_at": "2026-08-30T21:30Z",
   "market_state": {

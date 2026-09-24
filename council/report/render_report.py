@@ -38,8 +38,9 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.engine import runrecord  # noqa: E402
-from council.evidence import gate  # noqa: E402
+from council.evidence import brief, gate, tape, trace  # noqa: E402
 from council.lib import prose, subjects  # noqa: E402
+from council.report import chart  # noqa: E402
 
 
 class MissingInputError(Exception):
@@ -709,6 +710,7 @@ ARCHETYPE_WORDS = {
     "ramping_infrastructure_builder": "ramping infrastructure builder",
     "stabilised_lessor": "stabilised lessor",
     "no_earnings_asset": "asset with no earnings",
+    "financial_institution": "financial institution",
 }
 MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -718,6 +720,22 @@ MEASURE_WORDS = {
         "revenue per unit",
     "ev_to_operating_income": "enterprise value to operating income",
     "anchorless_ladder": "the anchorless scenario ladder",
+    # Owner rulings AC28 and AC30 (FI-ARCHETYPE (b)): the six measures of a
+    # financial institution, worded as the evidence brief words them (the
+    # sub-type, earnings, risk-cost and valuation-method words are the
+    # brief's own tables, read from there).
+    "price_to_tangible_book_against_return_on_tangible_equity":
+        "price against tangible book, read against the return on tangible "
+        "equity",
+    "price_to_book_against_operating_return_on_equity":
+        "price against book, read against the operating return on equity",
+    "price_to_book_against_return_on_equity":
+        "price against book, read against the return on equity",
+    "price_to_earnings_against_return_on_client_assets":
+        "price against earnings, read against the return on client assets",
+    "price_to_fee_earnings_against_fee_earning_assets":
+        "price against fee earnings, read against the fee-earning assets",
+    "price_to_net_asset_value": "price against net asset value",
 }
 
 
@@ -1029,7 +1047,26 @@ def load_run(run_dir):
         "pack": _read_json(os.path.join(run_dir, "pack", "pack.json")),
         "answers": answers,
         "challenge_result": _optional_json(os.path.join(run_dir, "challenge", "result.json")),
+        "approved_document": _approved_document(run_dir),
     }
+
+
+def _approved_document(run_dir):
+    """The full evidence document the owner approved, as the run keeps it (the host copies it
+    and the approval into pack/, owner rulings AC3, AC15), or None: no approval, no document,
+    or a document that no longer hashes to the sha256 the approval records."""
+    try:
+        approval = _optional_json(os.path.join(run_dir, "pack", "approval.json"))
+    except MissingInputError:
+        return None
+    path = os.path.join(run_dir, "pack", "EVIDENCE-FULL.md")
+    if not isinstance(approval, dict) or not os.path.isfile(path):
+        return None
+    data = _read_bytes(path)
+    recorded = str(approval.get("document_sha256") or "").strip().lower()
+    if recorded != hashlib.sha256(data).hexdigest():
+        return None
+    return data.decode("utf-8", errors="replace")
 
 
 def _load_prose_scores(run_dir):
@@ -1044,6 +1081,31 @@ def _load_prose_scores(run_dir):
         if event.get("event") == "prose_scored" and event.get("seat"):
             scores[event["seat"]] = event
     return scores
+
+
+def _load_heading_flags(run_dir):
+    """Each advisor's figure flag from its heading re-answer, out of the run
+    record (architect ruling closing P-U5a-3). Empty where none was re-asked."""
+    flags = {}
+    if os.path.isfile(runrecord.record_path(run_dir)):
+        for event in runrecord.read_events(run_dir):
+            if (event.get("event") == "headings_checked"
+                    and "figures_changed" in event):
+                flags[event["seat"]] = event
+    return flags
+
+
+def _heading_note(run, seat):
+    """One muted line under an advisor whose heading rewrite changed figures."""
+    flag = (run.get("heading_flags") or {}).get(seat)
+    if not flag or not flag.get("figures_changed"):
+        return ""
+    differing = flag.get("figures_differing") or {}
+    return ('<div class="muted small">Sent back once for a missing heading; '
+            "the rewrite, shown above, changed figures. First answer: %s. "
+            "Rewrite: %s.</div>"
+            % (esc(", ".join(differing.get("first") or []) or "none"),
+               esc(", ".join(differing.get("rewrite") or []) or "none")))
 
 
 def _challenge_response(result):
@@ -1159,6 +1221,36 @@ p{margin:10px 0}
 .stickybar-inner .sb-rate{color:var(--ember);@B@:600}
 .stickybar-inner .sep{color:var(--muted);opacity:0.6}
 
+/* The price chart and the tape (unit U4(c)). Colour only through these classes and the theme
+   tokens, so the dark screen, the light toggle and the light print all follow. The drawing scales
+   to the column; on a narrow screen its words are drawn larger so they stay legible. */
+.tapechart{margin:12px 0 4px}
+.tapechart>svg{display:block;width:100%;height:auto}
+.tapechart text{font-family:system-ui,"Segoe UI",sans-serif;font-size:12px}
+.tapechart figcaption{font-size:12px;color:var(--muted);margin-top:6px;max-width:var(--measure)}
+.ch-txt{fill:var(--muted)}
+.ch-grid{stroke:var(--hair);stroke-width:1}
+.ch-axis{stroke:var(--line);stroke-width:1}
+.ch-band{fill:var(--hair);stroke:none}
+.ch-bandline{stroke:var(--hair);stroke-width:6}
+.ch-close{fill:none;stroke:var(--text);stroke-width:1.5}
+.ch-sma50{fill:none;stroke:var(--bull);stroke-width:1.3}
+.ch-sma100{fill:none;stroke:var(--bear);stroke-width:1.3;stroke-dasharray:6 3}
+.ch-sma200{fill:none;stroke:var(--ember);stroke-width:2.2}
+.ch-bench{fill:none;stroke:var(--muted);stroke-width:1.3;stroke-dasharray:2 3}
+.ch-levelmark{color:var(--alarm)}
+.ch-level{stroke:var(--alarm);stroke-width:1.2;stroke-dasharray:7 4}
+.ch-leveltxt{fill:var(--alarm)}
+.ch-markgroup{color:var(--ember)}
+.ch-mark{fill:var(--ember);stroke:var(--base);stroke-width:1.5}
+.ch-marktxt{fill:var(--ember)}
+.ch-legend{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 18px;
+  font-size:12px;color:var(--muted)}
+.ch-legend li{margin:0}
+.ch-key{display:inline-block;width:24px;height:10px;margin-right:6px;vertical-align:middle;
+  color:var(--muted)}
+@media (max-width:600px){.tapechart>svg text{font-size:18px}}
+
 .card{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:12px 15px;
   margin:12px 0}
 .muted{color:var(--muted)}
@@ -1251,6 +1343,8 @@ tr.alarm td{border-color:var(--alarm)}
   .wrap{max-width:none;padding:0}
   .wrap>p,.wrap>ul,.wrap>ol,.wrap>.card,.wrap>details,.wrap>.muted{max-width:none}
   .ratingbox,tr,.card,.keydata{break-inside:avoid}
+  .tapechart{break-inside:avoid}
+  #decision,#decision+h3{break-after:avoid}
   #synthesis,#evidence{break-before:page}
   details{border-left:1px solid var(--line)}
   a{color:inherit;text-decoration:none}
@@ -1377,19 +1471,28 @@ def _masthead_title(subject):
     return '%s <span class="tkr">%s</span>' % (esc(name), esc(tail))
 
 
-def _question_line(verdict):
-    """The owner's question in one phrase, as he asked it (closes register item P-U6b-10): the
-    first paragraph of his brief -- the text up to the first blank line -- cut at its first question
-    mark if one occurs (the text up to and including that "?"), otherwise the whole first paragraph.
-    Whitespace is collapsed to single spaces, there is no ellipsis, and the ".question" CSS wraps
-    the line. The whole brief, word for word, stays in the folded appendix below.
+def _question_line(verdict, capture=None, document=None):
+    """The owner's question on one line, as he asked it. Owner ruling AC32 (capture contract
+    1.8.0): the capture carries that line as its own field, 'question_line'. The capture is model
+    output, so the masthead prints that line only where the owner saw it: the full evidence
+    document he approved, as the run stores it (`document`, owner rulings AC3, AC15), carries
+    the brief's row "The question, in one line: <line>". Anywhere else (an unattended sitting,
+    no approval, no stored document, a document without that row, or a capture written before
+    1.8.0) the line is derived exactly as it always was
+    (register item P-U6b-10): the first paragraph of his brief -- the text up to the first blank
+    line -- cut at its first question mark if one occurs (the text up to and including that
+    "?"), otherwise the whole first paragraph. Whitespace is collapsed to single spaces, there
+    is no ellipsis, and the ".question" CSS wraps the line. The whole brief, word for word, stays
+    in the folded appendix below. The 1.8.0 migration fills the field by this same rule, so a
+    sitting on record prints the same line either way.
 
-    Round 5 (architect ruling closing P-U6b-15) removed the sentence splitter. Three earlier rounds
-    patched a terminator/abbreviation rule that no single rule makes right for every case (a lone
-    share-class "B." vs an initial "U.S."). By ruling, the accepted cost is that a brief opening
-    with two statements shows both; in exchange a cut or misleading line never occurs. A dedicated
-    one-line question field in the brief would remove the tension but is an owner question under
-    J3 (not built)."""
+    Round 5 (architect ruling closing P-U6b-15) removed the sentence splitter: a brief opening
+    with two statements shows both, and a cut or misleading line never occurs. The architect
+    rulings closing P-FIb-1 and P-FIb-2 replaced the string check of this page's first audit
+    round with the approved-document rule above."""
+    row = brief.question_line_row(capture or {})
+    if row and document and row in {" ".join(text.split()) for text in document.splitlines()}:
+        return brief.question_line(capture)
     verbatim = (verdict.get("question_verbatim") or "").strip()
     if not verbatim:
         return ""
@@ -1410,7 +1513,8 @@ def _head_block(page, run):
     page.add('<div class="masthead-id">')
     page.add('<div class="kicker">Investment Council</div>')
     page.add("<h1>%s</h1>" % _masthead_title(subject))
-    question = _question_line(verdict)
+    question = _question_line(verdict, (run.get("pack") or {}).get("capture"),
+                              run.get("approved_document"))
     if question:
         page.add('<p class="question">%s</p>' % esc(question))
     page.add("</div>")
@@ -2285,9 +2389,15 @@ def _front_archetype(page, run):
     measure = _capture_measure(capture)
     rated = ((" &mdash; rated on %s"
               % esc(MEASURE_WORDS.get(measure, measure))) if measure else "")
+    # Owner rulings AC28 and AC30: a financial institution names its kind of firm, and a holding
+    # says in one sentence that what it owns was not rated.
+    kind = (esc(brief.fi_kind_words(frame, _plain)) if archetype == brief.FI_ARCHETYPE
+            else esc(ARCHETYPE_WORDS.get(archetype, archetype)))
+    holding = (" %s" % esc(brief.FI_NOT_RATED_SENTENCE)
+               if archetype == brief.FI_ARCHETYPE
+               and frame.get("fi_subtype") == brief.FI_HOLDING else "")
     page.add('<div class="card"><span class="lead">What kind of business, '
-             "and how it is rated</span>%s%s</div>"
-             % (esc(ARCHETYPE_WORDS.get(archetype, archetype)), rated))
+             "and how it is rated</span>%s%s%s</div>" % (kind, rated, holding))
 
 
 def _front_theme_thesis(page, verdict):
@@ -2304,6 +2414,25 @@ def _front_theme_thesis(page, verdict):
              % esc(theme.get("thesis", "")))
 
 
+def _front_chart_and_tape(page, run):
+    """The price chart and the tape's fifteen display rows, opening the executive summary (spec
+    U4, the chart on the page "on the decision front under the key numbers", which since U6b(c)
+    close the masthead rail). A pack with no price series says so in ONE line, in the one-page
+    brief's own words; a tape of nothing but declared gaps prints the brief's all-gaps line in
+    place of the table, and the chart still draws the closes. Raises chart.ChartRefused where a
+    drawn average would disagree with the tape."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    page.add("<h3>The price chart and the tape</h3>")
+    if not capture.get("price_series"):
+        page.add('<p class="muted">%s</p>' % esc(brief.tape_placeholder(capture)))
+        return
+    subject = run["verdict"].get("subject") or {}
+    page.add(chart.figure(capture, run["verdict"], subject.get("kind") not in _MULTI_MEMBER_KINDS,
+                          format_number, format_date))
+    table = chart.tape_table(capture, format_number, format_date)
+    page.add(table or '<p class="muted">%s</p>' % esc(brief.TAPE_ALL_GAPS))
+
+
 def _front_section(page, run, now):
     """The executive summary (owner ruling AC16(3)): the first two to three minutes of reading.
     The decisive numbers, the thesis, the price read, the chairman's rationale IN FULL and never
@@ -2315,6 +2444,7 @@ def _front_section(page, run, now):
     # (owner ruling AC16(3),(9); design audit C4 tier 0 / C5), assembled by _head_block. This
     # tier opens with the business archetype and the thesis; nothing here is folded.
     page.section("decision", "Executive summary")
+    _front_chart_and_tape(page, run)
     _front_archetype(page, run)
     _front_theme_thesis(page, run["verdict"])
     _front_thesis(page, run["verdict"])
@@ -2606,6 +2736,7 @@ def _detail_section(page, run):
     page.section("detail", "The decision in detail")
     _constituents_section(page, run)
     _cycle_section(page, run)
+    _fi_section(page, run)
     _detail_basis(page, run)
     _front_downside(page, run)
     _ladders_section(page, run)
@@ -2906,15 +3037,153 @@ def _cycle_section(page, run):
             "<tr><td>%s</td><td>%s</td></tr>"
             % (esc(point["date"]), esc(point["value"]))
             for point in series["points"])
-        page.add('<h3>%s <span class="muted small">(%s, as of %s)</span>'
+        # Render-only (FI-ARCHETYPE (b)): the date the series was read beside the date of its
+        # LAST point, so a reader sees how old the latest reading is.
+        last = series["points"][-1]["date"] if series["points"] else "none"
+        page.add('<h3>%s <span class="muted small">(%s, read %s; latest point %s)</span>'
                  "</h3>"
                  % (esc(series["id"]), esc(series["unit"]),
-                    esc(series["as_of"])))
+                    esc(series["as_of"]), esc(last)))
         page.add("<table><tr><th>Date</th><th>Value</th></tr>%s</table>"
                  % rows)
         page.add('<div class="muted small">Source: %s. Re-fetch: %s</div>'
                  % (esc(series["source"]),
                     esc(series["refetch_url_or_source_line"])))
+
+
+def _plain(value):
+    """A value as text, None as nothing - for words the page escapes whole afterwards."""
+    return "" if value is None else str(value)
+
+
+def _fi_value(facts, fact_id):
+    """One fact a financial institution's frame names: its label where one exists, its id and
+    its frozen value in the market form, and its date. An id the pack does not carry is shown as
+    escaped data, never as the page's own named fact (P-U3e-3)."""
+    fact = facts.get(fact_id) if isinstance(fact_id, str) else None
+    if fact is None:
+        return "%s (not in the pack)" % esc(fact_id)
+    label = str(fact.get("label") or "").strip()
+    return "%s%s %s (as of %s)" % (esc(label) + " " if label else "", _fact_name(fact_id),
+                                   esc(format_number(fact.get("value"), fact.get("unit"))),
+                                   esc(format_date(fact.get("as_of", ""))))
+
+
+def _fi_section(page, run):
+    """What kind of financial firm this is (owner rulings AC28 and AC30; register items P-FIa-4
+    and P-FIa-5), a subject-shape block on the decision-in-detail tier beside the cycle: the kind
+    of firm, capital beside its requirement, the regulator's own bad year, the risk-cost line,
+    the earnings split, guidance first then its revisions, and for a holding its net asset value
+    part by part and the one sentence. Evidence only: nothing here reads the figures, and every
+    string the capture wrote is escaped, its numbers marked where they trace to no fact (AC19)."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    frame = brief.fi_subject_frame(capture)
+    if frame is None:
+        return
+    ticker = (capture.get("subject") or {}).get("ticker")
+    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    bases = brief._frame_bases(capture, ticker)
+
+    def prose(text):
+        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+
+    def value(fact_id):
+        return _fi_value(facts, fact_id)
+
+    def card(lead, body):
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (lead, body))
+
+    page.add("<h3>What kind of financial firm this is</h3>")
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, '
+             "each beside what it is measured against; nothing here reads them.</div>")
+    kind = brief.fi_kind_words(frame, _plain)
+    kind = esc(kind[:1].upper() + kind[1:])
+    if frame.get("fi_secondary_subtype"):
+        kind += ". Its other engine&#x27;s share is carried by %s" % (
+            ", ".join(value(fid) for fid in frame.get("fi_secondary_share_facts") or [])
+            or "no fact named")
+    card("The kind of firm", kind + ".")
+    capital = frame.get("fi_capital") or {}
+    if capital.get("gap"):
+        card("Capital beside its requirement",
+             "A declared gap: %s" % prose(capital["gap"].get("reason")))
+    else:
+        rows = "".join("<tr><td>%s</td><td>%s</td></tr>"
+                       % (value(ratio) if ratio else "no ratio named",
+                          value(requirement) if requirement else "no requirement named")
+                       for ratio, requirement in brief.fi_capital_pairs(capital))
+        extra = "".join("<div>%s: %s</div>" % (label, prose(capital.get(key)))
+                        for label, key in (("The regime", "regime"),
+                                           ("The binding constraint", "binding_constraint"))
+                        if capital.get(key))
+        if capital.get("target_fact"):
+            extra += "<div>Management&#x27;s own target: %s</div>" % value(capital["target_fact"])
+        card("Capital beside its requirement",
+             "<table><tr><th>The capital ratio</th><th>Its requirement</th></tr>%s</table>%s"
+             % (rows, extra))
+    stress, stress_gaps = brief.fi_stress_evidence(capture, ticker)
+    if stress or stress_gaps:
+        card(esc(brief.FI_STRESS_HEADING),
+             "<ul>%s%s</ul>" % ("".join("<li>%s</li>" % value(fid) for fid in stress),
+                                "".join("<li>A declared gap (%s): %s</li>"
+                                        % (esc(gap.get("fact_class")), esc(gap.get("reason")))
+                                        for gap in stress_gaps)))
+    risk = frame.get("fi_risk_cost") or {}
+    if risk:
+        card("The risk-cost line: %s" % esc(brief.FI_RISK_KIND_WORDS.get(risk.get("kind"))
+                                            or risk.get("kind")),
+             "%s. Why this line: %s"
+             % (", ".join(value(fid) for fid in risk.get("facts") or []) or "no fact, by design",
+                prose(risk.get("because"))))
+    lines = frame.get("how_it_earns") or []
+    if lines:
+        card("How it earns, by kind of earnings",
+             "<table><tr><th>Revenue line</th><th>Kind of earnings</th><th>Share of the period"
+             "</th></tr>%s</table>"
+             % "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
+                       % (prose(row.get("line")),
+                          esc(brief.FI_NATURE_WORDS.get(row.get("nature"))
+                              or row.get("nature") or "not stated"),
+                          esc(row.get("share_of_period")))
+                       for row in lines))
+    guidance = []
+    for row in (frame.get("management") or {}).get("guidance_vs_delivery") or []:
+        revisions = row.get("revisions")
+        if isinstance(revisions, list):
+            revised = ("; ".join("revised on %s to %s"
+                                 % (esc(item.get("date")),
+                                    ", ".join(value(fid) for fid in item.get("guided") or []))
+                                 for item in revisions if isinstance(item, dict))
+                       or esc(brief.FI_NEVER_REVISED))
+        else:
+            revised = "its revisions are not stated"
+        guidance.append("<li>%s: first guided %s; %s; delivered %s</li>"
+                        % (esc(row.get("period")),
+                           ", ".join(value(fid) for fid in row.get("guided") or [])
+                           or "nothing named",
+                           revised, value(row.get("delivered"))))
+    if guidance:
+        card("Guidance: the first, each revision, then what was delivered",
+             "<ul>%s</ul>" % "".join(guidance))
+    bridge = frame.get("nav_bridge")
+    if isinstance(bridge, dict):
+        rows = "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
+                       % (prose(part.get("name")),
+                          esc(brief.FI_METHOD_WORDS.get(part.get("method"))
+                              or part.get("method")),
+                          value(part.get("value_fact")))
+                       for part in bridge.get("components") or [])
+        totals = "".join("<div>%s: %s</div>" % (label, value(bridge[key]))
+                         for label, key in (
+                             ("Holding-company net debt", "holdco_net_debt_fact"),
+                             ("The net asset value", "nav_total_fact"),
+                             ("The company&#x27;s own published net asset value",
+                              "published_nav_fact"),
+                             ("The discount", "discount_fact"))
+                         if bridge.get(key))
+        card("The net asset value, part by part",
+             "<table><tr><th>Component</th><th>How it is valued</th><th>Value</th></tr>%s"
+             "</table>%s<div>%s</div>" % (rows, totals, esc(brief.FI_NOT_RATED_SENTENCE)))
 
 
 def _decisive_fact_order(tier1, dependencies, envelope, frames):
@@ -2953,6 +3222,15 @@ def _decisive_fact_order(tier1, dependencies, envelope, frames):
     return ordered
 
 
+def _fact_name(fact_id):
+    """A fact's name in the evidence tables: its id, shown as data - except a tape figure, which
+    the page names by its plain label, so no tape id reaches the owner's page (unit U4(c); the
+    full evidence document does the same through the fact's label, owner ruling AC15 P5)."""
+    if fact_id in tape.LABELS:
+        return esc(tape.LABELS[fact_id])
+    return "<code>%s</code>" % esc(fact_id)
+
+
 def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames):
     """The facts the verdict rests on, as a compact OPEN table (audit C4 tier 4): Fact, Value, As
     of, Freshness, Source. At most COMPACT_EVIDENCE_MAX rows stay open (architect ruling before
@@ -2978,10 +3256,10 @@ def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames
             if tag.get("published_line"):
                 source_html += ("<br>The published line, as the capture names it: %s"
                                 % esc(" ".join(str(tag["published_line"]).split())))
-        rows.append('<tr><td><code>%s</code></td><td>%s</td>'
+        rows.append('<tr><td>%s</td><td>%s</td>'
                     '<td class="nowrap">%s</td><td class="nowrap">'
                     '<span class="tag %s">%s</span></td><td>%s</td></tr>'
-                    % (esc(fact.get("id", "")),
+                    % (_fact_name(fact.get("id", "")),
                        esc(format_number(fact.get("value"), fact.get("unit"))),
                        esc(format_date(fact.get("as_of", ""))),
                        esc(str(word).replace(" ", "-")), esc(word),
@@ -3054,10 +3332,10 @@ def _evidence_section(page, run):
                  'fact as one its ruling rests on">rests on this</span> '
                  if fact_id in dependencies else "")
         value = format_number(fact.get("value"), fact.get("unit"))
-        rows.append('<tr><td>%s<code>%s</code><div class="muted small" style="margin-top:4px">'
+        rows.append('<tr><td>%s%s<div class="muted small" style="margin-top:4px">'
                     '%s</div></td><td>%s</td><td class="nowrap">%s</td>'
                     '<td class="nowrap"><span class="tag %s">%s</span></td></tr>'
-                    % (rests, esc(fact_id), source_html, esc(value),
+                    % (rests, _fact_name(fact_id), source_html, esc(value),
                        esc(format_date(fact.get("as_of", ""))),
                        esc(str(word).replace(" ", "-")), esc(word)))
     # As above: value is a wrapping column, never nowrap - it can hold a whole tier-2 sentence.
@@ -3092,7 +3370,8 @@ def _evidence_section(page, run):
         page.add('<div class="card"><ul>%s%s</ul></div>'
                  % ("".join(
                      "<li><strong>%s</strong> &mdash; %s The test it weakens: <code>%s</code>.</li>"
-                     % (esc(g.get("fact_class", "")), esc(g.get("reason", "")),
+                     % (esc(tape.LABELS.get(g.get("fact_class"), g.get("fact_class", ""))),
+                        esc(g.get("reason", "")),
                         esc(g.get("weakened_test", "")))
                      for g in gaps),
                     ("<li><strong>%d gap%s conceded to the outside auditor</strong> (%s) "
@@ -3115,7 +3394,7 @@ def _evidence_section(page, run):
         rows = "".join(
             '<tr><td>%s</td><td class="nowrap">%s</td><td class="nowrap">'
             '<span class="tag %s">%s</span></td><td>%s</td></tr>'
-            % (_constituent_tag(r) + esc(r.get("description", "")),
+            % (_constituent_tag(r) + brief.checklist_description(capture, r, esc),
                esc(REQUIREMENT_KIND_WORDS.get(r.get("kind"), r.get("kind") or "")),
                "checked" if r.get("status") == "answered" else "stale",
                "answered" if r.get("status") == "answered" else "declared gap",
@@ -3164,7 +3443,7 @@ def _advisors_section(page, run):
                  % (esc(label),
                     markdown(reformat_prose(answer.get("markdown", ""),
                                             "advisor: " + label, page.number_subs), 4),
-                    _prose_note(run, kind)))
+                    _prose_note(run, kind) + _heading_note(run, kind)))
 
 
 # --- The challenger's full response, folded shut ------------------------------------------------
@@ -3599,6 +3878,7 @@ def render(run_dir, moment=None, subs_out=None):
     ruling AC16(1)) - the caller writes it beside the report."""
     run = load_run(run_dir)
     run["prose_scores"] = _load_prose_scores(run_dir)
+    run["heading_flags"] = _load_heading_flags(run_dir)
     page = build_page(run, moment or first_render_moment(run_dir))
     if subs_out is not None:
         subs_out.extend(page.number_subs)
@@ -3662,7 +3942,7 @@ def main(argv):
     substitutions = []
     try:
         body = render(run_dir, moment, substitutions)
-    except MissingInputError as refusal:
+    except (MissingInputError, chart.ChartRefused) as refusal:
         sys.stderr.write("REFUSED: %s\n" % refusal)
         return 1
     # Two writes, ordered so that neither can be believed without the other. The page is staged

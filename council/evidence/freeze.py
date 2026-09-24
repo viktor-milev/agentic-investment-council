@@ -9,6 +9,12 @@ a derived fact is GENERATED from the frozen operand strings - never
 written beside them by hand - so the prose next to a value can never
 disagree with it (the section-6f lesson).
 
+The tape (spec U4.3, unit U4(a2)). Where the capture carries a price
+series, the freeze computes the tape table from it and appends its
+figures to the pack's tier1 and its declared gaps to the pack's gaps -
+the only thing the freeze adds to the capture. A capture without a
+series freezes exactly as before.
+
 CLI:
     python -m council.evidence.freeze <capture.json> <out_dir_a> <out_dir_b>
 Refuses (exit 3) unless the gate accepts the capture; builds pack.json
@@ -21,7 +27,7 @@ import os
 import sys
 from datetime import date
 
-from council.evidence import gate
+from council.evidence import gate, tape
 from council.lib import canonical
 
 PACK_VERSION = "1.0.0"
@@ -34,16 +40,39 @@ def _generated_note(fact):
     """The equation sentence, generated from the frozen operand strings
     and the fact's own value string. ASCII operators only."""
     derived = fact["derived"]
+    if derived["operation"] == tape.OPERATION:
+        return ("Deterministic transform inside the pack, computed at the "
+                "freeze from the daily series over the %s: %s = %s. Not an "
+                "independent observation."
+                % (derived["window"], derived["formula"], fact["value"]))
     equation = _OPERATOR_TEXT[derived["operation"]].join(
         operand["value"] for operand in derived["operands"])
     return ("Deterministic transform inside the pack: %s = %s. "
             "Not an independent observation." % (equation, fact["value"]))
 
 
-def build_pack(capture):
-    """The pack, exactly as frozen: the capture untouched, the
-    freshness arithmetic per tier1 fact, and the generated equation
-    notes for every derived fact."""
+def _with_tape(capture, floors):
+    """The capture with its tape appended after its own entries. A tape
+    entry already there (a capture frozen before) gives way to the
+    recomputation - the gate refuses any that differs - so freezing a
+    frozen capture changes nothing. The input is never rewritten."""
+    table = gate.expected_tape(capture, floors)
+    frozen = dict(capture)
+    frozen["tier1"] = [fact for fact in capture["tier1"]
+                       if fact["id"] not in tape.ROW_IDS] + table["facts"]
+    frozen["gaps"] = [gap for gap in capture["gaps"]
+                      if gap["fact_class"] not in tape.ROW_IDS] + table["gaps"]
+    return frozen
+
+
+def build_pack(capture, floors=None):
+    """The pack, exactly as frozen: the capture with its tape where it
+    carries a price series (else untouched), the freshness arithmetic
+    per tier1 fact, and the generated notes for every derived fact.
+    `floors` is read from disk when not given, and only for a series."""
+    if capture.get("price_series"):
+        capture = _with_tape(capture, floors
+                             or canonical.read_json(gate._FLOORS_PATH))
     captured_on = date.fromisoformat(capture["captured_at"][:10])
     freshness = {}
     generated_notes = {}
@@ -97,7 +126,7 @@ def main(argv=None):
                           if entry["status"] == "stale")
         record = {"pack_sha256": sha_a,
                   "byte_identical": identical,
-                  "tier1_count": len(capture["tier1"]),
+                  "tier1_count": len(pack["capture"]["tier1"]),
                   "tier2_count": len(capture["tier2"]),
                   "stale_count": stale_count}
         canonical.write_canonical_json(

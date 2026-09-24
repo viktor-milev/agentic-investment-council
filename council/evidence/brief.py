@@ -26,7 +26,7 @@ import sys
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from council.evidence import gate, trace  # noqa: E402
+from council.evidence import gate, tape, trace  # noqa: E402
 from council.lib import canonical  # noqa: E402
 
 # One page is the ruling (AC3), and a schema-valid capture can write at
@@ -41,12 +41,43 @@ SHORT_TRIM = 120
 PAGE_LINES = 72
 IN_THE_PACK = "the whole of it is in the pack"
 
-# The tape table is U4's; until it exists the page says so rather than
-# leaving a reader to wonder what a "tape summary" would have said.
-TAPE_PLACEHOLDER = ("The tape summary is not built yet: it arrives with "
-                    "the price series in a later unit. Until then the "
-                    "price and its 52-week range are the whole of what "
-                    "this pack says about the tape.")
+# A pack with no daily price series has no tape and no chart; the page
+# says so rather than leaving a reader to wonder what they would have
+# said (architect ruling 3 of unit U4(c): the tape and the chart are built
+# now, so the line names what the pack lacks, not a later unit). The
+# verdict's report page prints this same line where its chart would be.
+# The line states what the pack carries, chosen by one predicate with three
+# outcomes (architect ruling, Step 0 of U4(c) audit round 2, replacing the
+# round-1 rule): a price and a matched 52-week range, a price alone, or no
+# price at all. `tape_notice_case` decides and `tape_placeholder` words it,
+# for the brief and the report page alike.
+TAPE_PLACEHOLDER_RANGE = ("This pack carries no daily price series, so "
+                          "there is no price chart and no tape table: the "
+                          "price and its 52-week range are the whole of "
+                          "what it says about the tape.")
+TAPE_PLACEHOLDER_PRICE = ("This pack carries no daily price series, so "
+                          "there is no price chart and no tape table: the "
+                          "price alone is what it says about the tape.")
+TAPE_PLACEHOLDER_NONE = ("This pack carries no daily price series and no "
+                         "price, so there is no price chart and no tape "
+                         "table: it says nothing about the tape.")
+
+# Once the freeze has drawn the tape from a price series, the placeholder
+# above would be false (audit round 4 of U4a2, r4-1): the page points to
+# where the tape's figures are printed instead - by name in the full
+# evidence document, and on one page with the price chart in the
+# verdict's report (unit U4(c)).
+TAPE_POINTER = ("The pack carries the tape's %d figures, drawn from its "
+                "price series; the full evidence document prints each by "
+                "name. Their one-page summary, with the price chart, is on "
+                "the verdict's report page.")
+# A series too short for any tape row (a recent listing) gives a tape of
+# declared gaps only; the page must not call that tape unbuilt (audit
+# round 5 of U4a2, r5-1). The line is chosen by whether the pack carries
+# a price series, never by counting figures (round 6 ruling).
+TAPE_ALL_GAPS = ("The pack carries a price series, but its history is too "
+                 "short for any tape figure; the full evidence document "
+                 "lists each missing figure by name.")
 
 # A dated event is a tier-1 fact whose id begins with this. The report's
 # own calendar uses the same rule (render_report.CALENDAR_PREFIX) and the
@@ -362,10 +393,40 @@ def pack_sha256_at_head(text):
     return None
 
 
+# Owner ruling AC32 with the architect ruling closing P-FIb-1: the page the
+# owner approves (owner ruling AC3) carries the capture's one-line question
+# at its top, so the report's masthead may print that line on his approval.
+QUESTION_LINE_LABEL = "The question, in one line:"
+
+
+def question_line(capture):
+    """The capture's one-line question, spaces collapsed, or None for a
+    capture written before 1.8.0 (the first contract that carries it) or
+    one that carries no line."""
+    line = capture.get("question_line")
+    try:
+        version = tuple(int(part) for part in
+                        str(capture.get("capture_version")).split("."))
+    except ValueError:
+        return None
+    if version < (1, 8, 0) or not isinstance(line, str) or not line.strip():
+        return None
+    return " ".join(line.split())
+
+
+def question_line_row(capture):
+    """The row the brief prints for the capture's one-line question, or None."""
+    line = question_line(capture)
+    return "%s %s" % (QUESTION_LINE_LABEL, _safe(line)) if line else None
+
+
 def _question_lines(capture):
-    return ["## The question", "",
-            _safe(capture.get("question_verbatim"))
-            or "The pack carries no question.", ""]
+    lines = ["## The question", ""]
+    row = question_line_row(capture)
+    if row:
+        lines += [row, ""]
+    return lines + [_safe(capture.get("question_verbatim"))
+                    or "The pack carries no question.", ""]
 
 
 def _how_it_earns_words(frame, bases):
@@ -393,6 +454,23 @@ def _management_words(pack, facts, frame):
     for row in rows:
         guided = ", ".join(_figure(pack, facts, fact_id)
                            for fact_id in row.get("guided") or [])
+        revisions = row.get("revisions")
+        if isinstance(revisions, list):
+            # Owner ruling AC30(6): the FIRST guidance, then each revision
+            # with its date, then what was delivered - delivery is judged
+            # against the first; an empty list says it was never revised.
+            revised = "; ".join(
+                "revised on %s to %s"
+                % (_safe((item or {}).get("date")),
+                   ", ".join(_figure(pack, facts, fact_id)
+                             for fact_id in (item or {}).get("guided")
+                             or []) or "nothing named")
+                for item in revisions) or FI_NEVER_REVISED
+            bits.append("%s first guided %s; %s; delivered %s"
+                        % (_safe(row.get("period")),
+                           guided or "nothing named", revised,
+                           _figure(pack, facts, row.get("delivered"))))
+            continue
         bits.append("%s guided %s, delivered %s"
                     % (_safe(row.get("period")),
                        guided or "nothing named",
@@ -430,6 +508,7 @@ _ARCHETYPE_WORDS = {
     "ramping_infrastructure_builder": "ramping infrastructure builder",
     "stabilised_lessor": "stabilised lessor",
     "no_earnings_asset": "asset with no earnings",
+    "financial_institution": "financial institution",
 }
 _MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -439,7 +518,146 @@ _MEASURE_WORDS = {
         "revenue per unit",
     "ev_to_operating_income": "enterprise value to operating income",
     "anchorless_ladder": "the anchorless scenario ladder",
+    # Owner rulings AC28 and AC30 (FI-ARCHETYPE (b)): the financial
+    # institution and its six measures, one wording on every page.
+    "price_to_tangible_book_against_return_on_tangible_equity":
+        "price against tangible book, read against the return on tangible "
+        "equity",
+    "price_to_book_against_operating_return_on_equity":
+        "price against book, read against the operating return on equity",
+    "price_to_book_against_return_on_equity":
+        "price against book, read against the return on equity",
+    "price_to_earnings_against_return_on_client_assets":
+        "price against earnings, read against the return on client assets",
+    "price_to_fee_earnings_against_fee_earning_assets":
+        "price against fee earnings, read against the fee-earning assets",
+    "price_to_net_asset_value": "price against net asset value",
 }
+# The same table under a public name, so the seats' case file (unit
+# FI-ARCHETYPE (c)) reads this one wording rather than a second copy.
+MEASURE_WORDS = _MEASURE_WORDS
+
+# Owner rulings AC28 and AC30 (FI-ARCHETYPE (b), the page): the plain words
+# for what a financial institution's frame declares. The report carries the
+# same wording in its own tables (a test holds the two equal).
+FI_ARCHETYPE = "financial_institution"
+FI_HOLDING = "financial_holding"
+FI_SUBTYPE_WORDS = {
+    "bank": "a bank",
+    "insurer": "an insurer",
+    "reinsurer": "a reinsurer",
+    "traditional_asset_manager": "a traditional asset manager",
+    "alternative_asset_manager": "an alternative asset manager",
+    "financial_holding": "a financial holding company",
+}
+FI_RISK_KIND_WORDS = {
+    "credit": "credit losses",
+    "underwriting": "underwriting losses",
+    "none_by_design": "none by design",
+}
+FI_NATURE_WORDS = {
+    "spread": "spread income",
+    "fee": "fee income",
+    "underwriting": "underwriting income",
+    "investment": "investment income",
+    "trading": "trading income",
+    "performance": "performance fees",
+    "other": "other income",
+}
+FI_METHOD_WORDS = {
+    "listed_at_market": "a listed stake at its market price",
+    "company_reported_value": "the value the company itself reports",
+    "carrying_value": "the value it is carried at in its own books",
+}
+FI_NOT_RATED_SENTENCE = ("The companies this holding owns were not rated in "
+                         "this sitting.")
+FI_FREE_CASH_WORDS = ("capital the firm can pay out and still stay above its "
+                      "regulator's minimum")
+FI_STRESS_HEADING = "The regulator's own bad year for this firm"
+FI_STRESS_PREFIX = "stress_"
+FI_NEVER_REVISED = "never revised"
+
+_FLOORS = None
+
+
+def _floors():
+    """The ruled floors file, read once (the FI families and the lift)."""
+    global _FLOORS
+    if _FLOORS is None:
+        _FLOORS = canonical.read_json(gate._FLOORS_PATH)
+    return _FLOORS
+
+
+def fi_lifted_subtypes():
+    """The sub-types whose free-cash test is answered by distributable
+    capital (owner ruling AC30(1)), as the floors rule them."""
+    lifts = (((_floors().get("archetype_floors") or {})
+              .get(FI_ARCHETYPE) or {}).get("lifts") or {})
+    return tuple(lifts.get("subtypes") or ())
+
+
+def fi_capital_pairs(capital):
+    """Each capital ratio beside the requirement FOR THAT RATIO (the suffix
+    rule the floors' fi_families read: 'cet1_ratio_<x>' beside
+    'cet1_requirement_<x>'), in the order the frame names the ratios; a
+    ratio with no partner named stands with None, and a requirement no
+    ratio claimed follows with None as its ratio. Pairing only - the
+    sufficiency gate is where a missing partner refuses."""
+    families = _floors().get("fi_families") or {}
+    prefix_pairs = list(zip(families.get("capital_ratio_prefixes") or (),
+                            families.get("capital_requirement_prefixes")
+                            or ()))
+    ratios = [fid for fid in capital.get("ratio_facts") or ()
+              if isinstance(fid, str)]
+    requirements = [fid for fid in capital.get("requirement_facts") or ()
+                    if isinstance(fid, str)]
+    pairs, claimed = [], set()
+    for ratio in ratios:
+        partner = None
+        for ratio_prefix, requirement_prefix in prefix_pairs:
+            if ratio.startswith(ratio_prefix):
+                wanted = requirement_prefix + ratio[len(ratio_prefix):]
+                if wanted in requirements:
+                    partner = wanted
+                break
+        if partner is not None:
+            claimed.add(partner)
+        pairs.append((ratio, partner))
+    pairs.extend((None, fid) for fid in requirements if fid not in claimed)
+    return pairs
+
+
+def fi_stress_evidence(capture, ticker):
+    """The stress facts (sorted ids) and stress gaps that are THIS
+    frame's own (owner ruling AC30(5)), stated whole here once: a single
+    name (gate.frame_suffix empty) keeps every stress fact and gap, a
+    double-underscore tail on its id included (audit round 6, r6-1); a
+    basket member keeps only those wearing its own member suffix or none
+    (gate._id_suffix), so it never shows another member's supervisory
+    result as its own (round 5, r5-1). The full document and the report
+    read this one selection."""
+    suffix = gate.frame_suffix(capture.get("subject") or {}, ticker)
+
+    def own(identifier):
+        return (identifier.startswith(FI_STRESS_PREFIX)
+                and (not suffix
+                     or gate._id_suffix(identifier) in ("", suffix)))
+
+    stress = sorted(str(fact.get("id")) for fact in capture.get("tier1") or []
+                    if isinstance(fact.get("id"), str) and own(fact["id"]))
+    gaps = [gap for gap in capture.get("gaps") or []
+            if own(str(gap.get("fact_class") or ""))]
+    return stress, gaps
+
+
+def fi_subject_frame(capture):
+    """The single name's own frame where it declares the financial
+    institution, or None."""
+    subject = capture.get("subject") or {}
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if isinstance(frame, dict) and frame.get("archetype") == FI_ARCHETYPE:
+        return frame
+    return None
 
 
 def _rating_measure(capture):
@@ -462,6 +680,74 @@ def _rating_subject_denominators(capture):
     return []
 
 
+def _fi_value(pack, facts, fact_id):
+    """One fact a financial institution's frame names, as the page shows
+    it: its plain label where one exists, then the frozen value. The id is
+    named in the file's own voice ONLY when it is a tier-1 id of this pack;
+    anything else is sent through _safe, as data (P-U3e-3)."""
+    if not isinstance(fact_id, str) or fact_id not in facts:
+        return "%s (not in the pack)" % _safe(fact_id)
+    label = str(facts[fact_id].get("label") or "").strip()
+    figure = _figure(pack, facts, fact_id)
+    return ("%s: %s" % (_safe(label), figure)) if label else figure
+
+
+def _fi_values(pack, facts, fact_ids):
+    return ", ".join(_fi_value(pack, facts, fid) for fid in fact_ids or ())
+
+
+def fi_kind_words(frame, escape):
+    """What kind of financial firm this is, in the page's words: the
+    archetype, the sub-type and, for a hybrid, its other engine. `escape`
+    is the renderer's own neutralisation, applied only to a value outside
+    the ruled words."""
+    subtype = frame.get("fi_subtype")
+    words = "financial institution - %s" % (
+        FI_SUBTYPE_WORDS.get(subtype) or escape(subtype)
+        or "its kind not stated")
+    secondary = frame.get("fi_secondary_subtype")
+    if secondary:
+        words += ", with %s as its other engine" % (
+            FI_SUBTYPE_WORDS.get(secondary) or escape(secondary))
+    return words
+
+
+def _fi_capital_words(pack, facts, capital, bases):
+    """Capital beside its requirement, on one line: each ratio on the SAME
+    line as the requirement for that ratio, or the declared gap's reason."""
+    gap = capital.get("gap")
+    if gap:
+        return "a declared gap - %s" % _marked(gap.get("reason"), bases)
+    return "; ".join(_fi_pair_words(pack, facts, ratio, requirement)
+                     for ratio, requirement in fi_capital_pairs(capital)
+                     ) or "nothing is named"
+
+
+def _fi_pair_words(pack, facts, ratio, requirement):
+    if ratio is None:
+        return ("a requirement with no ratio named beside it: %s"
+                % _fi_value(pack, facts, requirement))
+    if requirement is None:
+        return ("%s, with no requirement named beside it"
+                % _fi_value(pack, facts, ratio))
+    return ("%s beside its requirement %s"
+            % (_fi_value(pack, facts, ratio),
+               _fi_value(pack, facts, requirement)))
+
+
+def _fi_archetype_line(capture, frame):
+    """The one-page brief's archetype line for a financial institution:
+    the kind of firm and the measure, and for a holding the one sentence
+    (owner rulings AC28, AC30(3))."""
+    measure = _rating_measure(capture)
+    line = "- Archetype: %s" % fi_kind_words(frame, _safe)
+    if measure:
+        line += " - rated on %s" % _MEASURE_WORDS.get(measure, _safe(measure))
+    if frame.get("fi_subtype") == FI_HOLDING:
+        line += ". " + FI_NOT_RATED_SENTENCE
+    return line
+
+
 def _one_frame_lines(pack, facts, passages, ticker, frame):
     """One business, in a handful of lines (spec section U3.1)."""
     capture = pack["capture"]
@@ -473,7 +759,16 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
     lines.append("- %s" % trace.summary_sentence(
         trace.frame_counts(capture, ticker, frame, _marks_config())))
     archetype = frame.get("archetype")
-    if archetype:
+    if archetype == FI_ARCHETYPE:
+        # Owner rulings AC28 and AC30: the kind of firm and its capital
+        # beside its requirement stand on the one page; the rest of the
+        # financial institution is in the full document.
+        lines.append(_fi_archetype_line(capture, frame))
+        lines.append("- Capital beside its requirement: %s"
+                     % _fi_capital_words(pack, facts,
+                                         frame.get("fi_capital") or {},
+                                         bases))
+    elif archetype:
         measure = _rating_measure(capture)
         rated = ((" - rated on %s"
                   % _MEASURE_WORDS.get(measure, _safe(measure)))
@@ -793,6 +1088,32 @@ def _calendar_rows(capture):
     return rows
 
 
+def tape_notice_case(capture):
+    """What a pack with no price series carries about the tape: "range"
+    when one entity - the subject, or one member's '__' suffix for a basket
+    or a theme - carries its price and both ends of its 52-week range,
+    "price" for a price without that, "none" for no price at all. The one
+    test behind the no-series line on the brief and on the report page
+    (architect ruling, Step 0 of U4(c) audit round 4: the range is one
+    entity's, never a range on a member whose price the pack lacks)."""
+    ids = set(str(fact.get("id") or "") for fact in capture.get("tier1") or [])
+    priced = [fact_id[len(PRICE_ID):] for fact_id in ids
+              if fact_id == PRICE_ID or fact_id.startswith(PRICE_ID + "__")]
+    if not priced:
+        return "none"
+    if any(RANGE_LOW_ID + suffix in ids and RANGE_HIGH_ID + suffix in ids
+           for suffix in priced):
+        return "range"
+    return "price"
+
+
+def tape_placeholder(capture):
+    """The line a pack with no price series prints where its chart and
+    tape would be, stating what the pack carries."""
+    return {"range": TAPE_PLACEHOLDER_RANGE, "price": TAPE_PLACEHOLDER_PRICE,
+            "none": TAPE_PLACEHOLDER_NONE}[tape_notice_case(capture)]
+
+
 def _price_and_calendar_lines(pack, facts, capture):
     lines = ["## The price, and what is dated ahead", ""]
     # A source-less correction to the price, a range endpoint or a calendar
@@ -817,7 +1138,13 @@ def _price_and_calendar_lines(pack, facts, capture):
                          % ", ".join("`%s`" % f for f in priced_stale))
     else:
         lines.append("- The pack carries no last price.")
-    lines.append("- %s" % TAPE_PLACEHOLDER)
+    carried = sum(1 for fact_id in tape.ROW_IDS if fact_id in facts)
+    if "price_series" not in capture:
+        lines.append("- %s" % tape_placeholder(capture))
+    elif carried:
+        lines.append("- %s" % (TAPE_POINTER % carried))
+    else:
+        lines.append("- %s" % TAPE_ALL_GAPS)
     rows, note = _rows(_calendar_rows(capture), "dated events")
     if not rows:
         lines.append("- The pack carries no dated events for this subject.")
@@ -944,6 +1271,36 @@ CUT_TOTAL_NOTE = "The one-page bound left %d line(s) of this brief out; %s."
 # What marks a line as the detail of the row above it, rather than a row
 # of its own. The page writes every such line as an indented bullet.
 INDENT = "  "
+# The lines that say what SHAPE of subject this is - the business's name,
+# its trace summary, its archetype, its capital and its cycle - which the
+# bound cuts only after every descriptive line (register item P-FIb-5).
+SHAPE_PREFIXES = ("**", "- Figures traced to the record:", "- Archetype: ",
+                  "- Capital beside its requirement: ", "- Cycle: ")
+
+
+def _rows_to_cut(body, lines_wanted):
+    """Which rows of the business section the bound removes, as a set of
+    row indexes, and the rows themselves. A row is a line and the
+    indented detail beneath it, cut whole. The first row always stands.
+    The rest go longest first, and a subject-shape row only once no
+    descriptive row is left (architect ruling on P-FIb-5); ties go to
+    the later row."""
+    rows = []
+    for line in body:
+        if rows and line.startswith(INDENT):
+            rows[-1].append(line)
+        else:
+            rows.append([line])
+    order = sorted(range(1, len(rows)), key=lambda index: (
+        rows[index][0].startswith(SHAPE_PREFIXES),
+        -max(len(line) for line in rows[index]), -index))
+    dropped, removed = set(), 0
+    for index in order:
+        if removed >= lines_wanted:
+            break
+        dropped.add(index)
+        removed += len(rows[index])
+    return dropped, rows
 
 
 def _fit_to_one_page(blocks):
@@ -956,7 +1313,11 @@ def _fit_to_one_page(blocks):
     The LONGEST section gives up each line, one at a time, so a page
     that overruns loses its bulk and not one whole ruled section: every
     section spec U3.1 names still stands, shorter. Ties go to the first
-    name in CUTTABLE, so one pack always renders one page.
+    name in CUTTABLE, so one pack always renders one page. Within the
+    business section the longest rows go first, never a subject-shape
+    row while a descriptive one remains (_rows_to_cut); every other
+    section is ordered by importance - the auditor's blocking points
+    first - and gives up its tail, as before.
 
     A page that was cut ends by saying how many lines it left out, and
     the bound pays for that line itself."""
@@ -993,15 +1354,20 @@ def _fit_to_one_page(blocks):
         # Never keep half a row. A row on this page is one line, or a
         # line and its detail indented beneath it, and a cut landing
         # between the two kept a point named with its answer gone (audit
-        # round 3, r3-1). The cut backs up past any indented line to the
-        # row it belongs to, so what goes, goes whole. The page only
-        # gets shorter, never longer, so the bound still holds.
-        kept = keep[name]
-        while 0 < kept < len(body) and body[kept].startswith(INDENT):
-            kept -= 1
-        omitted += len(body) - kept
-        out.extend(lines[:2] + body[:kept]
-                   + [CUT_NOTE % (len(body) - kept, IN_THE_PACK)]
+        # round 3, r3-1). Whole rows are cut, so what goes, goes whole.
+        # The page only gets shorter, never longer, so the bound holds.
+        if name == "business":
+            dropped, rows = _rows_to_cut(body, cut[name])
+            kept = [line for index, row in enumerate(rows)
+                    if index not in dropped for line in row]
+        else:
+            count = keep[name]
+            while 0 < count < len(body) and body[count].startswith(INDENT):
+                count -= 1
+            kept = body[:count]
+        omitted += len(body) - len(kept)
+        out.extend(lines[:2] + kept
+                   + [CUT_NOTE % (len(body) - len(kept), IN_THE_PACK)]
                    + lines[-1:])
     if omitted:
         out.append(CUT_TOTAL_NOTE % (omitted, IN_THE_PACK))
@@ -1085,10 +1451,11 @@ def _full_frame_lines(pack, capture):
             rated = ((" It is rated on %s."
                       % _MEASURE_WORDS.get(measure, _safe(measure)))
                      if measure else "")
+            kind = (fi_kind_words(frame, _safe) if archetype == FI_ARCHETYPE
+                    else _ARCHETYPE_WORDS.get(archetype, _safe(archetype)))
             lines.append("**Archetype.** %s.%s %s"
-                         % (_ARCHETYPE_WORDS.get(archetype, _safe(archetype)),
-                            rated, _marked(frame.get("archetype_because"),
-                                           bases)))
+                         % (kind, rated,
+                            _marked(frame.get("archetype_because"), bases)))
             denoms = _rating_subject_denominators(capture)
             if denoms:
                 lines.append("")
@@ -1108,11 +1475,20 @@ def _full_frame_lines(pack, capture):
         lines.append("")
         lines.append("**How it earns.**")
         for row in frame.get("how_it_earns") or []:
-            lines.append("- %s - %s of the latest reported period (%s)"
-                         % (_marked(row.get("line"), bases),
+            # Owner rulings AC28 and AC30: the kind of earnings a line is
+            # stands beside its share of the period, where the line says.
+            nature = row.get("nature")
+            nature_words = (("%s, " % (FI_NATURE_WORDS.get(nature)
+                                       or _safe(nature)))
+                            if nature else "")
+            lines.append("- %s - %s%s of the latest reported period (%s)"
+                         % (_marked(row.get("line"), bases), nature_words,
                             _one_line(row.get("share_of_period")),
                             ", ".join(_fact_ref(facts, fid)
                                       for fid in row.get("facts") or [])))
+        if archetype == FI_ARCHETYPE:
+            lines.extend(_full_fi_lines(pack, capture, ticker, frame,
+                                        facts, bases))
         changing = frame.get("what_is_changing") or {}
         lines.append("")
         lines.append("**What is changing (%s).** %s"
@@ -1165,6 +1541,87 @@ def _full_frame_lines(pack, capture):
     return lines
 
 
+def _full_fi_lines(pack, capture, ticker, frame, facts, bases):
+    """What the full document shows of a financial institution (owner
+    rulings AC28 and AC30): the kind of firm, capital beside its
+    requirement, the regulator's own bad year, the risk-cost line and, for
+    a holding, its net asset value part by part. Evidence only: nothing
+    here reads the figures."""
+    kind = fi_kind_words(frame, _safe)
+    lines = ["", "**The kind of firm.** %s%s." % (kind[:1].upper(), kind[1:])]
+    if frame.get("fi_secondary_subtype"):
+        lines.append("Its other engine's share is carried by %s."
+                     % (_fi_values(pack, facts,
+                                   frame.get("fi_secondary_share_facts"))
+                        or "no fact named"))
+    capital = frame.get("fi_capital") or {}
+    lines.append("")
+    if capital.get("gap"):
+        lines.append("**Capital beside its requirement.** %s."
+                     % _fi_capital_words(pack, facts, capital, bases))
+    else:
+        lines.append("**Capital beside its requirement.**")
+        for ratio, requirement in fi_capital_pairs(capital):
+            lines.append("- %s" % _fi_pair_words(pack, facts, ratio,
+                                                  requirement))
+        for label, key in (("The regime", "regime"),
+                           ("The binding constraint", "binding_constraint")):
+            if capital.get(key):
+                lines.append("- %s: %s" % (label, _marked(capital[key],
+                                                           bases)))
+        if capital.get("target_fact"):
+            lines.append("- Management's own target: %s"
+                         % _fi_value(pack, facts, capital["target_fact"]))
+    stress, stress_gaps = fi_stress_evidence(capture, ticker)
+    if stress or stress_gaps:
+        # Owner ruling AC30(5): the supervisor's own stress figures, as
+        # dated evidence - never a reading of them.
+        lines.append("")
+        lines.append("**%s.** Evidence only: the pack carries these and "
+                     "nothing here reads them." % FI_STRESS_HEADING)
+        for fid in stress:
+            lines.append("- %s" % _fi_value(pack, facts, fid))
+        for gap in stress_gaps:
+            lines.append("- declared gap (%s): %s"
+                         % (_safe(gap.get("fact_class")),
+                            _safe(gap.get("reason"))))
+    risk = frame.get("fi_risk_cost") or {}
+    if risk:
+        kind = risk.get("kind")
+        lines.append("")
+        lines.append("**The risk-cost line: %s.** %s. Why this line: %s"
+                     % (FI_RISK_KIND_WORDS.get(kind) or _safe(kind),
+                        _fi_values(pack, facts, risk.get("facts"))
+                        or "no fact, by design",
+                        _marked(risk.get("because"), bases)))
+    bridge = frame.get("nav_bridge")
+    if isinstance(bridge, dict):
+        lines.append("")
+        lines.append("**The net asset value, part by part.**")
+        lines.append("")
+        lines.append("| Component | How it is valued | Value |")
+        lines.append("| --- | --- | --- |")
+        for part in bridge.get("components") or []:
+            lines.append("| %s | %s | %s |"
+                         % (_marked(part.get("name"), bases),
+                            FI_METHOD_WORDS.get(part.get("method"))
+                            or _safe(part.get("method")),
+                            _fi_value(pack, facts, part.get("value_fact"))))
+        lines.append("")
+        for label, key in (
+                ("Holding-company net debt", "holdco_net_debt_fact"),
+                ("The net asset value", "nav_total_fact"),
+                ("The company's own published net asset value",
+                 "published_nav_fact"),
+                ("The discount", "discount_fact")):
+            if bridge.get(key):
+                lines.append("- %s: %s"
+                             % (label, _fi_value(pack, facts, bridge[key])))
+        lines.append("")
+        lines.append(FI_NOT_RATED_SENTENCE)
+    return lines
+
+
 def _full_cycle_lines(capture):
     """The cycle a single name depends on (owner ruling AC15, P4): the
     dated series carried as EVIDENCE, or the declared gap. Nothing here is
@@ -1185,11 +1642,16 @@ def _full_cycle_lines(capture):
         points = series.get("points") or []
         span = ("%s to %s" % (points[0]["date"], points[-1]["date"])
                 if points else "no points")
-        lines.append("- **`%s`** (%s, as of %s): %d dated points, %s. "
-                     "Source: %s. Re-fetch: %s"
+        # Render-only (FI-ARCHETYPE (b)): the date the series was read
+        # beside the date of its LAST point, so a reader sees how old the
+        # latest reading is.
+        lines.append("- **`%s`** (%s, read %s; latest point %s): %d dated "
+                     "points, %s. Source: %s. Re-fetch: %s"
                      % (_one_line(series.get("id")),
                         _safe(series.get("unit")),
-                        _safe(series.get("as_of")), len(points), span,
+                        _safe(series.get("as_of")),
+                        _safe(points[-1].get("date")) if points
+                        else "none", len(points), span,
                         _safe(series.get("source")),
                         _safe(series.get("refetch_url_or_source_line"))))
         # The full document is what a person approves, so it must show
@@ -1395,6 +1857,25 @@ def _full_auditor_lines(capture):
     return lines
 
 
+FREE_CASH_ROW = "free_cash_flow"
+
+
+def checklist_description(capture, req, escape):
+    """A checklist row's description as the page prints it. For a bank,
+    insurer, reinsurer or holding the free-cash test is named for what
+    answers it - capital the firm can pay out and still stay above its
+    regulator's minimum (owner ruling AC30(1)) - with the capture's own
+    words after it; every other row, and every other subject, prints the
+    capture's words alone, through the renderer's own `escape`."""
+    words = escape(req.get("description"))
+    frame = fi_subject_frame(capture)
+    if (req.get("id") == FREE_CASH_ROW and frame is not None
+            and frame.get("fi_subtype") in fi_lifted_subtypes()):
+        return "%s%s%s" % (escape("%s (the capture's words: "
+                                  % FI_FREE_CASH_WORDS), words, escape(")"))
+    return words
+
+
 def _full_checklist_lines(capture):
     lines = ["## The sufficiency checklist", ""]
     facts = _facts_by_id(capture)
@@ -1403,7 +1884,7 @@ def _full_checklist_lines(capture):
             lines.append("- [answered] `%s` (%s): %s - by %s"
                          % (_one_line(req.get("id")),
                             _one_line(req.get("kind")),
-                            _safe(req.get("description")),
+                            checklist_description(capture, req, _safe),
                             ", ".join(_fact_ref(facts, f)
                                       for f in req.get("answered_by") or [])
                             or "none"))
@@ -1414,7 +1895,7 @@ def _full_checklist_lines(capture):
             lines.append("- [declared gap] `%s` (%s): %s - %s (weakens %s)"
                          % (_one_line(req.get("id")),
                             _one_line(req.get("kind")),
-                            _safe(req.get("description")),
+                            checklist_description(capture, req, _safe),
                             _safe(req.get("gap_reason") or "no reason"),
                             _safe(req.get("weakened_test") or "not stated")))
     lines.append("")

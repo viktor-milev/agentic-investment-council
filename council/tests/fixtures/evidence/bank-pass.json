@@ -1,7 +1,11 @@
 {
  "business_frame": {
-  "EXMP": {
+  "EXBK": {
+   "archetype": "financial_institution",
+   "archetype_because": "INVENTED FIXTURE - its product is its balance sheet or its clients' capital, so it is rated on the return on the capital it must hold.",
    "competitive_position": "t2_market_structure_and_share",
+   "cycle_dependence": "none",
+   "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle.",
    "decisive_metrics": [
     {
      "answered_by": [
@@ -10,8 +14,8 @@
      "figures": [],
      "gap": null,
      "kind": "capacity_or_backlog",
-     "name": "Order backlog",
-     "why_it_decides": "The backlog is next year's revenue already signed. It is the only figure here that says whether the mix shift survives a weak order year."
+     "name": "The loan book already written",
+     "why_it_decides": "INVENTED FIXTURE - the book already written is next year's spread income."
     },
     {
      "answered_by": [
@@ -21,8 +25,8 @@
      "figures": [],
      "gap": null,
      "kind": "growth",
-     "name": "Service revenue against last year",
-     "why_it_decides": "Service is the recurring, higher-margin half. Whether it keeps outgrowing new pumps decides whether the rating should rise."
+     "name": "Fee revenue against last year",
+     "why_it_decides": "INVENTED FIXTURE - fees need no capital, so their growth decides the return."
     },
     {
      "answered_by": [
@@ -32,10 +36,55 @@
      "figures": [],
      "gap": null,
      "kind": "cash_conversion",
-     "name": "Free cash flow after capital spending",
-     "why_it_decides": "Pumps are made in owned plants, so growth costs cash. Cash after that spending is what the owner can actually have."
+     "name": "Cash the business generates",
+     "why_it_decides": "INVENTED FIXTURE - the cash left after the year's spending."
+    },
+    {
+     "answered_by": [
+      "tangible_common_equity",
+      "net_income_to_common_ttm"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "other",
+     "name": "The halves of the rating measure",
+     "why_it_decides": "INVENTED FIXTURE - the market value is divided by these, so they are the numbers the rating turns on."
+    },
+    {
+     "answered_by": [
+      "cet1_ratio_standardized_q",
+      "cet1_requirement_standardized_q"
+     ],
+     "figures": [],
+     "gap": null,
+     "kind": "balance_sheet",
+     "name": "Capital beside its requirement",
+     "why_it_decides": "INVENTED FIXTURE - the headroom above the minimum decides what can be paid out."
     }
    ],
+   "fi_capital": {
+    "binding_constraint": "INVENTED FIXTURE - the ratio of 15.2% binds against its requirement of 11.5%",
+    "figures": [
+     "15.2",
+     "11.5"
+    ],
+    "ratio_facts": [
+     "cet1_ratio_standardized_q"
+    ],
+    "regime": "INVENTED FIXTURE - standardized approach with its buffers",
+    "requirement_facts": [
+     "cet1_requirement_standardized_q"
+    ]
+   },
+   "fi_risk_cost": {
+    "because": "INVENTED FIXTURE - where the firm's own cycle enters its earnings.",
+    "facts": [
+     "provision_for_credit_losses_q"
+    ],
+    "figures": [],
+    "kind": "credit"
+   },
+   "fi_subtype": "bank",
    "headline_decline_read": null,
    "how_it_earns": [
     {
@@ -45,7 +94,8 @@
       "segment_revenue_total_q"
      ],
      "figures": [],
-     "line": "INVENTED FIXTURE - New pumps",
+     "line": "INVENTED FIXTURE - Lending and deposits",
+     "nature": "spread",
      "share_of_period": "0.62"
     },
     {
@@ -55,7 +105,8 @@
       "segment_revenue_total_q"
      ],
      "figures": [],
-     "line": "INVENTED FIXTURE - Service contracts and spare parts",
+     "line": "INVENTED FIXTURE - Payments and advisory fees",
+     "nature": "fee",
      "share_of_period": "0.38"
     }
    ],
@@ -69,38 +120,51 @@
       "guided": [
        "guided_revenue_q1_fy2026"
       ],
-      "period": "Q1 FY2026"
+      "period": "Q1 FY2026",
+      "revisions": []
      },
      {
       "delivered": "delivered_revenue_q2_fy2026",
       "guided": [
        "guided_revenue_q2_fy2026"
       ],
-      "period": "Q2 FY2026"
+      "period": "Q2 FY2026",
+      "revisions": [
+       {
+        "date": "2026-05-20",
+        "guided": [
+         "guidance_revised_revenue_q2_fy2026"
+        ]
+       }
+      ]
      }
     ],
     "insider_ownership_pct": "insider_ownership_pct"
    },
    "peers": [
     {
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
      "metrics": [
       "peer_pe_ratio__pmpc",
-      "peer_market_cap__pmpc"
+      "peer_market_cap__pmpc",
+      "peer_tangible_common_equity__pmpc",
+      "peer_net_income_to_common_ttm__pmpc"
      ],
-     "name": "INVENTED FIXTURE - Pump Makers Corp",
-     "ticker": "PMPC",
-     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
-     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+     "name": "INVENTED FIXTURE - First Example Bank",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison.",
+     "ticker": "PMPC"
     },
     {
+     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
      "metrics": [
       "peer_pe_ratio__vlvi",
-      "peer_market_cap__vlvi"
+      "peer_market_cap__vlvi",
+      "peer_tangible_common_equity__vlvi",
+      "peer_net_income_to_common_ttm__vlvi"
      ],
-     "name": "INVENTED FIXTURE - Valve Industries Inc",
-     "ticker": "VLVI",
-     "comparable_because": "INVENTED FIXTURE - shares the same product category and multi-year customer contracts as the subject, on comparable terms.",
-     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison."
+     "name": "INVENTED FIXTURE - Valley Example Bank",
+     "not_comparable_on": "INVENTED FIXTURE - a larger balance sheet; nothing material to the comparison.",
+     "ticker": "VLVI"
     }
    ],
    "what_is_changing": {
@@ -117,35 +181,107 @@
      "930.0"
     ],
     "kind": "mix_shift",
-    "statement": "INVENTED FIXTURE - Service is growing faster than new pumps: service revenue rose from 500.0 to 570.0 million dollars while new-pump revenue rose from 900.0 to 930.0. Service is sold on multi-year contracts, so the revenue that arrives next year is largely already signed, and it carries a higher margin than the pump it attaches to. The mix is shifting toward the recurring half of the business, which is why the backlog matters more to this question than the quarter's revenue does."
+    "statement": "INVENTED FIXTURE - Fees are growing faster than lending: fee revenue rose from 500.0 to 570.0 million dollars while lending revenue rose from 900.0 to 930.0."
    },
-   "what_it_does": "INVENTED FIXTURE - Example Manufacturing builds industrial pumps and sells the service contracts that keep them running. Its customers are water utilities, mines and chemical plants, which buy a pump to move fluid they cannot afford to stop moving. If the company vanished, a customer would have to re-engineer its fluid handling around another maker's pump and re-qualify it on a live site, which takes about a year, and would have to find spare parts and service crews elsewhere in the meantime.",
-   "what_it_does_figures": [],
-   "archetype": "profitable_operator",
-   "archetype_because": "INVENTED FIXTURE - the business earns a net profit each quarter and is rated on earnings against its own history and its listed peers.",
-   "cycle_dependence": "none",
-   "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
+   "what_it_does": "INVENTED FIXTURE - Example Bancorp takes deposits from households and firms and lends them out, and earns fees on payments and advice. Its product is its balance sheet: a customer who left would move its payroll and a credit line to another bank.",
+   "what_it_does_figures": []
   }
  },
  "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
- "gaps": [],
+ "evidence_challenge": {
+  "evidence_sha256": "8bda3db5b3c8b89c7368cb5e8eb2d19a2b37ea51fb667d659d590c8cae66fd2c",
+  "failure_reason": null,
+  "failure_status": null,
+  "findings": [
+   {
+    "detail": "INVENTED FIXTURE - the record shows what the service line earns but not what it earns per contract, and the question turns on whether that is improving.",
+    "fact_ids": [],
+    "figure_at_source": null,
+    "id": "E1",
+    "kind": "missing_decisive_fact",
+    "severity": "material",
+    "source_url": null,
+    "where_it_likely_lives": "INVENTED FIXTURE - the segment note of the latest quarterly report"
+   },
+   {
+    "detail": "INVENTED FIXTURE - the frame reads the mix shift as settled when only two quarters support it.",
+    "fact_ids": [
+     "segment_revenue_share_pumps_q"
+    ],
+    "figure_at_source": null,
+    "id": "E2",
+    "kind": "framing_error",
+    "severity": "minor",
+    "source_url": null,
+    "where_it_likely_lives": null
+   }
+  ],
+  "model": "gpt-5.6-sol",
+  "nonce": "a1b2c3d4e5f6071865786d702d706173",
+  "overall": "INVENTED FIXTURE - the record is strong on what each line earns and weak on what a single contract earns. One point below would change how the mix shift reads; the other would not.",
+  "post_audit_changes": [],
+  "post_audit_sha256": "8bda3db5b3c8b89c7368cb5e8eb2d19a2b37ea51fb667d659d590c8cae66fd2c",
+  "resolutions": {
+   "E1": {
+    "disposition": "captured",
+    "fact_ids": [
+     "segment_revenue_service_q"
+    ],
+    "reason": null,
+    "weakened_test": null
+   },
+   "E2": {
+    "disposition": "overruled",
+    "fact_ids": [],
+    "reason": "INVENTED FIXTURE - the frame states the mix shift as a kind and not as a settled outcome, and the two quarters it rests on are the two the pack carries with their prior-year pairs, so the reading it makes is the one the record supports.",
+    "weakened_test": null
+   }
+  },
+  "status": "success"
+ },
+ "gaps": [
+  {
+   "fact_class": "short_interest_shares",
+   "reason": "INVENTED FIXTURE - this listing publishes no dated short-interest series, so the fact class is absent by design",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "how crowded the short side is cannot be measured; the market-structure read leans on volume and the 52-week range alone"
+  },
+  {
+   "fact_class": "participating_share_count",
+   "reason": "INVENTED FIXTURE - this firm publishes no such figure, so the fact class is absent by design",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "INVENTED FIXTURE - the reading this family would have informed rests on the others"
+  },
+  {
+   "fact_class": "insider_flow_",
+   "reason": "INVENTED FIXTURE - this fixture records no insiders' dealings: it was written before floors 1.7.0 asked for them, and it invents none",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "insider flow cannot be read: who inside the company is buying or selling, how persistently, and at what size"
+  },
+  {
+   "fact_class": "buyback_",
+   "reason": "INVENTED FIXTURE - this fixture records no share buybacks: it was written before floors 1.7.0 asked for them, and it invents none",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "the issuer bid cannot be read: the company's own buying of its shares as a dated absorber of supply"
+  }
+ ],
  "market_state": {
   "disclosure": {
-   "price_age": "INVENTED FIXTURE - captured on a Sunday evening; the exchange is shut and the last trade is Friday 2026-08-28's close, two days before the capture.",
-   "reason": "INVENTED FIXTURE - the exchange was shut on the capture day; see the price-age note beside this."
+   "price_age": "INVENTED FIXTURE - the last trade is Friday 2026-08-28's close, two days before the capture.",
+   "reason": "INVENTED FIXTURE - captured on a Sunday evening; the exchange is shut."
   },
   "state": "closed"
  },
- "question_line": "One defect only: short interest is absent and no gap is declared for it. (INVENTED FIXTURE)",
- "question_verbatim": "One defect only: short interest is absent and no gap is declared for it. (INVENTED FIXTURE)",
+ "question_line": "Is Example Bancorp worth buying at today's price?",
+ "question_verbatim": "Is Example Bancorp worth buying at today's price? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",
   "currency": "USD",
   "kind": "single_stock",
   "listing": "NYSE (INVENTED)",
-  "name": "Example Manufacturing Co",
-  "ticker": "EXMP"
+  "name": "Example Bancorp",
+  "ticker": "EXBK"
  },
  "sufficiency": {
   "requirements": [
@@ -161,8 +297,7 @@
    },
    {
     "answered_by": [
-     "free_cash_flow_q",
-     "free_cash_flow_prior_year_q"
+     "distributable_capital_q"
     ],
     "description": "How much cash is generated after capital spending, this year against last. (INVENTED FIXTURE)",
     "id": "free_cash_flow",
@@ -171,15 +306,27 @@
    },
    {
     "answered_by": [
-     "pe_ratio_current",
-     "pe_ratio_5y_average"
+     "market_cap",
+     "tangible_common_equity",
+     "net_income_to_common_ttm",
+     "peer_tangible_common_equity__pmpc",
+     "peer_net_income_to_common_ttm__pmpc",
+     "peer_tangible_common_equity__vlvi",
+     "peer_net_income_to_common_ttm__vlvi"
     ],
     "description": "Is today's rating expensive or cheap against the company's own five-year record? (INVENTED FIXTURE)",
     "id": "rating_vs_history_or_peers",
     "kind": "canonical_test",
+    "measure": "price_to_tangible_book_against_return_on_tangible_equity",
+    "peer_denominator_metrics": [
+     "tangible_common_equity",
+     "net_income_to_common_ttm"
+    ],
     "status": "answered",
-    "measure": "earnings_vs_history_and_peers",
-    "peer_denominator_metrics": ["pe_ratio"]
+    "subject_denominator_facts": [
+     "tangible_common_equity",
+     "net_income_to_common_ttm"
+    ]
    },
    {
     "answered_by": [
@@ -664,6 +811,160 @@
    "source": "INVENTED FIXTURE - struck at capture from the 10-Q segment note, 2026-07-15",
    "unit": "share of the segment total",
    "value": "0.38"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "cet1_ratio_standardized_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "%",
+   "value": "15.2"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "cet1_requirement_standardized_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "%",
+   "value": "11.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "provision_for_credit_losses_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "310.0"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "tangible_common_equity",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "24000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "net_income_to_common_ttm",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "24000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "rotce_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "provision_for_credit_losses_prior_year_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "credit_cost_net_charge_offs_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "securities_unrealized_loss_htm_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "stress_capital_buffer",
+   "label": "Stress capital buffer set by the regulator",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "%",
+   "value": "2.5"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "capital_return_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "peer_tangible_common_equity__pmpc",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "18000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "peer_net_income_to_common_ttm__pmpc",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "18000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "peer_tangible_common_equity__vlvi",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "18000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "peer_net_income_to_common_ttm__vlvi",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "18000"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "distributable_capital_q",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1200"
+  },
+  {
+   "as_of": "2026-07-15",
+   "derived": null,
+   "freshness_rule_days": 120,
+   "id": "guidance_revised_revenue_q2_fy2026",
+   "source": "INVENTED FIXTURE - the financial institution's latest results release",
+   "unit": "USD_m",
+   "value": "1490"
   }
  ],
  "tier2": [

@@ -1,11 +1,12 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [],
  "market_state": {
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is gold worth committing new capital to at today's price?",
  "question_verbatim": "Is gold worth committing new capital to at today's price? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "gold",
@@ -298,8 +299,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f60718676f6c642d706173",
-  "evidence_sha256": "3d9ceed53235bb16b43041660e6624f5adf0b22143cfc4db8d49ed82f13050fc",
+  "evidence_sha256": "4e8f30ca98088167aa7c9bd99946063a280ddbe14c6e1a7d980ffd8cec805462",
   "post_audit_changes": [],
-  "post_audit_sha256": "3d9ceed53235bb16b43041660e6624f5adf0b22143cfc4db8d49ed82f13050fc"
+  "post_audit_sha256": "4e8f30ca98088167aa7c9bd99946063a280ddbe14c6e1a7d980ffd8cec805462"
  }
 }

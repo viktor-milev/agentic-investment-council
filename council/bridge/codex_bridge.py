@@ -37,12 +37,22 @@ spike findings behind it:
 
 Statuses match the verdict schema's challenge enum exactly: success,
 launch_failure, timeout, malformed_output, schema_failure, binding_failure,
-internal_failure. The evidence audit records the same words in the capture's
+internal_failure - plus the bridge's own posture_breach, which the host and
+the capture record exactly as malformed_output (unit BRIDGE-POSTURE: the
+challenger called a tool beyond reading its payload; the reason names it).
+The evidence audit records the same words in the capture's
 evidence_challenge block when its call fails.
+
+Tool posture (BRIDGE-POSTURE, 2026-09-23): the Codex login also carries
+server-side tools no sandbox blocks (web search, the owner's connected
+apps), so both commands switch them off, the smoke test probes the tool
+list, and the paid call's tool calls are recorded by name. events.jsonl,
+kept beside result.json, is the sitting's only session record.
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -102,6 +112,49 @@ def challenger_choice(model=None, effort=None):
             or DEFAULT_EFFORT)
 
 
+# BRIDGE-POSTURE: what the challenger may reach, as data.
+POSTURE_PATH = os.path.abspath(os.path.join(
+    os.path.dirname(__file__), "..", "floors", "challenger-posture.json"))
+POSTURE_VERSION = "1.0.0"
+# The switches that close the server-side tools a sandbox cannot: web
+# search off, and the connected-apps, sub-agent and image-generation
+# features off (codex 0.156.0: --disable <FEATURE> is
+# -c features.<name>=false). The sub-agent and image switches are passed
+# but do not remove the collaboration.* or view_image tools on 0.156.0
+# (measured 2026-09-24); those run in the same sandbox and a call to one
+# marks posture_breach after the fact.
+WEB_SEARCH_OFF = ["-c", 'web_search="disabled"']
+APPS_OFF = ["--disable", "apps"]
+FEATURES_OFF = APPS_OFF + ["--disable", "multi_agent",
+                           "--disable", "image_generation"]
+PROBE_PROMPT = ("Reply with the single word OK on the first line, then the "
+                "exact names of the tools available to you, one bare name "
+                "per line with no bullets, numbers or quotes - or the single "
+                "word NONE on the second line if you have none. Nothing "
+                "else.")
+PROBE_NAME = "probe.json"
+# Stream items that are the model's own words, not calls.
+_NOT_CALLS = ("agent_message", "reasoning", "error")
+
+
+def load_posture(path=POSTURE_PATH):
+    """The posture file, checked: its version, the forbidden classes, the
+    calls that count as reading the payload, and the evidence audit's web
+    reader switch. Anything else is refused (ValueError)."""
+    doc = canonical.read_json(path)
+    if not isinstance(doc, dict) or doc.get("version") != POSTURE_VERSION:
+        raise ValueError("%s: version must be %s" % (path, POSTURE_VERSION))
+    for key in ("forbidden_tool_classes", "payload_reading_calls"):
+        words = doc.get(key)
+        if (not isinstance(words, list)
+                or not all(isinstance(w, str) and w for w in words)):
+            raise ValueError("%s: %s must be a list of words" % (path, key))
+    if not isinstance(doc.get("evidence_audit_reads_the_web"), bool):
+        raise ValueError("%s: evidence_audit_reads_the_web must be true "
+                         "or false" % path)
+    return doc
+
+
 SMOKE_TIMEOUT_S = 120
 # How much of the prompt is written into the child at a time. A prompt
 # larger than the operating system's pipe buffer (typically 65,536
@@ -159,9 +212,14 @@ _EVIDENCE_ECHO_FIELDS = (
 # Command construction: the exact proven flag surface.
 # ---------------------------------------------------------------------------
 
-def build_challenge_argv(model, effort, isolated_dir, schema_path, out_path):
+def build_challenge_argv(model, effort, isolated_dir, schema_path, out_path,
+                         web_reader=False):
     """The one challenge command. No trailing prompt argument: the prompt
-    travels on stdin, exactly as the proven bridge sends it."""
+    travels on stdin, exactly as the proven bridge sends it. Web search,
+    the connected apps, sub-agents and image generation are off
+    (BRIDGE-POSTURE); `web_reader` leaves
+    web search on, for the evidence audit only, while the posture file
+    says it reads the web."""
     return [
         "codex", "exec",
         "--model", model,
@@ -170,6 +228,7 @@ def build_challenge_argv(model, effort, isolated_dir, schema_path, out_path):
         "--skip-git-repo-check",
         "--ephemeral",
         "--ignore-user-config",
+    ] + ([] if web_reader else WEB_SEARCH_OFF) + FEATURES_OFF + [
         "-C", isolated_dir,
         "--output-schema", schema_path,
         "--json",
@@ -178,7 +237,8 @@ def build_challenge_argv(model, effort, isolated_dir, schema_path, out_path):
 
 
 def build_smoke_argv(model):
-    """The standing unpaid smoke test, verbatim from the run books."""
+    """The standing unpaid smoke test, with the paid call's posture
+    switches, asking for the tool list (BRIDGE-POSTURE)."""
     return [
         "codex", "exec",
         "-m", model,
@@ -186,8 +246,7 @@ def build_smoke_argv(model):
         "--skip-git-repo-check",
         "--sandbox", "read-only",
         "--ephemeral",
-        "Reply OK",
-    ]
+    ] + WEB_SEARCH_OFF + FEATURES_OFF + [PROBE_PROMPT]
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +407,82 @@ def _usage_from_events(events_path):
         return None
 
 
+def _event_stream_gap(events_path):
+    """None when the event stream is the record of one whole turn, else a
+    plain reason (the architect's bracket rule, P-BRIDGE-POSTURE-1, made
+    exact by P-BRIDGE-POSTURE-2: exactly one thread.started, turn.started
+    and turn.completed). Among
+    the lines that open as events ('{'), each must read as JSON; the first
+    is thread.started, a turn.started follows, an agent_message item lies
+    inside the turn, and the last is turn.completed. A line of plain text
+    is noise, not an event, and is passed over as the usage reader
+    passes it."""
+    try:
+        with open(events_path, "rb") as handle:
+            text = handle.read().decode("utf-8")
+        events = [json.loads(line) for line in text.splitlines()
+                  if line.lstrip().startswith("{")]
+    except (OSError, ValueError):
+        return "it is missing or holds an unreadable line"
+    types = [e.get("type") if isinstance(e, dict) else None for e in events]
+    for kind in ("thread.started", "turn.started", "turn.completed"):
+        if types.count(kind) > 1:
+            return "two %s events" % kind
+    if not types or types[0] != "thread.started":
+        return "it does not open with thread.started"
+    if types[-1] != "turn.completed":
+        return "it does not end with turn.completed"
+    if "turn.started" not in types[1:-1]:
+        return "no turn.started before turn.completed"
+    inside = events[types.index("turn.started") + 1:-1]
+    if not any(e.get("type") == "item.completed"
+               and isinstance(e.get("item"), dict)
+               and e["item"].get("type") == "agent_message"
+               for e in inside if isinstance(e, dict)):
+        return "no agent_message item inside the turn"
+    return None
+
+
+def _tool_calls_from_events(events_path):
+    """Every tool call the event stream shows, by NAME only, in order - a
+    call's arguments and results can carry the case file or the owner's
+    data and are never copied. An item seen as started and completed is
+    one call. An app call is named by its server and tool. A raw event
+    whose type ends in _call (the dispatch's web_search_call) counts
+    too. An unreadable line is skipped: the stream is kept whole beside
+    the result for anyone who needs more."""
+    names, seen = [], set()
+    try:
+        with open(events_path, "rb") as handle:
+            text = handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return names
+    for line in text.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        item = event.get("item")
+        if isinstance(item, dict):
+            kind = str(item.get("type"))
+            if kind in _NOT_CALLS:
+                continue
+            key = item.get("id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            if kind == "mcp_tool_call":
+                kind = "mcp_tool_call:%s.%s" % (item.get("server"),
+                                                item.get("tool"))
+            names.append(kind)
+        elif str(event.get("type", "")).endswith("_call"):
+            names.append(str(event["type"]))
+    return names
+
+
 # ---------------------------------------------------------------------------
 # The challenge call.
 # ---------------------------------------------------------------------------
@@ -366,6 +501,9 @@ def _new_result():
         # item P-U3-8). The host publishes this figure, so a call that
         # never left the machine must not carry one.
         "prompt_bytes_sent": None,
+        # Every tool call the event stream shows, by name (BRIDGE-POSTURE).
+        # Null until the launcher returns.
+        "tool_calls": None,
     }
 
 
@@ -376,7 +514,7 @@ def _fail(result, status, reason):
 
 
 def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
-                    echo_fields, schema_copy_name):
+                    echo_fields, schema_copy_name, web_reader):
     """One paid call, whichever stage asked for it. The two stages
     differ in the schema the answer is judged against and the fields it
     must echo back, and in nothing else: the command, the confinement,
@@ -404,7 +542,7 @@ def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
 
     argv = build_challenge_argv(
         request["model"], request["effort"],
-        isolated_dir, schema_in_isolated, response_path)
+        isolated_dir, schema_in_isolated, response_path, web_reader)
 
     try:
         returncode, timed_out, prompt_bytes_sent = launcher(
@@ -416,6 +554,7 @@ def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
     result["returncode"] = returncode
     result["prompt_bytes_sent"] = prompt_bytes_sent
     result["usage_tokens"] = _usage_from_events(events_path)
+    result["tool_calls"] = _tool_calls_from_events(events_path)
 
     if timed_out:
         _fail(result, "timeout",
@@ -424,6 +563,28 @@ def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
         return
     if returncode != 0:
         _fail(result, "launch_failure", "exit code %s" % returncode)
+        return
+
+    gap = _event_stream_gap(events_path)
+    if gap:
+        _fail(result, "malformed_output",
+              "event stream is not one whole turn: %s - the challenger's "
+              "tool calls cannot be checked, so its answer is not used"
+              % gap)
+        return
+
+    # BRIDGE-POSTURE: a call beyond reading the payload voids the answer,
+    # whatever it says. The web reader counts only where it was left on,
+    # in either form the stream names it (item or raw event).
+    allowed = set(load_posture()["payload_reading_calls"])
+    if web_reader:
+        allowed.update(("web_search", "web_search_call"))
+    breaches = [name for name in result["tool_calls"] if name not in allowed]
+    if breaches:
+        _fail(result, "posture_breach",
+              "posture breach: the challenger called %s - it reads the "
+              "case file it is sent and nothing else, so its answer is "
+              "not used" % ", ".join(breaches))
         return
 
     if not os.path.isfile(response_path):
@@ -460,13 +621,13 @@ def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
 
 
 def _run_call(request, payload_bytes, out_dir, launcher, echo_fields,
-              schema_copy_name):
+              schema_copy_name, web_reader=False):
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     result = _new_result()
     try:
         _run_call_inner(request, payload_bytes, out_dir, launcher, result,
-                        echo_fields, schema_copy_name)
+                        echo_fields, schema_copy_name, web_reader)
     except Exception as exc:
         _fail(result, "internal_failure", "unexpected: %r" % (exc,))
     canonical.write_canonical_json(os.path.join(out_dir, RESULT_NAME), result)
@@ -486,15 +647,55 @@ def run_evidence(request, brief_bytes, out_dir, launcher=None):
     run_challenge, judged against the evidence findings schema and bound
     by the evidence hash rather than a run id."""
     return _run_call(request, brief_bytes, out_dir, launcher,
-                     _EVIDENCE_ECHO_FIELDS, EVIDENCE_SCHEMA_NAME)
+                     _EVIDENCE_ECHO_FIELDS, EVIDENCE_SCHEMA_NAME,
+                     load_posture()["evidence_audit_reads_the_web"])
 
 
 # ---------------------------------------------------------------------------
 # The standing smoke test: unpaid, precedes every paid call.
 # ---------------------------------------------------------------------------
 
-def smoke(launcher=None, model=None):
-    """Returns (ok, detail). Success = exit 0 and "OK" in stdout."""
+_TOOL_TOKEN = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+
+
+def _probe_tools(reply):
+    """(tools, reason) by the strict probe grammar (P-BRIDGE-POSTURE-3):
+    lines right-stripped, blank lines ignored; the first line exactly
+    OK; then exactly one line NONE (tools == []) or one tool-name token
+    per line. Anything else gives tools None and a reason naming the
+    offending line (cut at 80 characters)."""
+    lines = [line.rstrip() for line in reply.splitlines() if line.strip()]
+    rest = lines[1:]
+    if not lines or lines[0] != "OK":
+        bad = lines[0] if lines else ""
+    elif not rest:
+        return None, "nothing after OK"
+    elif rest == ["NONE"]:
+        return [], None
+    else:
+        bad = next((line for line in rest if line == "NONE"
+                    or not _TOOL_TOKEN.match(line)), None)
+        if bad is None:
+            return rest, None
+    return None, "the line '%s'" % bad[:80]
+
+
+def _forbidden_class(tool, classes):
+    """The forbidden class a tool name carries as a whole word (plural
+    too), or None. camelCase and every separator split words, so
+    apply_patch is not of the class 'app' but codex_apps is."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", tool).lower()
+    words = set(word for word in re.split(r"[^a-z0-9]+", spaced) if word)
+    for cls in classes:
+        if cls in words or cls + "s" in words:
+            return cls
+    return None
+
+
+def smoke(launcher=None, model=None, record_path=None):
+    """Returns (ok, detail). Success = exit 0, a reply in the probe
+    grammar (_probe_tools), and no listed tool of a forbidden class
+    (BRIDGE-POSTURE). Where `record_path` is given, the reply is kept there with the run."""
     model = challenger_choice(model)[0]
     if launcher is None:
         launcher = default_launcher
@@ -516,9 +717,31 @@ def smoke(launcher=None, model=None):
                 stdout_text = handle.read().decode("utf-8", errors="replace")
         if returncode != 0:
             return False, "smoke exit code %s" % returncode
-        if "OK" not in stdout_text:
-            return False, "smoke reply did not contain OK"
-        return True, "smoke ok"
+        tools, reason = _probe_tools(stdout_text)
+        refused, ok, detail = None, True, "smoke ok"
+        if tools is None:
+            ok, detail = False, ("smoke reply is not OK then NONE or one "
+                                 "tool name per line: %s" % reason)
+        else:
+            classes = load_posture()["forbidden_tool_classes"]
+            for tool in tools:
+                cls = _forbidden_class(tool, classes)
+                if cls:
+                    refused = tool
+                    ok, detail = False, (
+                        "the challenger reports the tool '%s' (class "
+                        "'%s'); it must see the case file and nothing "
+                        "else, so the paid call is refused" % (tool, cls))
+                    break
+            if ok:
+                detail = "smoke ok - tools: %s" % (", ".join(tools)
+                                                   or "NONE")
+        if record_path:
+            canonical.write_canonical_json(record_path, {
+                "prompt": PROBE_PROMPT, "reply": stdout_text,
+                "tools": tools, "refused_tool": refused, "ok": ok,
+                "detail": detail})
+        return ok, detail
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -569,7 +792,9 @@ def _cli_challenge(run_dir, no_smoke):
         casefile_bytes = handle.read()
 
     if not no_smoke:
-        ok, detail = smoke(model=request.get("model"))
+        ok, detail = smoke(model=request.get("model"),
+                           record_path=os.path.join(challenge_dir,
+                                                    PROBE_NAME))
         if not ok:
             result = _new_result()
             _fail(result, "launch_failure", "smoke test failed: " + detail)
@@ -655,9 +880,14 @@ def evidence_challenge_block(result, resolution, model,
         # Carrying only the word left the frozen pack unable to tell a
         # missing program from a model that answered nonsense (audit
         # round 5, r5-4).
+        # A posture breach is recorded exactly as an unreadable answer
+        # (BRIDGE-POSTURE); the reason names the tool.
+        status = result.get("status")
         block = {"status": "failed",
                  "model": model,
-                 "failure_status": result.get("status"),
+                 "failure_status": ("malformed_output"
+                                    if status == "posture_breach"
+                                    else status),
                  "failure_reason": result.get("failure_reason"),
                  "findings": [],
                  "overall": None,
@@ -896,7 +1126,8 @@ def _cli_evidence(capture_path, out_dir, no_smoke, delta=False):
         return result
 
     if not no_smoke:
-        ok, detail = smoke(model=request["model"])
+        ok, detail = smoke(model=request["model"],
+                           record_path=os.path.join(out_dir, PROBE_NAME))
         if not ok:
             result = _new_result()
             _fail(result, "launch_failure", "smoke test failed: " + detail)

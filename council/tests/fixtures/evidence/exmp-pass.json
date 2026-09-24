@@ -137,7 +137,7 @@
    "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
   }
  },
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "evidence_challenge": {
   "failure_status": null,
@@ -186,9 +186,9 @@
   "status": "success",
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f6071865786d702d706173",
-  "evidence_sha256": "8199460fe88ddd3b85015dd8fbdc10c4d146d4ad8d973e22f7a338d68857ef52",
+  "evidence_sha256": "93ff583bd45d4c12cd3151dfe6b910ee9fee97fc8569967d410401f1c6873b46",
   "post_audit_changes": [],
-  "post_audit_sha256": "8199460fe88ddd3b85015dd8fbdc10c4d146d4ad8d973e22f7a338d68857ef52"
+  "post_audit_sha256": "93ff583bd45d4c12cd3151dfe6b910ee9fee97fc8569967d410401f1c6873b46"
  },
  "gaps": [
   {
@@ -196,6 +196,18 @@
    "reason": "INVENTED FIXTURE - this listing publishes no dated short-interest series, so the fact class is absent by design",
    "reason_kind": "absent_by_design",
    "weakened_test": "how crowded the short side is cannot be measured; the market-structure read leans on volume and the 52-week range alone"
+  },
+  {
+   "fact_class": "insider_flow_",
+   "reason": "INVENTED FIXTURE - this invented listing publishes no insiders' dealings, so the fact class is absent by design",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "insider flow cannot be read: who inside the company is buying or selling, how persistently, and at what size"
+  },
+  {
+   "fact_class": "buyback_",
+   "reason": "INVENTED FIXTURE - this invented company runs no share repurchase programme, so the fact class is absent by design",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "the issuer bid cannot be read: the company's own buying of its shares as a dated absorber of supply"
   }
  ],
  "market_state": {
@@ -205,6 +217,7 @@
   },
   "state": "closed"
  },
+ "question_line": "Is Example Manufacturing worth buying at today's price?",
  "question_verbatim": "Is Example Manufacturing worth buying at today's price? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",

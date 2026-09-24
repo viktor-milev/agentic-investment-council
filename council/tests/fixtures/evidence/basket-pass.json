@@ -154,7 +154,7 @@
    "what_it_does_figures": []
   }
  },
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -174,6 +174,7 @@
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is the AI infrastructure pair - Alpha Chips with Beta Grid - worth buying as one idea at today's prices?",
  "question_verbatim": "Is the AI infrastructure pair - Alpha Chips with Beta Grid - worth buying as one idea at today's prices? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",
@@ -567,8 +568,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186261736b65742d70",
-  "evidence_sha256": "c50efc78257a726c972ce1a570a6edc02fe9f6ea39978e3f86ad5138b47ec323",
+  "evidence_sha256": "082c3a8d818362ecc60d0633a7aa4b746ffb5920950625db3781d56620b18fff",
   "post_audit_changes": [],
-  "post_audit_sha256": "c50efc78257a726c972ce1a570a6edc02fe9f6ea39978e3f86ad5138b47ec323"
+  "post_audit_sha256": "082c3a8d818362ecc60d0633a7aa4b746ffb5920950625db3781d56620b18fff"
  }
 }

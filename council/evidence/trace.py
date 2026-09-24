@@ -164,13 +164,15 @@ def _fact_bases(capture, ticker, cfg):
     change of scale OR unit wording is left alone - the change of scale is
     ALLOWED, never required). For a member frame that is the member's own
     facts plus the unsuffixed shared ones - the same reach gate binds a
-    declared figure to (gate `block_values`). Derived facts are facts."""
+    declared figure to (gate `block_values`); on a single name every fact,
+    a double-underscore tail on its id included (P-FIb-4). Derived facts
+    are facts."""
     subject = capture.get("subject") or {}
     suffix = gate.frame_suffix(subject, ticker)
     bases = []
     for fact in capture.get("tier1") or []:
         fact_id = fact.get("id")
-        if gate._id_suffix(fact_id) not in ("", suffix):
+        if suffix and gate._id_suffix(fact_id) not in ("", suffix):
             continue
         value = _decimal(fact.get("value"))
         if value is None:

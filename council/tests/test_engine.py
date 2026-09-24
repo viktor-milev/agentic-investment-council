@@ -1472,6 +1472,29 @@ class TestChallenge(EngineTest):
         # a degraded publication still finishes and reads back clean
         self.assertEqual(quiet_readback(run.run_dir), 0)
 
+    def test_a_posture_breach_takes_the_malformed_output_path(self):
+        # BRIDGE-POSTURE: the challenger reached past its case file. The
+        # host treats it exactly as an unreadable answer - the sitting
+        # proceeds unaudited on the degraded path - and the reason the
+        # bridge gave, naming the tool, travels with it.
+        def breach(doc):
+            doc["status"] = "posture_breach"
+            doc["failure_reason"] = ("posture breach: the challenger "
+                                     "called web_search")
+            doc["tool_calls"] = ["web_search"]
+        run = self.harness(run_id="posture-breach-run")
+        run.drive(until="CHALLENGE")
+        run.write_challenge_result("challenge-failure.json", mutate=breach)
+        result = run.drive()
+        self.assertEqual(result["state"], "DONE")
+        verdict = run.verdict()
+        self.assertEqual(verdict["challenge"]["status"], "malformed_output")
+        self.assertIn("web_search", verdict["challenge"]["failure_reason"])
+        self.assertEqual(verdict["rating"], "hold")
+        self.assertIn("The outside audit did not run", verdict["warnings"][0])
+        self.assertIn("web_search", verdict["warnings"][0])
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
     def test_resolve_must_dispose_of_every_finding(self):
         run = self.harness(run_id="dispositions-run")
         partial = copy.deepcopy(fixture_answer("chair_resolve"))
@@ -4150,8 +4173,10 @@ class TestAuditChargeBRoundOne(EngineTest):
         return moved
 
     # b1-8: an ordinary way of saying he owns it walked through.
+    # [Example sentence altered for the public copy; the mechanism and
+    # the ruling are unchanged.]
     def test_more_ordinary_ways_of_saying_he_owns_it_are_caught(self):
-        for probe in ("Should I add to the Bitcoin I continue to hold?",
+        for probe in ("Should I add to what I continue to hold?",
                       "I do hold a little of this.",
                       "I have continued to hold it since 2021."):
             self.assertTrue(seal.inventory_hit(probe), probe)
@@ -7909,5 +7934,926 @@ class TestProseGate(EngineTest):
         self.assertNotIn("\n" + injected, brief)
 
 
+def flat(text):
+    """Case and whitespace folded, for phrase checks across wrapping."""
+    return " ".join(text.split()).lower()
+
+
+class TestSeatMethodsInTheBriefs(unittest.TestCase):
+    """UPGRADE-2 U5(a), session 1 (owner ruling AC5, spec U5.1-U5.2):
+    bull and bear argue from the business and its numbers, the base-rate
+    seat names its reference class, every advisor answer carries three
+    required headings kept as data, and the reviewer's checklist gains
+    items (a)-(d). No sixth seat; what a seat decides is unchanged."""
+
+    HEADINGS = ["Why the headline numbers moved",
+                "The decisive metrics, read",
+                "What would change my mind"]
+
+    def advisor(self, seat, subject=None, framed=True):
+        return briefs.build_brief(seat, "u5-run", "/tmp-x/answer.json",
+                                  casefile="the case file",
+                                  subject=subject or fixture("subject.json"),
+                                  framed=framed)
+
+    def reviewer(self, subject=None, framed=True):
+        answers = {seat: fixture_answer(seat)["markdown"]
+                   for seat in briefs.ADVISOR_SEATS}
+        mapping = dict(zip(briefs.BLIND_LETTERS, briefs.ADVISOR_SEATS))
+        return briefs.build_brief(
+            "reviewer", "u5-run", "/tmp-x/answer.json",
+            casefile="the case file", advisor_answers=answers,
+            blind_mapping=mapping, subject=subject or fixture("subject.json"),
+            framed=framed)
+
+    # Architect rulings closing P-U5a-1 and P-U5a-2 (round 2, Step 0): the
+    # method paragraphs and the reviewer's "table of the numbers that decide
+    # this question" name the business frame's own tables, so they ride only
+    # when the capture carries a business frame. An ETF, basket or theme with
+    # no frame keeps the lens sentence and the three headings.
+    UNFRAMED = (
+        {"kind": "etf", "asset_class": "equity", "name": "Fixture ETF",
+         "ticker": "FXE", "listing": "NYSE Arca", "currency": "USD"},
+        {"kind": "basket", "asset_class": "equity", "name": "A basket"},
+        {"kind": "theme", "asset_class": "equity", "name": "A theme"},
+    )
+
+    def test_no_business_frame_no_method_paragraph(self):
+        for subject in self.UNFRAMED:
+            for seat in ("advisor_bull", "advisor_bear", "advisor_base_rate"):
+                text = self.advisor(seat, subject, framed=False)
+                self.assertNotIn("Your method, in this order", text,
+                                 (subject["kind"], seat))
+                self.assertIn(flat(briefs.LENS_DEFINITIONS[seat]),
+                              flat(text), (subject["kind"], seat))
+                for heading in self.HEADINGS:
+                    self.assertIn("## %s" % heading, text)
+                self.assertIn(briefs.WRITING_RULES, text)
+
+    def test_a_single_stock_with_a_frame_gets_its_method(self):
+        text = self.advisor("advisor_bull", framed=True)
+        self.assertIn("Your method, in this order", text)
+        self.assertIn("operating cash flow divided by net income", text)
+        self.assertNotIn("Your method, in this order",
+                         self.advisor("advisor_bull", framed=False))
+
+    def test_the_reviewer_names_the_table_only_when_a_frame_exists(self):
+        table = flat("the case file's table of the numbers that decide "
+                     "this question")
+        framed = flat(self.reviewer(framed=True))
+        self.assertIn(table, framed)
+        for subject in self.UNFRAMED + (self.BITCOIN,):
+            text = flat(self.reviewer(subject, framed=False))
+            self.assertNotIn(table, text, subject["kind"])
+            self.assertIn(flat("which responses used the decisive metrics "
+                               "and which ignored them - the evidence that "
+                               "decides this question;"), text,
+                          subject["kind"])
+            self.assertIn(briefs.WRITING_RULES, self.reviewer(
+                subject, framed=False))
+
+    def test_a_framed_method_says_so_where_a_table_is_declared_absent(self):
+        # Architect ruling closing P-U5a-4: a framed capture may still declare
+        # its guidance or peer table absent (a basket or theme member, a
+        # recent listing); each step that reads one tells the seat what to do.
+        clause = flat("where the case file declares that table absent, say "
+                      "so and weigh the gap")
+        for seat in ("advisor_bull", "advisor_bear", "advisor_base_rate"):
+            self.assertEqual(flat(self.advisor(seat)).count(clause), 1, seat)
+            self.assertNotIn(clause, flat(self.advisor(seat, framed=False)))
+
+    def test_the_data_file_holds_the_three_headings_exactly(self):
+        path = os.path.join(ROOT, "council", "schemas", "seat_answers.json")
+        with open(path, "rb") as handle:
+            doc = json.loads(handle.read().decode("utf-8"))
+        self.assertEqual(doc["required_headings"], self.HEADINGS)
+        self.assertEqual(doc["title"], "Seat answer contracts 1.2.0")
+        # The briefs read the headings from the data file, never a copy.
+        self.assertEqual(briefs.required_headings(), self.HEADINGS)
+        # A list, not a member: the host's schema loader skips it.
+        self.assertNotIn("required_headings", host._seat_schemas())
+
+    def test_no_sixth_seat(self):
+        self.assertEqual(len(briefs.ADVISOR_SEATS), 5)
+
+    def test_every_advisor_brief_requires_the_three_headings(self):
+        for seat in briefs.ADVISOR_SEATS:
+            text = self.advisor(seat)
+            for heading in self.HEADINGS:
+                self.assertIn("## %s" % heading, text, (seat, heading))
+            self.assertIn("carries these three headings", text, seat)
+
+    BITCOIN = {"kind": "bitcoin", "asset_class": "crypto",
+               "name": "Bitcoin", "ticker": None, "listing": None,
+               "currency": "USD"}
+
+    def test_an_anchorless_subject_keeps_its_lens_and_gains_headings(self):
+        # A subject with no earnings is rated from a scenario ladder: the
+        # earnings-and-balance-sheet methods do not apply to it, so its
+        # seats keep the one-sentence lens. The headings apply to every
+        # advisor answer (spec U5.1).
+        text = briefs.build_brief(
+            "advisor_bull", "u5-run", "/tmp-x/answer.json",
+            casefile="the case file", subject=self.BITCOIN)
+        for heading in self.HEADINGS:
+            self.assertIn("## %s" % heading, text)
+        self.assertIn("the case for committing capital to this name at "
+                      "these terms.", text)
+        self.assertNotIn("operating cash flow divided by net income", text)
+
+    def test_the_headings_are_not_in_the_reviewer_or_chair_brief(self):
+        text = self.reviewer()
+        self.assertNotIn("carries these three headings", text)
+
+    BULL = ("earnings power",
+            "margin trajectory",
+            "operating cash flow divided by net income",
+            "reinvestment intensity",
+            "the moat",
+            "why that protection holds",
+            "What management guided, beside what it delivered",
+            "in one sentence, why the headline numbers moved")
+    BEAR = ("the cost base",
+            "operating leverage",
+            "competitive erosion",
+            "guidance credibility",
+            "balance-sheet resilience",
+            "net debt against earnings",
+            "how many months its cash lasts",
+            "receivables and inventory",
+            "one-off items",
+            "share count",
+            "why the headline numbers moved")
+    BASE = ("name the reference class explicitly",
+            "peer set",
+            "model_transition",
+            "turnaround",
+            "attempted the same change",
+            "the market is usually right",
+            "the quantities the story implies")
+
+    def test_each_method_paragraph_is_in_its_own_brief_only(self):
+        methods = {"advisor_bull": self.BULL, "advisor_bear": self.BEAR,
+                   "advisor_base_rate": self.BASE}
+        # Compared with case and line breaks folded: the phrase, not the
+        # wrapping, is the obligation.
+        texts = {seat: flat(self.advisor(seat))
+                 for seat in briefs.ADVISOR_SEATS}
+        for seat, phrases in methods.items():
+            for phrase in phrases:
+                self.assertIn(flat(phrase), texts[seat], (seat, phrase))
+        # Each method's signature phrase rides in its own brief alone.
+        own = {"advisor_bull": "operating cash flow divided by net income",
+               "advisor_bear": "balance-sheet resilience",
+               "advisor_base_rate": "name the reference class explicitly"}
+        for seat, phrase in own.items():
+            for other in briefs.ADVISOR_SEATS:
+                if other != seat:
+                    self.assertNotIn(phrase, texts[other], (seat, other))
+
+    def test_bull_and_bear_argue_from_the_business_not_a_stance(self):
+        for seat in ("advisor_bull", "advisor_bear"):
+            self.assertIn("argued from the business and its numbers, "
+                          "never from a stance", flat(self.advisor(seat)))
+
+    def test_pin_market_structure_and_risk_lenses_are_unchanged(self):
+        self.assertEqual(
+            briefs.LENS_DEFINITIONS["advisor_market_structure"],
+            "not whether the business is good, but who is setting the "
+            "price: float, flows, borrow, options, index and convertible "
+            "mechanics, and what they imply.")
+        self.assertEqual(
+            briefs.LENS_DEFINITIONS["advisor_risk"],
+            "the asset's own risk, never anyone's book and never a size: "
+            "the shape and depth of its drawdowns, the volatility regime "
+            "it lives in, how it gaps on news, and how deep its trading "
+            "liquidity runs.")
+
+    def test_pin_writing_rules_and_manner_block_ride_verbatim(self):
+        for seat in briefs.ADVISOR_SEATS:
+            text = self.advisor(seat)
+            self.assertIn(briefs.WRITING_RULES, text, seat)
+            self.assertIn(briefs.SEAL_BLOCK, text, seat)
+        self.assertIn(briefs.WRITING_RULES, self.reviewer())
+
+    def test_the_reviewer_checklist_gains_items_a_to_d(self):
+        text = flat(self.reviewer())
+        for phrase in (
+                "which responses used the decisive metrics and which "
+                "ignored them",
+                "whether any response explained why the headline numbers "
+                "moved, and whether those explanations agree",
+                "whether the question's horizon was answered",
+                "every numbered writing rule above and the Manner rules, "
+                "by term"):
+            self.assertIn(flat(phrase), text, phrase)
+        # The seal check is unchanged: still told never to guess a seat.
+        self.assertIn(flat("You must not guess, speculate about, or state "
+                           "which seat wrote which response."), text)
+
+
+
+class TestAdvisorHeadingCheck(EngineTest):
+    """UPGRADE-2 U5(a), session 2 (owner ruling AC5, spec U5.1): the host
+    checks each advisor answer for the three required headings at ingest.
+    A missing heading is sent back ONCE on the ordinary request path; the
+    whole answer returns and replaces the first, the first stays in the run
+    record; after the one re-ask the answer stands as given - never a
+    refusal, never a freeze."""
+
+    HEADINGS = briefs.required_headings()
+
+    def answer(self, drop=()):
+        body = "\n\n".join("## %s\n\nThe record reads plainly on this." % h
+                           for h in self.HEADINGS if h not in drop)
+        return {"markdown": body or "No headings at all here."}
+
+    def checks(self, run, seat):
+        return [e for e in run.events() if e["event"] == "headings_checked"
+                and e["seat"] == seat]
+
+    def heading_reasks(self, run, seat):
+        return [e for e in run.events() if e["event"] == "request_written"
+                and e["seat"] == seat and e.get("retry_of")]
+
+    def advance_until_pending(self, run, seat, count):
+        """Step and answer until SEAT has made COUNT requests and the last
+        is pending (the harness answers everything else)."""
+        for _ in range(40):
+            host.step(run.run_dir)
+            made = [e for e in run.events() if e["event"] == "request_written"
+                    and e["seat"] == seat]
+            pending = {i["seat"] for i in run.pending()}
+            if len(made) >= count and seat in pending:
+                return made[-1]["number"]
+            if run.pending():
+                run.answer_pending()
+        self.fail("%s never reached request %d" % (seat, count))
+
+    def test_the_match_is_exact_after_trim_and_casefold(self):
+        h = self.HEADINGS
+        good = ("## %s\n\ntext\n\n  **%s**  \n\n###   %s   \n"
+                % (h[0], h[1].upper(), h[2]))
+        self.assertEqual(host.missing_headings(good), [])
+        # A mention mid-sentence, a typo, or a colon inside the bold span is
+        # not the heading: no fuzzy matching.
+        bad = ("I explain %s here.\n\n## %s!\n\n**%s:**\n"
+               % (h[0], h[1], h[2]))
+        self.assertEqual(host.missing_headings(bad), h)
+
+    def test_a_heading_inside_code_is_not_a_heading(self):
+        # Audit UPGRADE2-U5a r1-1: headings written only inside a fenced or
+        # indented code block render as code, so they are missing; a
+        # genuine heading after a closed fence still counts.
+        h = self.HEADINGS
+        lines = "\n".join("## %s" % x for x in h)
+        for opening, closing in (("```", "```"), ("```markdown", "```"),
+                                 ("~~~", "~~~"), ("````", "````")):
+            self.assertEqual(host.missing_headings(
+                "%s\n%s\n%s\n" % (opening, lines, closing)), h, opening)
+        self.assertEqual(host.missing_headings(
+            "\n".join("    ## %s" % x for x in h)), h)
+        self.assertEqual(host.missing_headings(
+            "```\n## %s\n```\n%s\n" % (h[0], lines)), [])
+        # A shorter fence does not close a longer one.
+        self.assertEqual(host.missing_headings(
+            "````\n```\n%s\n````\n" % lines), h)
+
+    def test_the_host_briefs_the_method_only_on_a_framed_capture(self):
+        # Architect rulings closing P-U5a-1 and P-U5a-2: the host reads the
+        # frame from the pack it holds and hands it to the advisors and the
+        # reviewer; without it the fixture's framed stock lost its method.
+        def seat_briefs(run):
+            texts = run.briefs_text()
+            return (next(t for n, t in texts.items()
+                         if n.endswith("-brief-advisor_bull.md")),
+                    flat(next(t for n, t in texts.items()
+                              if n.endswith("-brief-reviewer.md"))))
+        table = flat("the case file's table of the numbers that decide "
+                     "this question")
+        run = self.harness(run_id="framed-method")
+        run.drive()
+        bull, reviewer = seat_briefs(run)
+        self.assertIn("Your method, in this order", bull)
+        self.assertIn(table, reviewer)
+        # (The host refuses a single stock with no frame before any
+        # seat, so the unframed half is pinned at the brief level above.)
+
+    def test_answers_carrying_the_headings_pass_first_time(self):
+        run = self.harness(run_id="headings-present")
+        self.assertEqual(run.drive()["state"], "DONE")
+        for seat in briefs.ADVISOR_SEATS:
+            checks = self.checks(run, seat)
+            self.assertEqual(len(checks), 1, seat)
+            self.assertEqual(checks[0]["outcome"], "present")
+            self.assertEqual(checks[0]["missing"], [])
+            self.assertEqual(self.heading_reasks(run, seat), [])
+
+    def test_a_missing_heading_is_asked_for_once_and_the_rewrite_stands(self):
+        run = self.harness(run_id="headings-reask")
+        run.queue("advisor_bull", self.answer(drop=self.HEADINGS[2:]))
+        run.queue("advisor_bull", self.answer())
+        self.assertEqual(run.drive()["state"], "DONE")
+        checks = self.checks(run, "advisor_bull")
+        self.assertEqual([c["outcome"] for c in checks],
+                         ["reasked", "present"])
+        self.assertEqual(checks[0]["missing"], [self.HEADINGS[2]])
+        reasks = self.heading_reasks(run, "advisor_bull")
+        self.assertEqual(len(reasks), 1)
+        self.assertEqual(reasks[0]["retry_of"], checks[0]["number"])
+        # The rewrite is the accepted answer; the first stays on disk.
+        accepted = [e for e in run.events() if e["event"] == "answer_accepted"
+                    and e["seat"] == "advisor_bull"]
+        self.assertEqual([e["number"] for e in accepted],
+                         [reasks[0]["number"]])
+        self.assertTrue(os.path.exists(os.path.join(
+            run.run_dir, "rpc", "%s-answer-advisor_bull.json"
+            % checks[0]["number"])))
+        # The re-ask names the missing heading and forbids moving a figure.
+        brief_text = flat(run.briefs_text()[
+            "%s-brief-advisor_bull.md" % reasks[0]["number"]])
+        self.assertIn(flat(self.HEADINGS[2]), brief_text)
+        self.assertIn(flat("add the missing heading(s); change no number "
+                           "and no conclusion"), brief_text)
+        # A heading re-ask is not a refusal: no rejection is recorded.
+        self.assertEqual([e for e in run.events()
+                          if e["event"] == "answer_rejected"
+                          and e["seat"] == "advisor_bull"], [])
+
+    def test_still_missing_after_the_reask_is_accepted_and_recorded(self):
+        run = self.harness(run_id="headings-still-missing")
+        run.queue("advisor_bear", self.answer(drop=self.HEADINGS))
+        run.queue("advisor_bear", self.answer(drop=self.HEADINGS[:1]))
+        self.assertEqual(run.drive()["state"], "DONE")
+        checks = self.checks(run, "advisor_bear")
+        self.assertEqual([c["outcome"] for c in checks],
+                         ["reasked", "accepted_missing"])
+        self.assertEqual(checks[1]["missing"], [self.HEADINGS[0]])
+        self.assertEqual(len(self.heading_reasks(run, "advisor_bear")), 1)
+
+    def test_a_reanswer_that_moves_a_figure_stands_and_is_flagged(self):
+        # Architect ruling closing P-U5a-3: the host reuses the chairman's
+        # figure tripwire to compare the re-answer with the first and records
+        # the result on the re-answer's check - a flag, never a refusal and
+        # never a second re-ask; the whole re-answer still replaces the first.
+        def answer(figure, drop=()):
+            body = "\n\n".join("## %s\n\nThe record reads plainly." % h
+                               for h in self.HEADINGS if h not in drop)
+            return {"markdown": "Net cash is %s.\n\n%s" % (figure, body)}
+        run = self.harness(run_id="headings-figure-moved")
+        run.queue("advisor_bull", answer("$10M", self.HEADINGS[2:]))
+        run.queue("advisor_bull", answer("$20M"))
+        self.assertEqual(run.drive()["state"], "DONE")
+        checks = self.checks(run, "advisor_bull")
+        self.assertEqual([c["outcome"] for c in checks],
+                         ["reasked", "present"])
+        self.assertIs(checks[1]["figures_changed"], True)
+        self.assertEqual(checks[1]["figures_differing"],
+                         {"first": ["$10m"], "rewrite": ["$20m"]})
+        self.assertEqual(len(self.heading_reasks(run, "advisor_bull")), 1)
+        self.assertEqual([e for e in run.events()
+                          if e["event"] == "answer_rejected"
+                          and e["seat"] == "advisor_bull"], [])
+        # Identical figures carry the flag false; a first-time pass carries
+        # no flag at all (nothing to compare).
+        run = self.harness(run_id="headings-figure-kept")
+        run.queue("advisor_bull", answer("$10M", self.HEADINGS[2:]))
+        run.queue("advisor_bull", answer("$10M"))
+        self.assertEqual(run.drive()["state"], "DONE")
+        checks = self.checks(run, "advisor_bull")
+        self.assertIs(checks[1]["figures_changed"], False)
+        self.assertEqual(checks[1]["figures_differing"],
+                         {"first": [], "rewrite": []})
+        self.assertNotIn("figures_changed", self.checks(run, "advisor_bear")[0])
+
+    def test_a_heading_reask_does_not_use_up_the_ordinary_retry(self):
+        # The re-asked answer arrives malformed: the ordinary one retry still
+        # applies, so the seat is re-asked again rather than the run failing.
+        run = self.harness(run_id="headings-then-malformed")
+        run.queue("advisor_risk", self.answer(drop=self.HEADINGS[1:2]))
+        run.queue("advisor_risk", b'{"markdown": 12345}')
+        run.queue("advisor_risk", self.answer())
+        self.assertEqual(run.drive()["state"], "DONE")
+        self.assertEqual([c["outcome"] for c in
+                          self.checks(run, "advisor_risk")],
+                         ["reasked", "present"])
+
+    def test_the_first_answers_tokens_count_once_under_the_seat(self):
+        run = self.harness(run_id="headings-usage")
+        run.usage_seats = ("advisor_bull",)
+        run.queue("advisor_bull", self.answer(drop=self.HEADINGS[:1]))
+        self.advance_until_pending(run, "advisor_bull", 1)
+        run.answer_pending()
+        # Ingest twice before anything else moves: a crash and resume.
+        host._ingest_answers(host._Ctx(run.run_dir))
+        host._ingest_answers(host._Ctx(run.run_dir))
+        self.assertEqual(len(self.checks(run, "advisor_bull")), 1)
+        self.assertEqual(len(self.heading_reasks(run, "advisor_bull")), 1)
+        self.assertEqual(run.drive()["state"], "DONE")
+        usage = [e for e in run.events() if e["event"] == "usage_recorded"
+                 and e["seat"] == "advisor_bull"]
+        self.assertEqual(len(usage), 2)
+        self.assertEqual(len({e["number"] for e in usage}), 2)
+        self.assertEqual(run.verdict()["provenance"]["seat_cost"][
+            "per_seat"]["advisor_bull"]["tokens"], 2000)
+
+    def test_a_crash_between_the_marker_and_the_reask_reissues_it(self):
+        run = self.harness(run_id="headings-crash")
+        run.queue("advisor_market_structure",
+                  self.answer(drop=self.HEADINGS[1:]))
+        second = self.advance_until_pending(run, "advisor_market_structure", 2)
+        # Simulate the crash right after the marker: the record ends before
+        # the re-ask's request, and the request's files are gone.
+        path = runrecord.record_path(run.run_dir)
+        events = run.events()
+        events = events[:next(i for i, e in enumerate(events)
+                              if e["event"] == "request_written"
+                              and e.get("number") == second)]
+        self.assertEqual(events[-1]["event"], "headings_checked")
+        with open(path, "w", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(event) + "\n")
+        rpc = os.path.join(run.run_dir, "rpc")
+        for name in os.listdir(rpc):
+            if name.startswith(second + "-"):
+                os.remove(os.path.join(rpc, name))
+        run.queue("advisor_market_structure", self.answer())
+        self.assertEqual(run.drive()["state"], "DONE")
+        reasks = self.heading_reasks(run, "advisor_market_structure")
+        self.assertEqual(len(reasks), 1)
+        brief_text = flat(run.briefs_text()[
+            "%s-brief-advisor_market_structure.md" % reasks[0]["number"]])
+        for heading in self.HEADINGS[1:]:
+            self.assertIn(flat(heading), brief_text)
+        self.assertEqual(
+            [c["outcome"] for c in self.checks(run,
+                                               "advisor_market_structure")],
+            ["reasked", "present"])
+
+
+class TestTapeRemits(EngineTest):
+    """UPGRADE-2 U4(b) (owner ruling AC4, spec U4.4): where the pack carries
+    a daily price series, the market-structure seat reads the chart the
+    freeze computed - the trend, the place in the range, relative strength,
+    the volume, the setup and its invalidating price, and on a single stock
+    insiders' dealings beside the company's own buying - and the risk seat
+    reads the drawdown, the volatility regime and the largest fall from
+    the same figures. The reviewer asks which responses used them. Every
+    other brief is unchanged, and so is the lens sentence each method
+    opens with."""
+
+    HEADINGS = TestSeatMethodsInTheBriefs.HEADINGS
+    SINGLE = fixture("subject.json")
+    OTHERS = TestSeatMethodsInTheBriefs.UNFRAMED + (
+        TestSeatMethodsInTheBriefs.BITCOIN,)
+
+    OPENING = " Read the price first from the tape"
+    MARKET_STRUCTURE = (
+        "the case file's figures computed at the freeze from the daily "
+        "closes",
+        "1. The trend.",
+        "its 50-, 100- and 200-day averages, both the distance and each "
+        "average's own price",
+        "the slope of the 200-day average over 60 days",
+        "Name the primary trend in one sentence.",
+        "2. The place in the range",
+        "its fall from the 52-week closing high",
+        "3. Relative strength",
+        "the price return over 21, 63, 126 and 252 trading days",
+        "where the case file declares the benchmark figures absent, say so",
+        "4. The volume signature",
+        "5. The setup",
+        "key support and resistance as prices with their dates",
+        "base, breakdown, flag, double bottom",
+        "the one price that would invalidate the setup")
+    INSIDER = (
+        "6. Insider flow and the issuer bid",
+        "direction, seniority and persistence of insider dealing over "
+        "twelve months, cluster or isolated",
+        "its size against the holder's stake and the day's volume",
+        "the buyback as a separate, dated absorber of supply",
+        "Where the case file declares either absent, say so.")
+    RISK = (
+        "Read that risk first from the tape",
+        "1. The drawdown shape",
+        "how deep the fall runs and how long ago the high was",
+        "2. The volatility regime",
+        "realized volatility over 21, 63 and 252 trading days, annualized",
+        "calmer or wilder than the year's",
+        "3. The gap on news",
+        "the largest one-day fall in 52 weeks and its date",
+        "where it says nothing, say so")
+    CITE = ("Cite every tape figure by its plain-English name and its "
+            "figure as the case file gives them, never by its id.")
+    REVIEWER_LINE = (
+        "- which responses used the tape - the figures the case file "
+        "computes from the daily closes, cited by name and figure - and "
+        "which ignored it; and whether any response explained the price's "
+        "headline move, and whether those explanations agree;")
+
+    def advisor(self, seat, subject=None, framed=True, taped=True):
+        return briefs.build_brief(seat, "u4b-run", "/tmp-x/answer.json",
+                                  casefile="the case file",
+                                  subject=subject or self.SINGLE,
+                                  framed=framed, taped=taped)
+
+    def reviewer(self, taped, framed=True, subject=None):
+        answers = {seat: fixture_answer(seat)["markdown"]
+                   for seat in briefs.ADVISOR_SEATS}
+        mapping = dict(zip(briefs.BLIND_LETTERS, briefs.ADVISOR_SEATS))
+        return briefs.build_brief(
+            "reviewer", "u4b-run", "/tmp-x/answer.json",
+            casefile="the case file", advisor_answers=answers,
+            blind_mapping=mapping, subject=subject or self.SINGLE,
+            framed=framed, taped=taped)
+
+    def test_an_untaped_pack_keeps_both_lens_sentences_and_no_method(self):
+        for subject in (self.SINGLE,) + self.OTHERS:
+            for seat in ("advisor_market_structure", "advisor_risk"):
+                if (subject is self.SINGLE
+                        and seat == "advisor_market_structure"):
+                    continue  # the insider examination, test above
+                self.assertEqual(briefs.advisor_remit(seat, subject),
+                                 briefs.LENS_DEFINITIONS[seat])
+                text = flat(self.advisor(seat, subject, taped=False))
+                self.assertIn(flat(briefs.LENS_DEFINITIONS[seat]), text)
+                self.assertNotIn("your method, in this order", text,
+                                 (subject["kind"], seat))
+                self.assertNotIn("from the tape", text)
+
+    def test_an_untaped_single_stock_still_gets_the_insider_examination(self):
+        # Audit round 1, finding r1-3: owner ruling AC4 gives the
+        # market-structure seat insider flow and the issuer bid on every
+        # single stock, whose floors ask for those facts whether or not
+        # the pack carries a price series; only the tape steps need one.
+        for framed in (True, False):
+            remit = briefs.advisor_remit("advisor_market_structure",
+                                         self.SINGLE, framed, False)
+            self.assertTrue(remit.startswith(
+                briefs.LENS_DEFINITIONS["advisor_market_structure"]))
+            text = flat(self.advisor("advisor_market_structure",
+                                     framed=framed, taped=False))
+            for phrase in self.INSIDER[1:]:
+                self.assertIn(flat(phrase), text, phrase)
+            self.assertIn("insider flow and the issuer bid", text.lower())
+            self.assertNotIn(flat(self.INSIDER[0]), text)
+            self.assertNotIn("from the tape", text)
+            self.assertNotIn(flat(self.CITE), text)
+            self.assertEqual(
+                briefs.advisor_remit("advisor_risk", self.SINGLE, framed,
+                                     False),
+                briefs.LENS_DEFINITIONS["advisor_risk"])
+
+    def test_a_taped_pack_gives_market_structure_its_tape_method(self):
+        for framed in (True, False):
+            remit = briefs.advisor_remit("advisor_market_structure",
+                                         self.SINGLE, framed, True)
+            self.assertTrue(remit.startswith(
+                briefs.LENS_DEFINITIONS["advisor_market_structure"]
+                + self.OPENING))
+            self.assertTrue(remit.endswith(self.CITE))
+            text = flat(self.advisor("advisor_market_structure",
+                                     framed=framed))
+            for phrase in self.MARKET_STRUCTURE + self.INSIDER:
+                self.assertIn(flat(phrase), text, phrase)
+            self.assertEqual(text.count(flat(self.CITE)), 1)
+            self.assertNotIn(flat(self.RISK[0]), text)
+
+    def test_a_taped_pack_gives_risk_its_tape_method(self):
+        for subject in (self.SINGLE,) + self.OTHERS:
+            remit = briefs.advisor_remit("advisor_risk", subject, True, True)
+            self.assertTrue(remit.startswith(
+                briefs.LENS_DEFINITIONS["advisor_risk"] + " "
+                + self.RISK[0]))
+            self.assertTrue(remit.endswith(self.CITE))
+            text = flat(self.advisor("advisor_risk", subject))
+            for phrase in self.RISK:
+                self.assertIn(flat(phrase), text, (subject["kind"], phrase))
+            for phrase in self.MARKET_STRUCTURE[1:] + self.INSIDER:
+                self.assertNotIn(flat(phrase), text, phrase)
+
+    def test_the_insider_step_rides_only_on_a_single_stock(self):
+        for subject in self.OTHERS:
+            remit = briefs.advisor_remit("advisor_market_structure",
+                                         subject, False, True)
+            text = flat(self.advisor("advisor_market_structure", subject,
+                                     framed=False))
+            for phrase in self.INSIDER:
+                self.assertNotIn(flat(phrase), text, (subject["kind"],
+                                                      phrase))
+            for phrase in self.MARKET_STRUCTURE:
+                self.assertIn(flat(phrase), text, (subject["kind"], phrase))
+            self.assertTrue(remit.endswith(self.CITE))
+        single = briefs.advisor_remit("advisor_market_structure",
+                                      self.SINGLE, True, True)
+        self.assertIn("  6. Insider flow and the issuer bid", single)
+
+    def test_bull_bear_and_base_rate_briefs_are_identical_taped_or_not(self):
+        for subject in (self.SINGLE,) + self.OTHERS:
+            for framed in (True, False):
+                for seat in ("advisor_bull", "advisor_bear",
+                             "advisor_base_rate"):
+                    self.assertEqual(
+                        self.advisor(seat, subject, framed, taped=True),
+                        self.advisor(seat, subject, framed, taped=False),
+                        (subject["kind"], framed, seat))
+
+    def test_the_reviewer_asks_about_the_tape_only_when_taped(self):
+        for framed in (True, False):
+            untaped = self.reviewer(False, framed)
+            taped = self.reviewer(True, framed)
+            self.assertNotIn(flat(self.REVIEWER_LINE), flat(untaped))
+            self.assertNotIn("used the tape", untaped)
+            flat_taped = flat(taped)
+            self.assertEqual(flat_taped.count(flat(self.REVIEWER_LINE)), 1)
+            # After the headline-numbers item, before the horizon item.
+            at = flat_taped.index(flat(self.REVIEWER_LINE))
+            self.assertLess(flat_taped.index(flat(
+                "whether any response explained why the headline numbers "
+                "moved")), at)
+            self.assertGreater(flat_taped.index(flat(
+                "whether the question's horizon was answered")), at)
+            # Nothing else in the reviewer's brief changes.
+            self.assertEqual(flat_taped.replace(
+                flat(self.REVIEWER_LINE) + " ", ""), flat(untaped))
+            # Blind: responses, never seats.
+            self.assertNotIn("seat", self.REVIEWER_LINE)
+
+    def test_the_three_headings_ride_in_every_taped_advisor_brief(self):
+        for subject in (self.SINGLE,) + self.OTHERS:
+            for seat in briefs.ADVISOR_SEATS:
+                text = self.advisor(seat, subject)
+                for heading in self.HEADINGS:
+                    self.assertIn("## %s" % heading, text,
+                                  (subject["kind"], seat, heading))
+
+    def taped_pack_path(self):
+        """The engine's own pack with a daily series, frozen again so the
+        tape joins it (every figure INVENTED)."""
+        capture = copy.deepcopy(fixture("pack.json")["capture"])
+        capture["price_series"] = test_evidence.invented_series("FIXT")
+        taped = freeze.build_pack(capture, test_evidence.FLOORS)
+        path = os.path.join(self.base, "taped-pack.json")
+        write_pack(path, taped)
+        return path
+
+    def test_the_host_briefs_a_taped_pack_with_the_tape_methods(self):
+        run = self.harness(run_id="taped-run", pack=self.taped_pack_path())
+        self.assertEqual(run.drive()["state"], "DONE")
+        texts = run.briefs_text()
+
+        def brief_of(seat):
+            names = [name for name in texts
+                     if name.endswith("-brief-%s.md" % seat)]
+            self.assertEqual(len(names), 1, seat)
+            return flat(texts[names[0]])
+
+        market = brief_of("advisor_market_structure")
+        for phrase in self.MARKET_STRUCTURE + self.INSIDER:
+            self.assertIn(flat(phrase), market, phrase)
+        risk = brief_of("advisor_risk")
+        for phrase in self.RISK:
+            self.assertIn(flat(phrase), risk, phrase)
+        self.assertIn(flat(self.REVIEWER_LINE), brief_of("reviewer"))
+        # The case file every seat reads names each tape figure.
+        self.assertIn(flat("(The 200-day average price) = "), market)
+        # The engine's own pack has no series: no method, no line.
+        plain = self.harness(run_id="untaped-run")
+        self.assertEqual(plain.drive()["state"], "DONE")
+        for name, text in plain.briefs_text().items():
+            self.assertNotIn("from the tape", text, name)
+            self.assertNotIn("used the tape", text, name)
+
+    def test_the_case_file_names_each_tape_fact_by_its_label(self):
+        pack = freeze.build_pack(test_evidence.tape_capture(),
+                                 test_evidence.FLOORS)
+        capture = pack["capture"]
+        lines = briefs._record_lines(capture, pack["freshness"],
+                                     pack["generated_notes"])
+        taped = 0
+        for fact in capture["tier1"]:
+            plain = "- `%s` = %s %s (as of %s)" % (
+                fact["id"], fact["value"], fact["unit"], fact["as_of"])
+            if (fact.get("derived") or {}).get("operation") == "series_stat":
+                taped += 1
+                self.assertIn("- `%s` (%s) = %s %s (as of %s)" % (
+                    fact["id"], fact["label"], fact["value"], fact["unit"],
+                    fact["as_of"]), lines)
+                self.assertNotIn(plain, lines)
+            else:
+                # Every other fact's line is exactly as it was.
+                self.assertIn(plain, lines, fact["id"])
+        self.assertEqual(taped, 25)
+
+    def test_the_auditor_brief_is_unchanged_by_the_tape_labels(self):
+        # The outside auditor reads the capture BEFORE the freeze adds the
+        # tape (RUNBOOK 1a), so no fact it is shown is a tape figure and
+        # every fact line it reads keeps the form it had before this unit.
+        capture = test_evidence.tape_capture()
+        text = briefs.build_evidence_brief(capture, "n" * 32, "0" * 64)
+        self.assertNotIn("tape_", text)
+        for fact in capture["tier1"]:
+            self.assertIn("- `%s` = %s %s (as of %s)" % (
+                fact["id"], fact["value"], fact["unit"], fact["as_of"]),
+                text, fact["id"])
+        for label in test_evidence.tape.LABELS.values():
+            self.assertNotIn("(%s)" % label, text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
+
+
+# ---------------------------------------------------------------------
+# UPGRADE-2 FI-ARCHETYPE sub-charge (c), the close-out (owner rulings AC28
+# and AC30; register item P-FIa-4, the case-file half): what the five
+# seats' case file and the outside evidence auditor's brief show of a
+# financial institution. Every test FAILS against the pre-change case
+# file renderer; the negative control is marked.
+# ---------------------------------------------------------------------
+
+FI_CASE_BANK = "bank-pass.json"
+FI_CASE_HOLDING = "holding-pass.json"
+FI_CASE_NON_FI = ("exmp-pass.json",)
+FI_CASE_CAPITAL = ("cet1_ratio_standardized_q",
+                   "cet1_requirement_standardized_q")
+FI_CASE_UNVOUCHED = "not_a_fact_of_this_pack_q"
+FI_CASE_LINES = ("Capital beside its requirement", brief.FI_STRESS_HEADING,
+                 "The risk-cost line", brief.FI_NOT_RATED_SENTENCE,
+                 "The kind of firm", "The capital-spending floor",
+                 brief.FI_FREE_CASH_WORDS, "The net asset value, part by "
+                 "part")
+
+
+def fi_case_texts(capture):
+    """The seats' case file and the outside auditor's brief of a capture."""
+    capture = copy.deepcopy(capture)
+    pack = freeze.build_pack(capture)
+    case = briefs.render_casefile(pack, {"result": "pass"},
+                                  capture["question_verbatim"],
+                                  capture["subject"])
+    return case, briefs.build_evidence_brief(capture, "n" * 32, "0" * 64)
+
+
+def fi_case_line(text, *needles):
+    """The one line of `text` that carries every needle."""
+    found = [line for line in text.splitlines()
+             if all(needle in line for needle in needles)]
+    if not found:
+        raise AssertionError("no line carries %r" % (needles,))
+    return found[0]
+
+
+def fi_outside_the_fence(text, marker):
+    """Every line carrying `marker` that stands outside a quote fence."""
+    inside, outside = False, []
+    for line in text.splitlines():
+        if line in (briefs.QUOTE_FENCE_OPEN, briefs.QUOTE_FENCE_CLOSE):
+            inside = line == briefs.QUOTE_FENCE_OPEN
+            continue
+        if marker in line and not (inside and line.startswith("| ")):
+            outside.append(line)
+    return outside
+
+
+def fi_delta(capture, fact_id):
+    fact = [item for item in capture["tier1"] if item["id"] == fact_id][0]
+    correction = {"fact_id": fact_id, "old": fact["value"],
+                  "new": fact["value"], "source": "INVENTED FIXTURE",
+                  "reason": None, "by": "t", "at": "2026-09-24T00:00:00Z",
+                  "classification": "rebuilding", "reaudited": False}
+    return briefs.build_evidence_delta_brief(
+        capture, "nonce", "sha", [correction], {}, FLOORS)
+
+
+def fi_floor_entries(text):
+    """The ruled floors the auditor brief quotes, parsed back."""
+    block = text.split("```json\n")[-1].split("\n```")[0]
+    return json.loads(block)
+
+
+class TestFIInTheCaseFile(unittest.TestCase):
+
+    def test_the_case_file_carries_the_fi_frame(self):
+        capture = evidence_fixture(FI_CASE_BANK)
+        measure = [row for row in capture["sufficiency"]["requirements"]
+                   if row["id"] == "rating_vs_history_or_peers"][0]["measure"]
+        for text in fi_case_texts(capture):
+            fi_case_line(text, "financial institution - a bank",
+                         brief.MEASURE_WORDS[measure])
+            fi_case_line(text, "`%s` = " % FI_CASE_CAPITAL[0],
+                         "`%s` = " % FI_CASE_CAPITAL[1])
+            self.assertIn(brief.FI_STRESS_HEADING, text)
+            fi_case_line(text, "`stress_capital_buffer` = ")
+            fi_case_line(text, brief.FI_RISK_KIND_WORDS["credit"],
+                         "`provision_for_credit_losses_q` = ")
+            fi_case_line(text, "Lending and deposits",
+                         brief.FI_NATURE_WORDS["spread"])
+            fi_case_line(text, "Payments and advisory fees",
+                         brief.FI_NATURE_WORDS["fee"])
+            fi_case_line(text, test_evidence.FI_REVISION_DATE,
+                         test_evidence.FI_REVISION_ID)
+            fi_case_line(text, brief.FI_NEVER_REVISED)
+            self.assertIn("Archetype: **financial_institution**", text)
+
+    def test_the_auditor_brief_shows_the_fi_floors_and_the_lift(self):
+        capture = evidence_fixture(FI_CASE_BANK)
+        _, auditor = fi_case_texts(capture)
+        block = FLOORS["archetype_floors"]["financial_institution"]
+        ids = {entry.get("id") for entry in fi_floor_entries(auditor)}
+        for entry in block["all_subtypes"] + block["bank"]:
+            if entry.get("id"):
+                self.assertIn(entry["id"], ids)
+        lifted = block["lifts"]["single_stock_floor_ids_lifted"]
+        for fact_id in lifted:
+            self.assertNotIn(fact_id, ids)
+        line = fi_case_line(auditor, "The capital-spending floor")
+        for fact_id in lifted:
+            self.assertIn("`%s`" % fact_id, line)
+        self.assertIn("AC30(1)", line)
+
+    def test_the_free_cash_test_is_named_as_distributable_capital_for_a_bank(
+            self):
+        for text in fi_case_texts(evidence_fixture(FI_CASE_BANK)):
+            fi_case_line(text, "`free_cash_flow`", brief.FI_FREE_CASH_WORDS)
+
+    def test_an_unvouched_fi_fact_id_travels_fenced(self):
+        capture = evidence_fixture(FI_CASE_BANK)
+        frame = capture["business_frame"]["EXBK"]
+        frame["fi_risk_cost"]["facts"].append(FI_CASE_UNVOUCHED)
+        frame["fi_capital"]["target_fact"] = FI_CASE_UNVOUCHED
+        for text in fi_case_texts(capture):
+            self.assertEqual(fi_outside_the_fence(text, FI_CASE_UNVOUCHED),
+                             [])
+            self.assertIn(FI_CASE_UNVOUCHED, text)
+
+    def test_the_cycle_line_carries_the_last_point_date(self):
+        capture = test_evidence.with_cycle(
+            test_evidence.framed(), block=test_evidence.cycle_block(
+                points=test_evidence.FI_CYCLE_POINTS,
+                as_of=test_evidence.FI_CYCLE_AS_OF))
+        last = capture["cycle"]["series"][0]["points"][-1]["date"]
+        case, _ = fi_case_texts(capture)
+        self.assertIn("Series `cycle_series_0`, as of %s; latest point %s:"
+                      % (test_evidence.FI_CYCLE_AS_OF, last), case)
+
+    def test_a_holding_case_file_carries_its_bridge_and_the_not_rated_sentence(
+            self):
+        capture = evidence_fixture(FI_CASE_HOLDING)
+        frame = capture["business_frame"][capture["subject"]["ticker"]]
+        bridge = frame["nav_bridge"]
+        for text in fi_case_texts(capture):
+            for part in bridge["components"]:
+                fi_case_line(text, part["name"],
+                             brief.FI_METHOD_WORDS[part["method"]],
+                             "`%s`" % part["value_fact"])
+            for key in ("holdco_net_debt_fact", "nav_total_fact",
+                        "published_nav_fact", "discount_fact"):
+                fi_case_line(text, "`%s` = " % bridge[key])
+            self.assertIn(brief.FI_NOT_RATED_SENTENCE, text)
+            fi_case_line(text, "a financial holding company")
+
+    def test_the_delta_brief_carries_the_fi_frame_when_a_capital_fact_is_corrected(
+            self):
+        capture = evidence_fixture(FI_CASE_BANK)
+        delta = fi_delta(capture, FI_CASE_CAPITAL[0])
+        fi_case_line(delta, "`%s` = " % FI_CASE_CAPITAL[0],
+                     "`%s` = " % FI_CASE_CAPITAL[1])
+        self.assertIn(brief.FI_STRESS_HEADING, delta)
+        fi_case_line(delta, "The capital-spending floor")
+
+    def test_the_delta_brief_carries_the_fi_frame_when_a_revision_is_corrected(
+            self):
+        """Audit round three, r3-2: a guidance revision the frame cites only
+        in its guidance table brings the frame, revision line and all, into
+        the delta."""
+        capture = evidence_fixture(FI_CASE_BANK)
+        delta = fi_delta(capture, test_evidence.FI_REVISION_ID)
+        fi_case_line(delta, test_evidence.FI_REVISION_DATE,
+                     test_evidence.FI_REVISION_ID)
+        self.assertIn(brief.FI_STRESS_HEADING, delta)
+
+    def test_the_delta_brief_carries_the_fi_frame_for_every_guidance_fact(
+            self):
+        """The sibling of r3-2: the first guidance and the delivered figure
+        of a financial institution's guidance table bring its frame too."""
+        capture = evidence_fixture(FI_CASE_BANK)
+        frame = capture["business_frame"][capture["subject"]["ticker"]]
+        for quarter in frame["management"]["guidance_vs_delivery"]:
+            for fact_id in quarter["guided"] + [quarter["delivered"]]:
+                delta = fi_delta(capture, fact_id)
+                self.assertTrue(brief.FI_STRESS_HEADING in delta, fact_id)
+
+    def test_a_non_fi_case_file_carries_no_fi_line(self):
+        """NEGATIVE control: the case file, the auditor brief and the delta
+        brief of a subject that is not a financial institution carry none
+        of the financial-institution lines."""
+        captures = [evidence_fixture(name) for name in FI_CASE_NON_FI]
+        captures.append(canonical.read_json(PACK)["capture"])
+        for capture in captures:
+            cited = capture["business_frame"][
+                capture["subject"]["ticker"]]["how_it_earns"][0]["facts"][0]
+            texts = fi_case_texts(capture) + (fi_delta(capture, cited),)
+            for text in texts:
+                for marker in FI_CASE_LINES:
+                    self.assertNotIn(marker, text)

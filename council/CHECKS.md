@@ -55,6 +55,19 @@ python council/tests/test_ledger.py
   the optional plain-English fact label, the period basis that keeps an
   average from being published as an annual figure, the peer comparability
   statement, and the full evidence document a reviewed sitting approves.
+  Since UPGRADE-2 U4(a) it also covers the optional daily price series and
+  its benchmark: a series refuses, in plain words, when its dates do not
+  strictly increase, when a hole runs longer than five calendar days beyond
+  the exchange holidays the floors declare, when its last bar is more than
+  three exchange days old, when a close is zero, when it is too short with
+  no declared gap, or when the benchmark is not the ruled one or does not
+  span the subject's window; and every committed capture fixture is checked
+  at the current contract. Since UPGRADE-2 U4(a2) it also covers the tape:
+  the 25 figures computed from the series to the exact string (since
+  U4(b), the three average prices among them), the freeze
+  that appends them byte-identically twice, the gate that recomputes every
+  one and refuses a tampered figure by name, and every series-less pack on
+  record re-freezing to its own bytes.
 - **engine** — the stepped host's state machine end to end: seat retries,
   the blind seal re-run, the reach scan, the chair's mechanical checks
   (kind-aware: one note per named constituent, one falsifier row per

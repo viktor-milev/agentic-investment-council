@@ -127,7 +127,7 @@
    "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
   }
  },
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -144,6 +144,7 @@
   },
   "state": "closed"
  },
+ "question_line": "One defect only: the last price, a must-have, is not in the capture. (INVENTED FIXTURE)",
  "question_verbatim": "One defect only: the last price, a must-have, is not in the capture. (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",

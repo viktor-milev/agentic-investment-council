@@ -892,6 +892,11 @@ class _Ctx(object):
                 self.rejections[event["seat"]] = (
                     self.rejections.get(event["seat"], 0) + 1)
                 self.disposed.add(event["number"])
+            elif (name == "headings_checked"
+                  and event.get("outcome") == "reasked"):
+                # Sent back for a missing heading: disposed, never a
+                # rejection, so the seat keeps its one ordinary retry.
+                self.disposed.add(event["number"])
 
     def say(self, text):
         self.lines.append(text)
@@ -1838,6 +1843,13 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
         # ladder, and re-asked from a brief that still showed them the
         # wrong contract (audit finding ANCHORLESS-A1 r1-6).
         kwargs["subject"] = ctx.invocation["subject"]
+        if seat in briefs.ADVISOR_SEATS or seat == "reviewer":
+            # The method paragraphs and the reviewer's table line name the
+            # business frame's tables: only where the capture carries one.
+            kwargs["framed"] = bool(
+                (ctx.pack.get("capture") or {}).get("business_frame"))
+            kwargs["taped"] = bool(
+                (ctx.pack.get("capture") or {}).get("price_series"))
         if seat == "reviewer":
             kwargs["advisor_answers"] = ctx.advisor_markdowns()
             kwargs["advisor_ladders"] = ctx.advisor_ladders()
@@ -2244,10 +2256,138 @@ def _resolve_chair_prose(ctx, seat):
     return "ready"
 
 
+# ------------------------------------------------------- the heading check
+
+
+# A required heading counts as present when a line carries it as a markdown
+# heading ("## ...") or opens with it in bold ("**...**"), matched exactly
+# after trimming and case-folding - one check, no fuzzy matching (owner ruling
+# AC5, the architect's mechanism ruling). Text inside a fenced code block, or
+# indented four spaces or more, is code and never a heading (audit r1-1).
+_HEADING_LINE = re.compile(r" {0,3}(?:#{1,6}\s+(.+)|\*\*(.+?)\*\*)")
+_FENCE_LINE = re.compile(r" {0,3}(`{3,}|~{3,})")
+
+
+def missing_headings(markdown):
+    """The required headings (read from seat_answers.json) this markdown does
+    not carry, in their contract order."""
+    found = set()
+    fence = None
+    for line in (markdown or "").splitlines():
+        marker = _FENCE_LINE.match(line)
+        if fence is None and marker:
+            fence = marker.group(1)
+            continue
+        if fence is not None:
+            if (marker and marker.group(1)[0] == fence[0]
+                    and len(marker.group(1)) >= len(fence)
+                    and not line[marker.end():].strip()):
+                fence = None
+            continue
+        match = _HEADING_LINE.match(line)
+        if match:
+            found.add((match.group(1) or match.group(2)).strip().casefold())
+    return [heading for heading in briefs.required_headings()
+            if heading.strip().casefold() not in found]
+
+
+def _headings_reason(missing):
+    return ("your answer is missing the required heading(s) %s - add the "
+            "missing heading(s); change no number and no conclusion. Return "
+            "your WHOLE answer with each heading written exactly as named, "
+            "as a markdown heading on its own line."
+            % ", ".join('"%s"' % heading for heading in missing))
+
+
+def _ingest_usage_once(ctx, number, seat):
+    """Record a request's usage unless it already is: a write made before the
+    answer is disposed must not double-count the total on a resume."""
+    if not any(event["event"] == "usage_recorded"
+               and event.get("number") == number for event in ctx.events):
+        _ingest_usage(ctx, number, seat)
+
+
+def _check_headings(ctx, number, seat, payload):
+    """The advisor's ONE heading re-ask (owner ruling AC5, spec U5.1). A
+    missing heading, on a seat not yet sent back for one, re-asks on the
+    ordinary request path with the answer quoted back; the whole rewrite
+    replaces the first, which stays on disk and in the record. After that
+    one re-ask the answer stands as given - recorded, never refused, never
+    frozen. The `reasked` event is the marker: written after the first
+    answer's usage and before the request, so a crash re-derives from disk
+    (see _reissue_heading_reasks). Returns True when the answer was sent
+    back rather than accepted."""
+    missing = missing_headings(payload.get("markdown"))
+    reasked = any(event["event"] == "headings_checked"
+                  and event["seat"] == seat
+                  and event["outcome"] == "reasked" for event in ctx.events)
+    if missing and not reasked:
+        _ingest_usage_once(ctx, number, seat)
+        runrecord.append_event(ctx.run_dir, "headings_checked", {
+            "number": number, "seat": seat, "missing": missing,
+            "outcome": "reasked"})
+        ctx.refresh()
+        _write_request(ctx, seat, retry_of=number,
+                       reason=_headings_reason(missing))
+        return True
+    if not any(event["event"] == "headings_checked"
+               and event.get("number") == number for event in ctx.events):
+        record = {"number": number, "seat": seat, "missing": missing,
+                  "outcome": "accepted_missing" if missing else "present"}
+        first = [event["number"] for event in ctx.events
+                 if event["event"] == "headings_checked"
+                 and event["seat"] == seat
+                 and event["outcome"] == "reasked"]
+        if first:
+            # The re-answer replaces the first whole; a moved figure is
+            # flagged with the chairman's figure tripwire, never refused
+            # (architect ruling closing P-U5a-3).
+            before = _answer_figures(canonical.read_json(
+                ctx.rpc_path(ctx.answer_name(first[0], seat))))
+            after = _answer_figures(payload)
+            record["figures_changed"] = before != after
+            record["figures_differing"] = {
+                "first": list(dict.fromkeys(t for t in before
+                                            if t not in after)),
+                "rewrite": list(dict.fromkeys(t for t in after
+                                              if t not in before))}
+        runrecord.append_event(ctx.run_dir, "headings_checked", record)
+        ctx.refresh()
+    if missing:
+        ctx.say("%s still lacks %s after its one re-ask; accepted as given "
+                "and recorded" % (seat, ", ".join(missing)))
+    return False
+
+
+def _answer_figures(payload):
+    """An advisor answer's figures in order: its prose, then any structured
+    field (an anchorless ladder), through the chairman's tripwire."""
+    rest = {key: value for key, value in payload.items() if key != "markdown"}
+    return (_number_tokens(payload.get("markdown"))
+            + _number_tokens(json.dumps(rest, sort_keys=True,
+                                        ensure_ascii=False)))
+
+
+def _reissue_heading_reasks(ctx):
+    """A `reasked` marker whose request never reached disk (a crash between
+    the two writes) re-issues the same re-ask, never a second one."""
+    changed = False
+    for event in ctx.events:
+        if (event["event"] == "headings_checked"
+                and event["outcome"] == "reasked"
+                and not any(req["seat"] == event["seat"]
+                            and req["retry_of"] == event["number"]
+                            for req in ctx.requests.values())):
+            _write_request(ctx, event["seat"], retry_of=event["number"],
+                           reason=_headings_reason(event["missing"]))
+            changed = True
+    return changed
+
+
 def _ingest_answers(ctx):
     """Process every pending request whose answer file exists. Returns True
     when anything changed. May end the run FAILED."""
-    changed = False
+    changed = _reissue_heading_reasks(ctx)
     for number, seat in ctx.pending():
         if seat in _PROSE_REASK_SEATS.values():
             # A prose re-ask is validated and spliced by the gate
@@ -2316,6 +2456,10 @@ def _ingest_answers(ctx):
                       % (seat, reason))
                 return True
             _write_request(ctx, seat, retry_of=number, reason=reason)
+            continue
+        if seat in ADVISOR_SEATS and _check_headings(ctx, number, seat,
+                                                     payload):
+            changed = True
             continue
         # The advisors and the reviewer are scored for the record only -
         # advisory, never re-asked (spec U6.4). The chairman's gated rationale
@@ -2407,6 +2551,14 @@ def _verify_challenge(ctx):
         return "malformed_output", ("the bridge result is not valid "
                                     "JSON: %s" % error)
     status = result.get("status")
+    if status == "posture_breach":
+        # BRIDGE-POSTURE: the challenger called a tool beyond reading its
+        # case file. Treated exactly as an unreadable answer - the sitting
+        # proceeds unaudited on the degraded path - with the bridge's
+        # reason, which names the tool.
+        return "malformed_output", (result.get("failure_reason")
+                                    or "the challenger stepped outside "
+                                    "its case file")
     if status not in CHALLENGE_STATUSES:
         return "internal_failure", ("the bridge reported an unknown "
                                     "status %r" % status)

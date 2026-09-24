@@ -24,35 +24,44 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 ## What changed since the last snapshot
 
-This snapshot adds several stages and rules to the pipeline. In plain terms:
+This snapshot adds a price history, a chart, a locked-down outside challenger and a new kind of
+business the council can rate. In plain terms:
 
-- **Every seat's model is now a setting.** The council suggests a model and effort for each seat in
-  one file and the operator may override any of them; the outside challenger's default is now
-  GPT-6 Sol. See *Seating the council* below.
-- **The business comes before the numbers.** Every pack now opens with a short description of what
-  the business is and the handful of metrics the decision actually turns on, so a seat reasons
-  about a company, not a column of figures.
-- **The evidence itself is challenged, not just the verdict.** The outside model now also reviews
-  the frozen facts before the council sits. If a correction changes what the seats would reason
-  from, the run is held until the evidence is re-checked and re-approved.
-- **A one-page brief and a full evidence document, with an approval step.** The gathered evidence
-  is written up twice — a one-page summary and a complete document — and the run cannot proceed
-  until the corrected evidence is explicitly approved.
-- **Untraced numbers are marked, never silently dropped.** A figure in the plain-English business
-  description that cannot be traced to a sourced fact is flagged as untraced rather than refusing
-  the whole capture.
-- **The rating bar depends on the kind of business.** Different business archetypes are measured
-  against different standards, so a fragile turnaround and a cash compounder are not judged the
-  same way.
-- **A house rule against mannered writing.** The chairman's rationale is measured for over-styled
-  prose — showy dashes, rhetorical questions, artificial contrasts — and is given one measured
-  chance to rewrite before it stands.
-- **A verdict ledger scored against outcomes.** Each verdict is recorded as a row and later scored
-  against what actually happened to the price and to its own named falsifiers, so the council's
-  hit rate can be measured over time.
-- **A redesigned report.** The published page was rebuilt as an executive-summary-first document:
-  the rating, the decisive numbers and the chairman's rationale in full sit at the top, with the
-  ladders, the calendar and the evidence folding beneath.
+- **The price history travels with the evidence.** A sitting may now carry the subject's daily
+  closing prices and those of a benchmark (for a US-listed stock, the S&P 500 fund SPY; none for
+  Bitcoin, gold or a commodity). The gate refuses a history with impossible dates, unexplained
+  holes, a stale last price or the wrong instrument.
+- **The price table ("the tape").** From that history the freeze computes 25 figures — the 50-,
+  100- and 200-day average prices, returns over set windows and against the benchmark, the
+  distance from the year's high and low, volatility — each with a plain label and its working
+  shown. The gate recomputes every one and refuses any difference by name. A pack with no price
+  history freezes exactly as before.
+- **The seats read the tape by a stated method.** The market-structure seat reads the trend, the
+  place in the range, relative strength, volume, the setup and its invalidation price, and
+  insider dealings and buybacks; the risk seat reads the drawdown shape, the volatility regime
+  and the gaps on news. The bull, bear and base-rate seats also argue from a stated method, every
+  advisor answer carries three required headings, and the reviewer checks who used the tape and
+  the decisive figures. Every single stock must now show its insiders' dealings and its buybacks,
+  or declare honestly why it cannot.
+- **A price chart on the report.** The report now opens with a chart: the daily closes, the three
+  average-price lines, the benchmark, the year's range and the verdict's price tripwires. The
+  chart's lines are recomputed and checked against the tape; a disagreement stops the page.
+- **The outside challenger sees the case file and nothing else.** Its web search, connected apps
+  and image generation are switched off. Before every paid call, a free test call asks it to list
+  its tools, and a banned tool stops the paid call; the banned list is a data file
+  (`council/floors/challenger-posture.json`). Every tool it then uses is recorded by name, and any
+  use beyond reading the case file marks the challenge as breached: the verdict publishes
+  unaudited, and says so. The earlier review of the evidence keeps its web reader.
+- **Banks, insurers and other financial firms have their own rating rules.** A fifth kind of
+  business, the financial institution — a bank, an insurer, a reinsurer, an asset manager or a
+  holding company — is rated on the return it earns on the capital it is required to hold, not
+  on factory-style cash flow. Its pages show its capital beside the regulator's minimum, the
+  regulator's bad-year stress loss, its cost of risk, its earnings split, and every revision of
+  its guidance. A holding company is rated on its discount to what it owns, and the council
+  checks that value part by part: each holding counted once, the company's own debt taken off
+  once.
+- **The asker's question on one line.** The evidence documents and the report now print the
+  question as the asker put it, on one line of at most sixty words.
 
 ---
 
@@ -62,21 +71,21 @@ Each stage writes files the next stage reads. Every stage is a script you can ru
 
 | Stage | What happens | Why it exists |
 |---|---|---|
-| **Evidence** | A hosting session researches the question live and writes one capture file. Every figure carries a stable id, the exact string observed, a unit, an as-of date, a named source, and the arithmetic written out where the figure is derived. The capture also states, in plain words, what the business is and the metrics the decision turns on. | Bad answers were traced to a starved supply line, not to bad reasoning. |
-| **Gate** | A script validates the capture and refuses with plain reasons: incomplete provenance, arithmetic that does not recompute, a figure a passage never actually states, a stale fact, a source that reads the owner's book. A number in the business description that no sourced fact backs is marked *untraced* rather than refused. | Nothing unverified reaches a seat; the business story stays honest about what it can and cannot prove. |
+| **Evidence** | A hosting session researches the question live and writes one capture file. Every figure carries a stable id, the exact string observed, a unit, an as-of date, a named source, and the arithmetic written out where the figure is derived. The capture also states, in plain words, what the business is and the metrics the decision turns on, and may carry the daily price history of the subject and its benchmark. | Bad answers were traced to a starved supply line, not to bad reasoning. |
+| **Gate** | A script validates the capture and refuses with plain reasons: incomplete provenance, arithmetic that does not recompute, a figure a passage never actually states, a stale fact, a source that reads the owner's book, a price history with impossible dates, holes or the wrong instrument. A number in the business description that no sourced fact backs is marked *untraced* rather than refused. | Nothing unverified reaches a seat; the business story stays honest about what it can and cannot prove. |
 | **Evidence challenge** | The frozen facts go to a model from another family, which challenges the evidence itself. A correction that changes what the seats would reason from forces a re-check and a fresh approval before the run may continue. | The supply line is audited by a different mind before a verdict is ever written. |
 | **Brief & approval** | The accepted evidence is written up as a one-page brief and as a full document. The run cannot proceed until the corrected evidence is explicitly approved. | A human sees the exact evidence the council will use, and signs off on it. |
-| **Freeze** | The accepted capture is built into a pack **twice, into two separate directories**. The two builds must be byte-identical, and the hash is recorded. | Anyone can later prove the pack the council saw is the pack on disk. |
+| **Freeze** | The accepted capture is built into a pack **twice, into two separate directories**. The two builds must be byte-identical, and the hash is recorded. Where a price history is carried, the freeze adds the tape: 25 price figures (average prices, returns, distance from the highs and lows, volatility), each recomputed by the gate. | Anyone can later prove the pack the council saw is the pack on disk. |
 | **Sufficiency** | A script checks that every derived requirement resolves to a present, in-rule fact. Failure **refuses the run before any seat is paid**, listing what is missing and where it likely lives. | A refusal costs one capture. Discovering the same gap after deliberation costs the whole sitting. |
 | **Frame** | The question is split: the thesis half goes to the council, any sentence referencing the asker's own holdings is routed verbatim to a note no seat ever sees. | The book-blindness seam, enforced mechanically and by judgment. |
-| **Advisors ×5** | Five tool-less seats — bear, bull, base-rate skeptic, market-structure, risk — dispatched in parallel over the one frozen pack. Each reads one brief and writes one answer. Nothing else. | One frozen baseline; measurable isolation. |
+| **Advisors ×5** | Five tool-less seats — bear, bull, base-rate skeptic, market-structure, risk — dispatched in parallel over the one frozen pack. Each reads one brief, argues from its seat's stated method (the market-structure and risk seats read the tape), and writes one answer under three required headings. Nothing else. | One frozen baseline; measurable isolation. |
 | **Review ×1** | One blind reviewer reads all five under an anonymised mapping and produces the cross-examination and a synopsis. A seat that identifies itself or another is re-run. | Peer review without knowing whose work it is. |
 | **Chair** | The chairman synthesises a verdict on a five-word scale — `strong_buy`, `buy`, `hold`, `sell`, `monitor` — with a priced mispricing read, invalidation levels, reopening triggers, and at least one falsifier scoreable against a named figure on a named date. The rating bar is set by the business archetype, and the rationale is measured for mannered prose, with one chance to rewrite. | A verdict you can be proven wrong about, judged against a standard fit to the business, in plain writing. |
-| **Challenge ×1** | The full unredacted case file goes to a model from another family (via the `codex` CLI), briefed as an investment critic, not a compliance auditor. It may endorse the highest rating it would support. | The audit is not the same mind marking its own homework. |
+| **Challenge ×1** | The full unredacted case file goes to a model from another family (via the `codex` CLI), briefed as an investment critic, not a compliance auditor. It may endorse the highest rating it would support. Its web search and connected apps are switched off; a free test call lists its tools before the paid one, and every tool it uses is recorded — any use beyond reading the case file publishes the verdict as unaudited. | The audit is not the same mind marking its own homework. |
 | **Publish** | The chairman answers every finding by name, then publishes. A publisher diffs the final document against the challenged draft field by field and writes a **change appendix**. A rating raised beyond what the auditor saw publishes with a prominent warning. | Transparency instead of a gate: the reader sees what the audit moved. |
 | **Read-back** | A separate entry point re-verifies: publication was authorised, the verdict still hashes to the recorded value, the hand-off envelope names the same hashes, and the run actually finished. | A verdict nobody can quietly rewrite afterwards. |
 | **Ledger** | The verdict is recorded as one row — rating, price, benchmark, horizons, falsifiers, tripwires — and later scored against what the price and the named falsifiers actually did. | The council's calls can be measured against outcomes, not just admired at the time. |
-| **Report** | One self-contained HTML page, opening as an executive summary: the rating, the numbers it turns on, and the chairman's rationale in full, with the scenario and downside ladders, the dated calendar, the tripwires and the evidence folding beneath. | The reader gets the decision first and dives deeper by scrolling. |
+| **Report** | One self-contained HTML page, opening as an executive summary: a price chart with the tape beside it, the rating, the numbers it turns on, and the chairman's rationale in full, with the scenario and downside ladders, the dated calendar, the tripwires and the evidence folding beneath. | The reader gets the decision first and dives deeper by scrolling. |
 
 **Assets with no earnings** (Bitcoin, gold, commodities) are rated differently: the seats and the
 chairman build a scenario ladder with their own stated probabilities, the expected result is
@@ -93,6 +102,14 @@ computed on top of a ceiling is itself only a *floor* — the true figure can on
 is labelled that way. Both years must use the same treatment, so a stand-in cannot quietly create
 a trend. Nothing here asserts the substitute line is the narrowest one available; that judgment is
 a human's, and the file says so. A product nobody has ruled on still refuses.
+
+**A bank, an insurer, a reinsurer, an asset manager or a holding company** is rated as a
+financial institution: on the return it earns on the capital it must hold, beside that capital's
+legal minimum and the regulator's bad-year stress loss. For these firms the capital-spending
+requirement is lifted, and the cash test becomes the capital the firm can pay out and still stay
+above its minimum. A holding company is rated on the discount to its net asset value, and the
+gate checks that value as a chain of recorded facts: every holding added once, the company's own
+net debt taken off once.
 
 ---
 
@@ -113,8 +130,8 @@ run on, so every decision carries its own record of who made it.
 
 ## Running it
 
-Python 3.14, **standard library only** — no dependencies, no package install, nothing to build.
-(Verified: the only non-`council` imports in the tree are stdlib modules.)
+Python 3.13 or newer, **standard library only** — no dependencies, no package install, nothing to
+build. (Verified: the only non-`council` imports in the tree are stdlib modules.)
 
 Run from the repository root. **The exit code is the authority: 0 is green.**
 
@@ -122,21 +139,24 @@ The seven suites, what each covers, and the command to run it:
 
 | Suite | Tests | Covers | Run |
 |---|---|---|---|
-| `test_foundations` | 32 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python council/tests/test_foundations.py` |
-| `test_evidence` | 676 | the provenance gate, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python council/tests/test_evidence.py` |
-| `test_engine` | 468 | the state machine end to end, seat retries, the blind seal, the chairman's mechanical checks, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python council/tests/test_engine.py` |
-| `test_bridge` | 101 | the challenger command's exact flag surface, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_bridge.py` |
-| `test_report` | 297 | the rendered page: sections, folding, warnings, number formatting, self-containedness, the executive-summary front | `PYTHONIOENCODING=utf-8 python council/tests/test_report.py` |
-| `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python council/tests/test_e2e_rehearsal.py` |
-| `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python council/tests/test_ledger.py` |
+| `test_foundations` | 33 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_foundations` |
+| `test_evidence` | 947 | the provenance gate, the price history and the tape, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs, the financial-institution rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
+| `test_engine` | 514 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the chairman's mechanical checks, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
+| `test_bridge` | 146 | the challenger command's exact flag surface, the tool-list probe and the tool-use record, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_bridge` |
+| `test_report` | 348 | the rendered page: the price chart, sections, folding, warnings, number formatting, self-containedness, the executive-summary front, the financial-institution pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
+| `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_e2e_rehearsal` |
+| `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_ledger` |
 
-1642 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+2056 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+Where `python3` on your machine is older than 3.13, name the newer interpreter instead (for
+example `python3.13`).
 
-**Clean skips.** Nineteen tests skip here and only here, each with its reason printed, because they
-read material this copy does not publish. Seventeen read *live run records*: `test_evidence` skips
-fourteen (the live-capture and archetype-acceptance classes re-run the gate over real captures),
-`test_engine` skips two (`TestEveryPublishedRunStillReadsBack` re-verifies every published sitting
-against its record), and `test_ledger` skips one (scoring rows built from real verdicts). The
+**Clean skips.** Twenty-two tests skip here and only here, each with its reason printed, because
+they read material this copy does not publish. Twenty read *live run records*: `test_evidence`
+skips fifteen (the live-capture, migration and archetype-acceptance classes re-run the gate over
+real captures), `test_engine` skips two (`TestEveryPublishedRunStillReadsBack` re-verifies every
+published sitting against its record), `test_report` skips two (every real sitting still renders,
+with and without a chart), and `test_ledger` skips one (scoring rows built from real verdicts). The
 other two are in `test_foundations`: they check the mannered-prose measure against the chairman's
 own rationales from two real sittings, a fixture withheld here (see *What is deliberately absent*).
 Each skip fires only when the material is absent — a checkout holding it runs the test — so an

@@ -12,6 +12,7 @@ the fixture into a temp directory and mutating the copy - the fixture itself is 
 import copy
 import contextlib
 import datetime
+import decimal
 import html as html_lib
 import hashlib
 import io
@@ -29,6 +30,8 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.engine import briefs  # noqa: E402
+from council.evidence import brief as pack_brief  # noqa: E402
+from council.evidence import freeze, tape  # noqa: E402
 from council.engine import ladder  # noqa: E402
 from council.lib import prose  # noqa: E402
 from council.lib import validate  # noqa: E402
@@ -3701,6 +3704,22 @@ class TestU6VoiceOnThePage(unittest.TestCase):
         body = R.build_page(run, NO_CLOCK_MOMENT).body()
         self.assertIn("Writing score (advisory)", body)
 
+    def test_a_heading_reanswer_that_moved_a_figure_is_noted_beside_the_seat(self):
+        # Architect ruling closing P-U5a-3: the flag on the record also reads
+        # in the appendix, under the advisor whose rewrite moved a figure.
+        run = R.load_run(FIXTURE)
+        run["heading_flags"] = {"advisor_bear": {
+            "figures_changed": True,
+            "figures_differing": {"first": ["$10m"], "rewrite": ["$20m"]}}}
+        body = R.build_page(run, NO_CLOCK_MOMENT).body()
+        self.assertIn("changed figures", body)
+        self.assertIn("$20m", body)
+        run["heading_flags"] = {"advisor_bear": {
+            "figures_changed": False,
+            "figures_differing": {"first": [], "rewrite": []}}}
+        self.assertNotIn("changed figures",
+                         R.build_page(run, NO_CLOCK_MOMENT).body())
+
     def test_the_chair_synthesis_advisory_score_renders_beside_the_synthesis(self):
         # Architect Step 0: the chairman's long synthesis carries an advisory
         # writing score in the appendix, under a key distinct from the gated
@@ -3915,6 +3934,812 @@ class TestSubjectShapeSectionsAreDecisionContent(unittest.TestCase):
             for marker in (self.CONSTITUENTS, self.LADDERS, self.CYCLE, self.THEME_THESIS):
                 self.assertNotIn(marker, after)
             self.assertIn('<div class="foot">', after)
+
+
+# ---------------------------------------------------------------------------------------------
+# UPGRADE-2 U4(c): THE PRICE CHART AND THE TAPE ON THE PAGE (the spec's chart on the page;
+# owner rulings AC16 and AC27)
+# ---------------------------------------------------------------------------------------------
+# A fixture run is re-frozen over its own capture plus an INVENTED daily series, so the tape it
+# carries is exactly what the freeze would write. Every series below is invented; no run on record
+# is written. The closes drift upward with a repeating swing so the averages, the range and the
+# drawdown all carry figures.
+
+TAPE_END = "2026-08-28"
+TAPE_CALENDAR = "XNYS"
+TAPE_BARS = 520
+TAPE_SHORT_BARS = 150
+TAPE_TINY_BARS = 20
+TAPE_SWING_CYCLE = 13
+TAPE_SWING_MIDDLE = 6
+TAPE_SWING_STRIDE = 7
+BENCH_SWING_STRIDE = 5
+TAPE_BASE = decimal.Decimal("60.00")
+TAPE_STEP = decimal.Decimal("0.05")
+TAPE_SWING = decimal.Decimal("0.40")
+BASKET_BASE = decimal.Decimal("180.00")
+BENCH_BASE = decimal.Decimal("400.00")
+BENCH_STEP = decimal.Decimal("0.30")
+BENCH_TICKER = "SPY"
+EXTRA_LEVEL = "95.00"
+UNREADABLE_LEVEL = "about seventy dollars"
+FORCED_SMA200 = "-12.3456789012"
+TAPE_HEADING = "<h3>The price chart and the tape</h3>"
+LEVEL_GROUP = '<g class="ch-levelmark">'
+CHART_OPEN = '<figure class="tapechart"'
+TABLE_OPEN = '<table class="tapetable">'
+
+
+def _exchange_days(end, count):
+    """The last `count` exchange days of the ruled calendar up to and including `end`."""
+    ruled = _floors()["price_series"]["exchange_calendars"][TAPE_CALENDAR]
+    holidays = set(ruled["holidays"])
+    trades = set(ruled["trading_weekdays"])
+    day = datetime.date.fromisoformat(end)
+    days = []
+    while len(days) < count:
+        if day.isoweekday() in trades and day.isoformat() not in holidays:
+            days.append(day.isoformat())
+        day -= datetime.timedelta(days=1)
+    return list(reversed(days))
+
+
+def _invented_series(ticker, count, base, step, stride, swing_size=TAPE_SWING):
+    bars = []
+    for index, day in enumerate(_exchange_days(TAPE_END, count)):
+        swing = swing_size * ((index * stride) % TAPE_SWING_CYCLE - TAPE_SWING_MIDDLE)
+        bars.append({"date": day, "close": str(base + step * index + swing),
+                     "volume": str(1000000 + 100 * index)})
+    return {"ticker": ticker, "calendar": TAPE_CALENDAR,
+            "source": "INVENTED FIXTURE - broker price history for %s" % ticker,
+            "as_of": TAPE_END, "bars": bars}
+
+
+def _taped_run(tmp, source=None, ticker="SPWK", count=TAPE_BARS, benchmark=True,
+               base=TAPE_BASE, verdict_change=None, flat=False):
+    """A copy of a fixture run whose pack is re-frozen with an invented series (and the invented
+    benchmark's, unless the sitting is absolute); `flat` holds every close at `base`."""
+    run_dir = _mutated_copy(tmp, source=source)
+    path = os.path.join(run_dir, "pack", "pack.json")
+    with open(path, "rb") as fh:
+        capture = json.loads(fh.read().decode("utf-8"))["capture"]
+    tier1 = capture["tier1"]
+    if not any(fact["id"].startswith("price_last") for fact in tier1):
+        price = copy.deepcopy(next(f for f in tier1 if f["id"] == "last_price"))
+        price["id"] = "price_last"
+        tier1.append(price)
+    capture["price_series"] = _invented_series(ticker, count, base,
+                                               decimal.Decimal(0) if flat else TAPE_STEP,
+                                               TAPE_SWING_STRIDE,
+                                               decimal.Decimal(0) if flat else TAPE_SWING)
+    if benchmark:
+        capture["benchmark_series"] = _invented_series(BENCH_TICKER, count, BENCH_BASE,
+                                                       BENCH_STEP, BENCH_SWING_STRIDE)
+        capture["benchmark"] = {"ticker": BENCH_TICKER, "listing": "NYSE Arca",
+                                "why": "INVENTED FIXTURE - the report suite's benchmark"}
+    else:
+        capture["benchmark"] = {"ticker": None,
+                                "why": "INVENTED FIXTURE - a sitting judged on its own return"}
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(freeze.build_pack(capture, _floors()), fh, indent=2)
+    if verdict_change:
+        _rewrite_verdict(run_dir, verdict_change)
+    return run_dir
+
+
+def _taped_page(**kwargs):
+    with tempfile.TemporaryDirectory() as tmp:
+        return _render(_taped_run(tmp, **kwargs))
+
+
+def _taped_pack(**kwargs):
+    with tempfile.TemporaryDirectory() as tmp:
+        run_dir = _taped_run(tmp, **kwargs)
+        with open(os.path.join(run_dir, "pack", "pack.json"), "rb") as fh:
+            return json.loads(fh.read().decode("utf-8"))
+
+
+def _chart(page):
+    start = page.index(CHART_OPEN)
+    return page[start:page.index("</figure>", start) + len("</figure>")]
+
+
+def _tape_table(page):
+    start = page.index(TABLE_OPEN)
+    return page[start:page.index("</table>", start) + len("</table>")]
+
+
+DIVIDEND = "3.00"
+
+
+def _lead_with(fields, insert=False):
+    """A verdict change: the envelope's leading key number carries `fields` (a new leading row
+    copied from the old one, where `insert`)."""
+    def change(doc):
+        numbers = doc["atlas_envelope"]["key_numbers"]
+        if insert:
+            numbers.insert(0, copy.deepcopy(numbers[0]))
+        numbers[0].update(fields)
+    return change
+
+
+def _add_triggers(*triggers):
+    def change(doc):
+        doc["tripwires"]["reopening_triggers"].extend(copy.deepcopy(list(triggers)))
+    return change
+
+
+def _price_trigger(level, detail, constituent=None):
+    trigger = {"kind": "price", "level": level, "unit": "USD", "date": None,
+               "detail": detail}
+    if constituent:
+        trigger["constituent"] = constituent
+    return trigger
+
+
+# The three notices a pack with no price series prints, by what the pack carries (architect
+# ruling, Step 0 of U4(c) audit round 2), quoted here so a test reads the words the owner reads.
+NOTICE_RANGE = ("This pack carries no daily price series, so there is no price chart and no tape "
+                "table: the price and its 52-week range are the whole of what it says about the "
+                "tape.")
+NOTICE_PRICE = ("This pack carries no daily price series, so there is no price chart and no tape "
+                "table: the price alone is what it says about the tape.")
+NOTICE_NONE = ("This pack carries no daily price series and no price, so there is no price chart "
+               "and no tape table: it says nothing about the tape.")
+
+
+def _basket_with_range(range_ids, drop=()):
+    """The basket fixture's page, its pack given the named 52-week range ends (copies of a
+    member's price fact under each id) and without the facts named in `drop`."""
+    def add_range(doc):
+        tier1 = doc["capture"]["tier1"]
+        tier1[:] = [fact for fact in tier1 if fact["id"] not in drop]
+        price = next(fact for fact in tier1 if fact["id"] == "price_last__achp")
+        for fact_id in range_ids:
+            fact = copy.deepcopy(price)
+            fact["id"] = fact_id
+            tier1.append(fact)
+    with tempfile.TemporaryDirectory() as tmp:
+        run_dir = _mutated_copy(tmp, source=FIXTURE_BASKET)
+        _rewrite_pack(run_dir, add_range)
+        return _render(run_dir)
+
+
+TAPED_HTML = None
+
+
+def _taped_html():
+    """The default taped page, rendered once for the read-only tests."""
+    global TAPED_HTML
+    if TAPED_HTML is None:
+        TAPED_HTML = _taped_page()
+    return TAPED_HTML
+
+
+class TestPriceChartAndTape(unittest.TestCase):
+    """The chart the seats read and the tape's figures, on one page under the executive summary's
+    heading; a pack with no series says so in one line."""
+
+    def test_a_run_without_a_price_series_prints_the_placeholder_line_and_no_chart(self):
+        front = _front(HTML)
+        self.assertIn(TAPE_HEADING, front)
+        self.assertEqual(HTML.count(E(NOTICE_NONE)), 1)
+        self.assertIn(E(NOTICE_NONE), front)
+        self.assertNotIn(CHART_OPEN, HTML)
+        self.assertNotIn(TABLE_OPEN, HTML)
+
+    def test_a_page_with_no_price_says_nothing_about_the_tape(self):
+        # Audit round 1 of U4(c), r1-3 (registered P-U4c-2, closed by the architect's ruling in
+        # Step 0 of round 2): the fixture's pack carries no price fact the council reads (its
+        # figure wears another id), and the notice told the owner "the price alone" is what it
+        # says about the tape.
+        front = _front(HTML)
+        self.assertIn(E(NOTICE_NONE), front)
+        self.assertNotIn(E(NOTICE_PRICE), HTML)
+        self.assertNotIn(E(NOTICE_RANGE), HTML)
+
+    def test_a_basket_price_without_a_52_week_range_names_the_price_alone(self):
+        # Architect ruling, Step 0 of U4(c) audit round 1: a pack with a price but no 52-week
+        # range names the price alone.
+        front = _front(BASKET_HTML)
+        self.assertIn(E(NOTICE_PRICE), front)
+        self.assertNotIn(E(NOTICE_RANGE), BASKET_HTML)
+
+    def test_a_range_split_across_two_basket_members_names_the_price_alone(self):
+        # Audit round 1 of U4(c), r1-2 (registered P-U4c-1, closed by the architect's ruling in
+        # Step 0 of round 2): a low on one member and a high on another is no 52-week range.
+        front = _front(_basket_with_range(("range_52w_low__achp", "range_52w_high__bgrd")))
+        self.assertIn(E(NOTICE_PRICE), front)
+        self.assertNotIn(E(NOTICE_RANGE), front)
+
+    def test_a_range_on_a_member_without_its_price_names_the_price_alone(self):
+        # Audit round 3 of U4(c), r3-1 (registered P-U4c-3, closed by the architect's ruling in
+        # Step 0 of round 4): one member's price and another member's full range, that member's
+        # own price absent, is no price against its range.
+        front = _front(_basket_with_range(("range_52w_low__bgrd", "range_52w_high__bgrd"),
+                                          drop=("price_last__bgrd",)))
+        self.assertIn(E(NOTICE_PRICE), front)
+        self.assertNotIn(E(NOTICE_RANGE), front)
+
+    def test_a_members_matched_52_week_range_keeps_the_range_wording(self):
+        front = _front(_basket_with_range(("range_52w_low__achp", "range_52w_high__achp")))
+        self.assertIn(E(NOTICE_RANGE), front)
+        self.assertNotIn(E(NOTICE_PRICE), front)
+
+    def test_a_series_draws_one_inline_svg_chart_with_no_network_resource(self):
+        page = _taped_html()
+        self.assertEqual(page.count(CHART_OPEN), 1)
+        chart = _chart(page)
+        self.assertEqual(chart.count("<svg"), 1 + chart.count('class="ch-key"'))
+        self.assertIn('role="img"', chart)
+        self.assertIn("<title", chart)
+        self.assertIn("<desc", chart)
+        self.assertIn('class="ch-close"', chart)
+        for needle in ("http", "href", "<image", "url(", "<script", "@import"):
+            self.assertNotIn(needle, chart)
+        caption = chart[chart.index("<figcaption"):]
+        self.assertIn(E("INVENTED FIXTURE - broker price history for SPWK"), caption)
+        self.assertIn(R.format_date(TAPE_END), caption)
+
+    def test_the_chart_draws_every_price_trigger_level_with_its_label(self):
+        extra = _price_trigger(EXTRA_LEVEL, "Reopen the case if the shares close above the "
+                               "invented ceiling. (INVENTED)")
+        chart = _chart(_taped_page(verdict_change=_add_triggers(extra)))
+        self.assertEqual(chart.count(LEVEL_GROUP), 2)
+        for level in ("72.00", EXTRA_LEVEL):
+            self.assertIn(E("%s %s" % (R.format_number(level, "USD"), R.chart.LEVEL_WORDS)),
+                          chart)
+        self.assertIn("<title>Reopen the case if the shares close at or under", chart)
+        self.assertIn("<title>Reopen the case if the shares close above the invented ceiling",
+                      chart)
+
+    def test_an_event_trigger_and_a_falsifier_draw_nothing(self):
+        chart = _chart(_taped_html())
+        self.assertEqual(chart.count(LEVEL_GROUP), 1)
+        self.assertNotIn("full-year results", chart)
+        self.assertNotIn("growth leg", chart)
+        # The verdict's separate invalidation level is not drawn either (architect ruling 1).
+        self.assertNotIn("breaks the base", chart)
+        self.assertNotIn(R.format_number("84.50", "USD"), chart)
+
+    def test_a_level_bound_to_another_member_draws_nothing(self):
+        unbound = _price_trigger(EXTRA_LEVEL, "Reopen if the pair as a whole falls. (INVENTED)")
+        own = _chart(_taped_page(source=FIXTURE_BASKET, ticker="ACHP", base=BASKET_BASE,
+                                 verdict_change=_add_triggers(unbound)))
+        self.assertEqual(own.count(LEVEL_GROUP), 1)
+        self.assertIn(E(R.format_number("200.00", "USD")), own)
+        other = _chart(_taped_page(source=FIXTURE_BASKET, ticker="BGRD", base=BASKET_BASE,
+                                   verdict_change=_add_triggers(unbound)))
+        self.assertEqual(other.count(LEVEL_GROUP), 0)
+        self.assertNotIn("Alpha Chips closes", other)
+        self.assertNotIn("the pair as a whole", other)
+
+    def test_an_unreadable_level_draws_nothing_and_stays_in_the_table(self):
+        odd = _price_trigger(UNREADABLE_LEVEL, "Reopen when the invented oddity trips. (INVENTED)")
+        page = _taped_page(verdict_change=_add_triggers(odd))
+        self.assertEqual(_chart(page).count(LEVEL_GROUP), 1)
+        self.assertNotIn("invented oddity", _chart(page))
+        self.assertIn("invented oddity", _front(page))
+        self.assertIn(UNREADABLE_LEVEL, _front(page))
+
+    def test_the_benchmark_line_is_rebased_and_labelled(self):
+        chart = _chart(_taped_html())
+        closes = re.search(r'<polyline class="ch-close" points="([^"]+)"', chart).group(1)
+        bench = re.search(r'<polyline class="ch-bench" points="([^"]+)"', chart).group(1)
+        # Both series trade on one calendar, so the benchmark starts ON the first close.
+        self.assertEqual(bench.split()[0], closes.split()[0])
+        self.assertEqual(len(bench.split()), len(closes.split()))
+        self.assertIn(BENCH_TICKER, chart)
+        self.assertIn(R.chart.REBASED_WORDS, chart)
+
+    def test_an_absolute_sitting_draws_no_benchmark_line(self):
+        chart = _chart(_taped_page(benchmark=False))
+        self.assertNotIn("ch-bench", chart)
+        self.assertNotIn(R.chart.REBASED_WORDS, chart)
+
+    def test_an_average_is_drawn_only_where_the_tape_carries_it(self):
+        full = _chart(_taped_html())
+        for window in (50, 100, 200):
+            self.assertIn('<polyline class="ch-sma%d"' % window, full)
+        short = _chart(_taped_page(count=TAPE_SHORT_BARS))
+        self.assertIn('<polyline class="ch-sma50"', short)
+        self.assertIn('<polyline class="ch-sma100"', short)
+        self.assertNotIn("ch-sma200", short)
+        self.assertNotIn("200-day average", short)
+
+    def test_the_drawn_average_agrees_with_the_tape(self):
+        pack = _taped_pack()
+        facts = {fact["id"]: fact for fact in pack["capture"]["tier1"]}
+        for window in (50, 100, 200):
+            self.assertIn("tape_close_vs_sma%d" % window, facts)
+        chart = _chart(_taped_html())
+        self.assertIn('<polyline class="ch-sma200"', chart)
+
+    def test_a_drawn_average_that_disagrees_with_the_tape_refuses_the_render(self):
+        def force(pack):
+            for fact in pack["capture"]["tier1"]:
+                if fact["id"] == "tape_close_vs_sma200":
+                    fact["value"] = FORCED_SMA200
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _taped_run(tmp)
+            _rewrite_pack(run_dir, force)
+            with self.assertRaises(R.chart.ChartRefused) as caught:
+                _render(run_dir)
+            self.assertIn("200-day average", str(caught.exception))
+            _stamp_first_render(run_dir, _pinned_now(run_dir))
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(_render_cli(run_dir), 1)
+            self.assertIn("200-day average", err.getvalue())
+            self.assertFalse(os.path.exists(os.path.join(run_dir, "report.html")))
+
+    def test_the_display_table_has_fifteen_rows_covering_every_tape_fact_but_the_levels_once(
+            self):
+        # Unit U4(b): the three average prices are recorded for the seats; the page keeps
+        # its fifteen rows, and the chart draws each average as a line.
+        rows = R.chart.TAPE_DISPLAY_ROWS
+        self.assertEqual(len(rows), 15)
+        ids = [fact_id for _title, figures in rows for fact_id, _name in figures]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(tape.LEVEL_IDS)
+        for fact_id in tape.LEVEL_IDS:
+            self.assertNotIn(fact_id, ids)
+        self.assertEqual(sorted(ids),
+                         sorted(i for i in tape.ROW_IDS if i not in tape.LEVEL_IDS))
+        self.assertEqual(_tape_table(_taped_html()).count('<tr class="taperow">'), 15)
+
+    def test_every_tape_figure_prints_through_the_display_rules(self):
+        table = _tape_table(_taped_html())
+        pack = _taped_pack()
+        displayed = [fact_id for _title, figures in R.chart.TAPE_DISPLAY_ROWS
+                     for fact_id, _name in figures]
+        carried = [fact for fact in pack["capture"]["tier1"] if fact["id"] in displayed]
+        self.assertEqual(len(carried), len(displayed))
+        for fact in carried:
+            self.assertIn(E(R.format_number(fact["value"], fact["unit"])), table, fact["id"])
+            if fact["derived"].get("date"):
+                self.assertIn(E(R.format_date(fact["derived"]["date"])), table, fact["id"])
+
+    def test_a_declared_gap_prints_as_a_gap_never_zero_or_blank(self):
+        pack = _taped_pack(benchmark=False)
+        gaps = [gap for gap in pack["capture"]["gaps"] if gap["fact_class"] in tape.ROW_IDS]
+        self.assertEqual(len(gaps), len(tape.RETURN_WINDOWS))
+        table = _tape_table(_taped_page(benchmark=False))
+        self.assertEqual(table.count(E(R.chart.GAP_WORDS)), len(gaps))
+        for gap in gaps:
+            self.assertIn(E(gap["reason"]), table)
+        for cell in re.findall(r"<td[^>]*>(.*?)</td>", table, re.S):
+            self.assertNotEqual(TAG.sub("", cell).strip(), "")
+
+    def test_every_tape_label_is_printed_and_no_tape_id_is(self):
+        for page in (_taped_html(), _taped_page(count=TAPE_TINY_BARS)):
+            for fact_id in tape.ROW_IDS:
+                self.assertIn(E(tape.LABELS[fact_id]), page, fact_id)
+            self.assertNotIn("tape_", page)
+
+    def test_a_tape_of_nothing_but_gaps_prints_the_all_gaps_line(self):
+        page = _taped_page(count=TAPE_TINY_BARS)
+        front = _front(page)
+        self.assertIn(E(pack_brief.TAPE_ALL_GAPS), front)
+        self.assertNotIn(TABLE_OPEN, page)
+        self.assertIn('<polyline class="ch-close"', _chart(page))
+        # The line promises that every missing figure is listed by name; the page's own
+        # declared-gap list names each one by its plain label (architect ruling 7).
+        gaps = page[page.index("<h3>Declared gaps</h3>"):]
+        gaps = gaps[:gaps.index("</ul>")]
+        for fact_id in tape.ROW_IDS:
+            self.assertIn(E(tape.LABELS[fact_id]), gaps, fact_id)
+
+    def test_the_chart_colours_come_only_from_theme_tokens(self):
+        chart = _chart(_taped_html())
+        self.assertIsNone(re.search(r"#[0-9A-Fa-f]{3,8}\b", chart))
+        self.assertIsNone(re.search(r'\s(fill|stroke|color|style)="', chart))
+        self.assertNotIn("var(", chart)
+        css = R.CSS
+        dark = css[css.index(":root{"):css.index("}", css.index(":root{"))]
+        light = css[css.index(':root[data-theme="light"]{'):]
+        light = light[:light.index("}")]
+        printed = css[css.index("@media print"):]
+        printed = printed[:printed.index("}")]
+        for name in sorted(set(re.findall(r'class="(ch-[a-z0-9]+)"', chart))):
+            rule = re.search(r"\.%s\{([^}]*)\}" % re.escape(name), css)
+            self.assertIsNotNone(rule, name)
+            tokens = re.findall(r"var\(--([a-z-]+)\)", rule.group(1))
+            self.assertTrue(tokens or "fill:none" in rule.group(1), name)
+            for token in tokens:
+                for block in (dark, light, printed):
+                    self.assertIn("--%s:" % token, block, (name, token))
+        self.assertIn(".tapechart{break-inside:avoid}", css[css.index("@media print"):])
+        self.assertNotIn("prefers-color-scheme", css)
+
+    def test_the_chart_renders_with_every_script_removed(self):
+        page = re.sub(r"<script>.*?</script>", "", _taped_html(), flags=re.S)
+        self.assertNotIn("<script", page)
+        chart = _chart(page)
+        self.assertIn('<polyline class="ch-close"', chart)
+        self.assertIsNone(re.search(r"\son[a-z]+=", chart))
+
+    def test_two_renders_of_a_taped_run_are_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _taped_run(tmp)
+            first, second = _render(run_dir), _render(run_dir)
+        self.assertEqual(first, second)
+        chart = _chart(first)
+        numbers = re.findall(r'\s(?:points|x|y|x1|x2|y1|y2|cx|cy|r|width|height)="([^"]+)"',
+                             chart)
+        self.assertTrue(numbers)
+        for text in numbers:
+            for token in re.split(r"[ ,]", text):
+                if token != "100%":
+                    self.assertRegex(token, r"^\d+(\.\d)?$")
+
+    def test_the_chart_opens_the_executive_summary(self):
+        for page in (HTML, _taped_html()):
+            front = _front(page)
+            opening = '<h2 id="decision">Executive summary</h2>'
+            self.assertTrue(front.startswith(opening + TAPE_HEADING), front[:200])
+
+    def test_the_price_at_the_ruling_is_marked_for_a_single_subject_only(self):
+        chart = _chart(_taped_page(verdict_change=_lead_with({"pack_fact_id": "price_last"})))
+        self.assertIn('class="ch-mark"', chart)
+        self.assertIn(E("last price %s" % R.format_number("88.40", "USD")), chart)
+        basket = _chart(_taped_page(source=FIXTURE_BASKET, ticker="ACHP", base=BASKET_BASE))
+        self.assertNotIn('class="ch-mark"', basket)
+
+    def test_a_leading_key_number_that_is_not_the_price_is_never_marked_as_it(self):
+        # Audit round 1 of U4(c), r1-1: the envelope's order is model-authored, so a leading key
+        # number in the price's unit - a dividend per share, a price target - was drawn as "the
+        # price the ruling is made against". Only the pack's own price fact is marked.
+        lead = _lead_with({"name": "Dividend per share", "value": DIVIDEND,
+                           "pack_fact_id": "dividend_per_share"}, insert=True)
+        chart = _chart(_taped_page(verdict_change=lead))
+        self.assertNotIn('class="ch-mark"', chart)
+        self.assertNotIn("Dividend per share", chart)
+        self.assertNotIn("The price the ruling is made against", chart)
+
+    def test_a_leading_key_number_citing_another_fact_is_not_marked(self):
+        # The fixture's leading key number cites its own last-price fact, not the price fact the
+        # chart reads the series' unit from; it is not marked.
+        self.assertNotIn('class="ch-mark"', _chart(_taped_html()))
+
+    def test_the_52_week_band_is_drawn_from_the_tape_high_and_low(self):
+        self.assertIn('<rect class="ch-band"', _chart(_taped_html()))
+        self.assertNotIn("ch-band", _chart(_taped_page(count=TAPE_SHORT_BARS)))
+
+    def test_a_52_week_range_of_one_price_is_still_drawn(self):
+        # Audit round 3 of U4(c), r3-2: a year of equal closes gives a range whose highest and
+        # lowest close coincide; the band was a rectangle of no height, invisible although the
+        # legend and the description name it. It is drawn as a line of visible thickness.
+        chart = _chart(_taped_page(flat=True))
+        self.assertIn("The 52-week range of closes", chart)
+        self.assertNotIn('height="0.0"', chart)
+        self.assertIn('<line class="ch-bandline"', chart)
+        self.assertIn("<title>The 52-week range of closes", chart)
+
+    def test_every_run_on_record_still_renders_with_the_notice(self):
+        runs = os.path.join(ROOT, "council", "runs")
+        if not os.path.isdir(runs):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        rendered = 0
+        for name in sorted(os.listdir(runs)):
+            source = os.path.join(runs, name)
+            if not os.path.isfile(os.path.join(source, "verdict.json")):
+                continue
+            with tempfile.TemporaryDirectory() as tmp:
+                copied = os.path.join(tmp, "run")
+                shutil.copytree(source, copied)
+                page = R.render(copied)
+                with open(os.path.join(copied, "pack", "pack.json"), "rb") as fh:
+                    capture = json.loads(fh.read().decode("utf-8"))["capture"]
+            self.assertEqual(page.count(E(pack_brief.tape_placeholder(capture))), 1, name)
+            self.assertIn(TAPE_HEADING, _front(page), name)
+            self.assertNotIn(CHART_OPEN, page, name)
+            rendered += 1
+        self.assertGreater(rendered, 0)
+
+
+# UPGRADE-2 FI-ARCHETYPE sub-charge (b), THE PAGE (owner rulings AC28, AC30 and AC32; register
+# items P-FIa-4 and P-FIa-5). The invented run's pack is replaced by the invented bank's or
+# holding's frozen pack, re-keyed to the run's own subject.
+FI_EVIDENCE = os.path.join(ROOT, "council", "tests", "fixtures", "evidence")
+FI_BANK = "bank-pass.json"
+FI_HOLDING = "holding-pass.json"
+FI_SECTION = "What kind of financial firm this is"
+FI_DERIVED_LINE = ("Is Specimen Works still cheap at this price, or has the market caught up with "
+                   "the growth story?")
+FI_QUESTION_LINE = FI_DERIVED_LINE + " Separately, on my side: plan the follow-on tranche timing"
+FI_CONTRARY_LINE = "Should we sell Specimen Works now?"
+FI_ON_RECORD = ("council-lulu-2026-09-05", "council-coin-2026-09-04", "council-wulf-2026-09-09")
+FI_CYCLE_AS_OF = "2026-09-20"
+FI_CYCLE_LAST = "2026-06-30"
+
+
+def _fi_capture(name):
+    with open(os.path.join(FI_EVIDENCE, name), "rb") as fh:
+        capture = json.loads(fh.read().decode("utf-8"))
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        subject = json.loads(fh.read().decode("utf-8"))["subject"]
+    frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+    capture["subject"] = subject
+    capture["business_frame"] = {subject["ticker"]: frame}
+    return capture
+
+
+def _fi_page(name=FI_BANK, change=None, review=None, store=None):
+    """The invented run rendered over an FI fixture's frozen pack; `change` edits the capture
+    before it is frozen, `review` the verdict's evidence review (a reviewed sitting with an
+    approver in the invented run), `store` writes the run's stored evidence document."""
+    capture = _fi_capture(name)
+    if change:
+        change(capture)
+    tmp = tempfile.mkdtemp(prefix="report-fi-")
+    try:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        if review:
+            _rewrite_verdict(run_dir, lambda doc: review(doc["provenance"]["evidence"]))
+        if store:
+            store(run_dir)
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _full_document(run_dir):
+    """The full evidence document the brief renders over the run's frozen pack."""
+    path = os.path.join(run_dir, "pack", "pack.json")
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    return pack_brief.render_full(json.loads(raw.decode("utf-8")),
+                                  hashlib.sha256(raw).hexdigest())
+
+
+def _store_document(text, approve=True, recorded=None):
+    """A `store` hook: the run keeps `text` (or the rendered full document) as its full evidence
+    document, and - where `approve` - an approval recording its sha256 (or `recorded`)."""
+    def store(run_dir):
+        body = text(run_dir) if callable(text) else text
+        data = (body if body is not None else _full_document(run_dir)).encode("utf-8")
+        with open(os.path.join(run_dir, "pack", "EVIDENCE-FULL.md"), "wb") as fh:
+            fh.write(data)
+        if approve:
+            approval = {"by": "Invented Reviewer (fixture)", "at": "2026-08-30T09:05Z",
+                        "note": "Invented fixture note.",
+                        "document_sha256": recorded or hashlib.sha256(data).hexdigest()}
+            with open(os.path.join(run_dir, "pack", "approval.json"), "w",
+                      encoding="utf-8", newline="\n") as fh:
+                json.dump(approval, fh, indent=2)
+    return store
+
+
+APPROVED = _store_document(None)
+
+
+def _fi_frame(capture):
+    return capture["business_frame"][capture["subject"]["ticker"]]
+
+
+def _render_on_record(run_id, change=None):
+    with tempfile.TemporaryDirectory() as tmp:
+        copied = os.path.join(tmp, "run")
+        shutil.copytree(os.path.join(ROOT, "council", "runs", run_id), copied)
+        if change:
+            _rewrite_pack(copied, change)
+        return R.render(copied)
+
+
+class TestFIOnThePage(unittest.TestCase):
+    """What the owner's page shows of a financial institution. Every test FAILS against the
+    pre-change report renderer; the negative and positive controls are marked."""
+
+    def test_the_front_names_the_kind_of_firm_and_measure(self):
+        front = _visible_text(_front(_fi_page()))
+        self.assertIn("financial institution - a bank — rated on price against tangible book, "
+                      "read against the return on tangible equity", front)
+
+    def test_the_fi_words_are_the_briefs_words(self):
+        for key, words in pack_brief._MEASURE_WORDS.items():
+            self.assertEqual(R.MEASURE_WORDS[key], words, key)
+        for key, words in pack_brief._ARCHETYPE_WORDS.items():
+            self.assertEqual(R.ARCHETYPE_WORDS[key], words, key)
+
+    def test_a_holding_report_carries_the_not_rated_sentence(self):
+        page = _fi_page(FI_HOLDING)
+        sentence = pack_brief.FI_NOT_RATED_SENTENCE
+        self.assertIn(sentence, _visible_text(_front(page)))
+        detail = _visible_text(_detail(page))
+        self.assertIn("The net asset value, part by part", detail)
+        for part in _fi_frame(_fi_capture(FI_HOLDING))["nav_bridge"]["components"]:
+            self.assertIn("%s %s %s" % (part["name"], pack_brief.FI_METHOD_WORDS[part["method"]],
+                                        part["value_fact"]), detail)
+        self.assertIn(sentence, detail)
+
+    def test_the_detail_carries_the_fi_frame(self):
+        capture = _fi_capture(FI_BANK)
+        frame = _fi_frame(capture)
+        detail = _detail(_fi_page())
+        self.assertIn("<h3>%s</h3>" % FI_SECTION, detail)
+        text = _visible_text(detail)
+        ratio, requirement = frame["fi_capital"]["ratio_facts"][0], \
+            frame["fi_capital"]["requirement_facts"][0]
+        row = re.search(r"<tr><td>[^<]*<code>%s</code>.*?</tr>" % ratio, detail).group(0)
+        self.assertIn("<code>%s</code>" % requirement, row)
+        self.assertIn(pack_brief.FI_STRESS_HEADING, text)
+        self.assertIn("The risk-cost line: credit losses provision_for_credit_losses_q", text)
+        for line in frame["how_it_earns"]:
+            self.assertIn("%s %s %s" % (line["line"], pack_brief.FI_NATURE_WORDS[line["nature"]],
+                                        line["share_of_period"]), text)
+
+    def test_a_single_names_tailed_stress_fact_prints_on_the_report(self):
+        """Audit round 6 of sub-charge b (r6-1, P-FIb-3): a single name keeps every stress fact,
+        a double-underscore tail on its id included. FAILS against the round-5 selection, which
+        dropped the figure silently; the plain fixture's stress line is the positive control."""
+        tailed = "stress_capital_buffer__2026"
+        value = [fact["value"] for fact in _fi_capture(FI_BANK)["tier1"]
+                 if fact["id"] == "stress_capital_buffer"][0]
+
+        def rename(capture):
+            for fact in capture["tier1"]:
+                if fact["id"] == "stress_capital_buffer":
+                    fact["id"] = tailed
+        for page, fact_id in ((_fi_page(change=rename), tailed),
+                              (_fi_page(), "stress_capital_buffer")):
+            text = _visible_text(_detail(page))
+            self.assertIn(pack_brief.FI_STRESS_HEADING, text)
+            self.assertRegex(text, r"%s\W[^\n]*%s" % (re.escape(fact_id), re.escape(value)))
+
+    def test_guidance_prints_first_then_revisions(self):
+        rows = _fi_frame(_fi_capture(FI_BANK))["management"]["guidance_vs_delivery"]
+        text = _visible_text(_detail(_fi_page()))
+        revision = rows[1]["revisions"][0]
+        first = text.index("first guided %s" % rows[1]["guided"][0])
+        revised = text.index("revised on %s to %s" % (revision["date"], revision["guided"][0]))
+        delivered = text.index("delivered %s" % rows[1]["delivered"])
+        self.assertLess(first, revised)
+        self.assertLess(revised, delivered)
+        self.assertIn("never revised; delivered %s" % rows[0]["delivered"], text)
+
+    def test_the_free_cash_row_is_named_as_distributable_capital(self):
+        self.assertIn(E(pack_brief.FI_FREE_CASH_WORDS), _fi_page())
+        self.assertNotIn(E(pack_brief.FI_FREE_CASH_WORDS), HTML)
+
+    def test_a_capture_authored_regime_is_escaped(self):
+        def forge(capture):
+            _fi_frame(capture)["fi_capital"]["regime"] = "<script>x</script> regime"
+        page = _fi_page(change=forge)
+        self.assertIn("The regime: &lt;script&gt;x&lt;/script&gt; regime", page)
+        self.assertNotIn("<script>x</script>", page)
+
+    def test_an_unvouched_fi_fact_id_travels_as_data(self):
+        def forge(capture):
+            _fi_frame(capture)["nav_bridge"]["discount_fact"] = "not_in_this_pack"
+        page = _fi_page(FI_HOLDING, change=forge)
+        self.assertIn("The discount: not_in_this_pack (not in the pack)", page)
+        self.assertNotIn("<code>not_in_this_pack</code>", page)
+
+    def test_the_masthead_reads_the_question_line(self):
+        """A reviewed sitting whose stored approved document carries the line: it differs from
+        the derived one (it runs past the first question mark), so the masthead shows it only by
+        reading the field."""
+        def line(capture):
+            capture["question_line"] = FI_QUESTION_LINE
+        masthead = _masthead(_fi_page(change=line, store=APPROVED))
+        self.assertNotEqual(FI_QUESTION_LINE, FI_DERIVED_LINE)
+        self.assertIn('<p class="question">%s</p>' % E(FI_QUESTION_LINE), masthead)
+
+    def test_an_approved_line_outside_the_full_question_still_reaches_the_masthead(self):
+        """Architect rulings closing P-FIb-1 and P-FIb-2: the line is trusted by the document
+        the owner approved, which prints it, not by where its words fall in the full question -
+        so an approved line that is not inside the question he recorded is printed as he
+        approved it. (Rounds 1 and 2 tried a string rule; it is removed.)"""
+        def line(capture):
+            capture["question_line"] = FI_CONTRARY_LINE
+        masthead = _masthead(_fi_page(change=line, store=APPROVED))
+        self.assertIn('<p class="question">%s</p>' % E(FI_CONTRARY_LINE), masthead)
+
+    def test_an_approved_document_without_the_line_keeps_the_derived_line(self):
+        """Architect ruling closing P-FIb-2 (audit round 3 of this page): an approver alone
+        vouches for nothing the owner did not see. A sitting approved on a document that does
+        not carry the line - approved before the brief printed it, a document rewritten after
+        its approval, or one carrying another line - prints the derived line."""
+        def line(capture):
+            capture["question_line"] = FI_QUESTION_LINE
+
+        def without_line(run_dir):
+            return "\n".join(row for row in _full_document(run_dir).split("\n")
+                             if not row.startswith(pack_brief.QUESTION_LINE_LABEL))
+
+        def other_line(run_dir):
+            document = _full_document(run_dir)
+            self.assertIn(pack_brief.QUESTION_LINE_LABEL + " " + FI_QUESTION_LINE, document)
+            return document.replace(FI_QUESTION_LINE, FI_CONTRARY_LINE)
+        cases = (("approved before the line", _store_document(without_line)),
+                 ("another line", _store_document(other_line)),
+                 ("rewritten after approval", _store_document(None, recorded="0" * 64)))
+        for name, store in cases:
+            with self.subTest(document=name):
+                masthead = _masthead(_fi_page(change=line, store=store))
+                self.assertNotIn(E(FI_QUESTION_LINE), masthead)
+                self.assertIn('<p class="question">%s</p>' % E(FI_DERIVED_LINE), masthead)
+
+    def test_a_reviewed_sitting_with_no_stored_document_keeps_the_derived_line(self):
+        """The approver is recorded but the run keeps no approved document: nothing shows what
+        the owner saw, so the masthead prints the derived line."""
+        def line(capture):
+            capture["question_line"] = FI_QUESTION_LINE
+        masthead = _masthead(_fi_page(change=line))
+        self.assertNotIn(E(FI_QUESTION_LINE), masthead)
+        self.assertIn('<p class="question">%s</p>' % E(FI_DERIVED_LINE), masthead)
+
+    def test_an_unattended_sitting_keeps_the_derived_line(self):
+        """No person approved the document, so nothing vouches for the capture's line: an
+        auto-mode sitting keeps its full document as the record, with no approval, and prints
+        the line derived from the owner's recorded question."""
+        def line(capture):
+            capture["question_line"] = FI_QUESTION_LINE
+
+        def auto(review):
+            review["mode"] = "auto"
+            review.pop("approved_by", None)
+        masthead = _masthead(_fi_page(change=line, review=auto,
+                                      store=_store_document(None, approve=False)))
+        self.assertNotIn(E(FI_QUESTION_LINE), masthead)
+        self.assertIn('<p class="question">%s</p>' % E(FI_DERIVED_LINE), masthead)
+
+    def test_an_older_capture_keeps_the_derived_line_in_a_reviewed_sitting(self):
+        """The rule reads the field only on a 1.8.0 capture: an older one carries no line the
+        owner saw on his document, so the derived line stands even where one was approved."""
+        def line(capture):
+            capture["capture_version"] = "1.7.1"
+            capture["question_line"] = FI_QUESTION_LINE
+        masthead = _masthead(_fi_page(change=line, store=APPROVED))
+        self.assertNotIn(E(FI_QUESTION_LINE), masthead)
+        self.assertIn('<p class="question">%s</p>' % E(FI_DERIVED_LINE), masthead)
+
+    def test_a_pre_1_8_0_run_keeps_the_derived_masthead_line(self):
+        """GUARD (passes against the pre-change renderer by design, which never read the
+        field): each sitting on record renders byte for byte the same page with the migration's
+        one-line question (filled by the masthead's own rule) as without it."""
+        if not os.path.isdir(os.path.join(ROOT, "council", "runs", FI_ON_RECORD[0])):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        for run_id in FI_ON_RECORD:
+            with self.subTest(run_id=run_id):
+                before = _render_on_record(run_id)
+
+                def migrate(doc):
+                    doc["capture"]["question_line"] = R._question_line(doc["capture"])
+                after = _render_on_record(run_id, migrate)
+                self.assertEqual(after, before)
+                derived = re.search(r'<p class="question">(.*?)</p>', before).group(1)
+                self.assertEqual(derived, E(R._question_line(
+                    {"question_verbatim": _pack_question(run_id)})))
+
+    def test_the_cycle_appendix_prints_the_last_point_date(self):
+        def cycle(capture):
+            capture["cycle"] = {
+                "name": "INVENTED FIXTURE - a credit cycle",
+                "why_it_matters": "INVENTED FIXTURE - the loan book rests on it",
+                "series": [{"id": "cycle_series_0", "source": "INVENTED FIXTURE - a source",
+                            "as_of": FI_CYCLE_AS_OF, "unit": "index",
+                            "points": [{"date": FI_CYCLE_LAST, "value": "100"}],
+                            "refetch_url_or_source_line": "https://example.invalid/series"}]}
+        detail = _detail(_fi_page(change=cycle))
+        self.assertIn("read %s; latest point %s" % (FI_CYCLE_AS_OF, FI_CYCLE_LAST), detail)
+
+    def test_a_non_fi_page_carries_no_fi_line(self):
+        """NEGATIVE control: the invented profitable operator's page carries none of it."""
+        for words in (FI_SECTION, "financial institution", "not rated in this sitting",
+                      "capital the firm can pay out"):
+            self.assertNotIn(words, HTML)
+
+    def test_two_renders_of_one_fi_run_are_byte_identical(self):
+        """POSITIVE control."""
+        self.assertEqual(_fi_page(FI_HOLDING), _fi_page(FI_HOLDING))
+
+
+def _pack_question(run_id):
+    with open(os.path.join(ROOT, "council", "runs", run_id, "pack", "pack.json"), "rb") as fh:
+        return json.loads(fh.read().decode("utf-8"))["capture"]["question_verbatim"]
 
 
 if __name__ == "__main__":

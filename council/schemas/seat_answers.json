@@ -1,7 +1,12 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Seat answer contracts 1.1.0",
-  "description": "One member per seat kind; the host validates each answer file against its member. The members named chair_draft and chair_resolve declare their verdict payloads shallowly ('type': 'object'); the host validates those payloads against the draft_verdict member, so the chair's field set has one source of truth. Beyond these shapes the host also checks by code: the frame halves are verbatim substrings of the owner's question; the synopsis is at most 180 words; every finding is disposed of by name.",
+  "title": "Seat answer contracts 1.2.0",
+  "required_headings": [
+    "Why the headline numbers moved",
+    "The decisive metrics, read",
+    "What would change my mind"
+  ],
+  "description": "One member per seat kind; the host validates each answer file against its member. The members named chair_draft and chair_resolve declare their verdict payloads shallowly ('type': 'object'); the host validates those payloads against the draft_verdict member, so the chair's field set has one source of truth. Beyond these shapes the host also checks by code: the frame halves are verbatim substrings of the owner's question; the synopsis is at most 180 words; every finding is disposed of by name. required_headings (1.2.0, UPGRADE-2 U5, owner ruling AC5) is data, not a member: the three headings every advisor answer's markdown carries, named in every advisor brief and checked for presence by the host.",
   "frame": {
     "type": "object",
     "additionalProperties": false,

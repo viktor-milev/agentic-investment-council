@@ -129,7 +129,7 @@
    "what_it_does_figures": []
   }
  },
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -149,6 +149,7 @@
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is the utility-scale storage theme attractive through its named universe?",
  "question_verbatim": "Is the utility-scale storage theme attractive through its named universe? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",
@@ -437,8 +438,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607187468656d652d7061",
-  "evidence_sha256": "6cdc0b59573064c08721d053c04a6b11a868aa82be3b437cc35ec97e8cdd0ca2",
+  "evidence_sha256": "49dcf7623f3f330f57bfbfb848d680f9a04ee0819e20304505f6b0bedcbbf2ef",
   "post_audit_changes": [],
-  "post_audit_sha256": "6cdc0b59573064c08721d053c04a6b11a868aa82be3b437cc35ec97e8cdd0ca2"
+  "post_audit_sha256": "49dcf7623f3f330f57bfbfb848d680f9a04ee0819e20304505f6b0bedcbbf2ef"
  }
 }

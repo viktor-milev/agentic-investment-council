@@ -48,6 +48,13 @@ def make_request(**overrides):
     return request
 
 
+_WHOLE_STREAM = ['{"type":"thread.started","thread_id":"t"}',
+                 '{"type":"turn.started"}',
+                 '{"type":"item.completed","item":{"id":"item_0",'
+                 '"type":"agent_message","text":"{}"}}',
+                 '{"type":"turn.completed"}']
+
+
 class FakeLauncher:
     """Stands in for the codex CLI: records every call and writes scripted
     files exactly where the argv points. A smoke call is recognised by its
@@ -55,12 +62,15 @@ class FakeLauncher:
 
     def __init__(self, returncode=0, timed_out=False, response_text=None,
                  events_lines=None, stderr_text="",
-                 smoke_returncode=0, smoke_stdout="OK\n", sent_bytes=None):
+                 smoke_returncode=0, smoke_stdout="OK\nNONE\n",
+                 sent_bytes=None):
         self.calls = []
         self.returncode = returncode
         self.timed_out = timed_out
         self.response_text = response_text
-        self.events_lines = events_lines or []
+        # A whole stream unless a test scripts one (finding r1-3).
+        self.events_lines = (_WHOLE_STREAM if events_lines is None
+                             else events_lines)
         self.stderr_text = stderr_text
         self.smoke_returncode = smoke_returncode
         self.smoke_stdout = smoke_stdout
@@ -154,6 +164,10 @@ class TestCommandSurface(BridgeCase):
             "--skip-git-repo-check",
             "--ephemeral",
             "--ignore-user-config",
+            "-c", 'web_search="disabled"',
+            "--disable", "apps",
+            "--disable", "multi_agent",
+            "--disable", "image_generation",
             "-C", isolated,
             "--output-schema",
             os.path.join(isolated, "challenge_findings_schema.json"),
@@ -162,8 +176,10 @@ class TestCommandSurface(BridgeCase):
         ]
         # Full-list equality: order, completeness, and NO trailing prompt
         # argument - the prompt travels on stdin, as the proven bridge sends it.
+        # BRIDGE-POSTURE: web search, the connected apps, sub-agents and
+        # image generation are switched off.
         self.assertEqual(calls[0]["argv"], expected)
-        for index in (12, 14, 17):
+        for index in (20, 22, 25):
             self.assertTrue(os.path.isabs(expected[index]))
         self.assertEqual(calls[0]["stdin"], CASEFILE_BYTES)
         self.assertEqual(calls[0]["timeout_s"], 120)
@@ -179,8 +195,14 @@ class TestCommandSurface(BridgeCase):
             "--skip-git-repo-check",
             "--sandbox", "read-only",
             "--ephemeral",
-            "Reply OK",
+            "-c", 'web_search="disabled"',
+            "--disable", "apps",
+            "--disable", "multi_agent",
+            "--disable", "image_generation",
+            bridge.PROBE_PROMPT,
         ])
+        self.assertTrue(bridge.PROBE_PROMPT.startswith("Reply with"))
+        self.assertIn("NONE", bridge.PROBE_PROMPT)
         self.assertIsNone(fake.calls[0]["stdin"])
 
 
@@ -217,6 +239,9 @@ class TestResultDiscipline(BridgeCase):
         fake = FakeLauncher(response_text=GOOD_TEXT, events_lines=[
             '{"type":"thread.started","thread_id":"t1"}',
             'not json at all',
+            '{"type":"turn.started"}',
+            '{"type":"item.completed","item":{"id":"item_0",'
+            '"type":"agent_message","text":"{}"}}',
             '{"type":"turn.completed","usage":{"input_tokens":1200,'
             '"cached_input_tokens":100,"output_tokens":300}}',
         ])
@@ -617,6 +642,11 @@ class TestEvidenceCommandSurface(EvidenceCase):
             "--skip-git-repo-check",
             "--ephemeral",
             "--ignore-user-config",
+        ] + ([] if bridge.load_posture()["evidence_audit_reads_the_web"]
+             else ["-c", 'web_search="disabled"']) + [
+            "--disable", "apps",
+            "--disable", "multi_agent",
+            "--disable", "image_generation",
             "-C", isolated,
             "--output-schema",
             os.path.join(isolated, "evidence_findings_schema.json"),
@@ -841,8 +871,8 @@ class TestTheCallLeavesItsOwnMark(EvidenceCase):
         tokens and the owner's budget is judged on that figure. The log
         of attempts is not what the re-dispatch deletes."""
         first = EvidenceLauncher(
-            events_lines=['{"type":"turn.completed",'
-                          '"usage":{"total_tokens":40000}}'])
+            events_lines=_WHOLE_STREAM[:-1] + [
+                '{"type":"turn.completed","usage":{"total_tokens":40000}}'])
         capture_path, code, _ = self.run_evidence(first)
         self.assertEqual(code, 0)
         self.assertEqual(self.result()["usage_tokens"], 40000)
@@ -851,8 +881,8 @@ class TestTheCallLeavesItsOwnMark(EvidenceCase):
 
         os.remove(os.path.join(self.out_path(), bridge.RESULT_NAME))
         second = EvidenceLauncher(
-            events_lines=['{"type":"turn.completed",'
-                          '"usage":{"total_tokens":34000}}'])
+            events_lines=_WHOLE_STREAM[:-1] + [
+                '{"type":"turn.completed","usage":{"total_tokens":34000}}'])
         code, printed = self.main_with(
             second, ["evidence", capture_path, self.out_path()])
         self.assertEqual(code, 0, printed)
@@ -2014,6 +2044,408 @@ class TestEvidenceRequestCarriesTheChoice(EvidenceCase):
             for key in _SEAT_ENV:
                 os.environ.pop(key, None)
             os.environ.update(saved)
+
+
+# ---------------------------------------------------------------------
+# BRIDGE-POSTURE: the challenger sees the case file and nothing else.
+# Web search and the connected apps are switched off on the command
+# line; the unpaid probe asks the model for its tool list and refuses
+# the paid call on a forbidden tool; every tool call the paid call's
+# event stream shows is recorded by name, and one beyond reading the
+# payload marks the result posture_breach. No paid calls here.
+# ---------------------------------------------------------------------
+
+def _item(kind, item_id, event="item.completed", **fields):
+    item = {"id": item_id, "type": kind}
+    item.update(fields)
+    return json.dumps({"type": event, "item": item})
+
+
+_STREAM_HEAD = ['{"type":"thread.started","thread_id":"t"}',
+                '{"type":"turn.started"}']
+_STREAM_TAIL = [_item("agent_message", "item_9", text="{}"),
+                '{"type":"turn.completed","usage":{"input_tokens":10,'
+                '"output_tokens":2}}']
+
+
+def _stream(*middle):
+    return _STREAM_HEAD + list(middle) + _STREAM_TAIL
+
+
+class TestPostureData(unittest.TestCase):
+    def test_the_forbidden_classes_are_data_not_code(self):
+        doc = bridge.load_posture()
+        self.assertEqual(doc["version"], "1.0.0")
+        self.assertEqual(sorted(doc["forbidden_tool_classes"]), sorted([
+            "search", "browser", "gmail", "github", "mail", "calendar",
+            "drive", "app", "mcp", "connector", "runner", "email",
+            "generation", "generate", "gen"]))
+        # BRIDGE-POSTURE-b Step 0 (P-BRIDGE-POSTURE-5): image generation
+        # is banned by its generation words; 'image' itself stays out.
+        # Round 7 Step 0 (P-BRIDGE-POSTURE-4): 'agent' and 'image' left
+        # the pre-flight ban - unremovable on codex 0.156.0, in-sandbox,
+        # enforced after the call by the event record.
+        self.assertNotIn("agent", doc["forbidden_tool_classes"])
+        self.assertNotIn("image", doc["forbidden_tool_classes"])
+        self.assertIsInstance(doc["evidence_audit_reads_the_web"], bool)
+
+
+class TestProbe(BridgeCase):
+    def probe(self, reply, **kwargs):
+        return bridge.smoke(launcher=FakeLauncher(smoke_stdout=reply),
+                            **kwargs)
+
+    def test_none_passes(self):
+        ok, detail = self.probe("OK\nNONE\n")
+        self.assertTrue(ok, detail)
+
+    def test_a_file_reading_tool_passes(self):
+        # apply_patch is not of the class 'app': classes match whole words.
+        ok, detail = self.probe("OK\nshell\napply_patch\n")
+        self.assertTrue(ok, detail)
+
+    def test_web_search_refuses_and_names_the_tool(self):
+        ok, detail = self.probe("OK\nshell\nweb_search\n")
+        self.assertFalse(ok)
+        self.assertIn("web_search", detail)
+        self.assertIn("search", detail)
+
+    def test_an_app_tool_refuses_and_names_the_tool(self):
+        ok, detail = self.probe(
+            "OK\n1. `mcp__codex_apps__gmail_send_email`\n")
+        self.assertFalse(ok)
+        self.assertIn("mcp__codex_apps__gmail_send_email", detail)
+
+    def test_email_search_and_mail_tools_refuse(self):
+        # Step 0 of round 1 kept 'email'; round 7 Step 0 moved the
+        # sub-agent and image tools to the after-the-call record.
+        for tool in ("send_email", "web_search", "gmail.send"):
+            ok, detail = self.probe("OK\nshell\n%s\n" % tool)
+            self.assertFalse(ok, tool)
+            self.assertIn(tool, detail)
+
+    def test_the_live_0_156_0_tool_list_passes(self):
+        # Round 7 Step 0: the list codex 0.156.0 reports with every
+        # feature switch off (measured 2026-09-24), verbatim.
+        live = ["collaboration.followup_task",
+                "collaboration.interrupt_agent",
+                "collaboration.list_agents",
+                "collaboration.send_message",
+                "collaboration.spawn_agent",
+                "collaboration.wait_agent",
+                "functions.exec", "functions.wait",
+                "functions.request_user_input",
+                "functions.request_user_input_async",
+                "clock.sleep", "apply_patch", "create_goal",
+                "exec_command", "get_goal", "update_goal", "view_image",
+                "write_stdin", "clock__curr_time"]
+        ok, detail = self.probe("OK\n" + "\n".join(live) + "\n")
+        self.assertTrue(ok, detail)
+
+    def test_image_generation_refuses_naming_the_class(self):
+        # BRIDGE-POSTURE-b Step 0 (P-BRIDGE-POSTURE-5): a server-side
+        # image generator refuses the paid call by its generation word.
+        for tool, cls in (("image_gen", "gen"),
+                          ("image_generation", "generation"),
+                          ("generate_image", "generate")):
+            ok, detail = self.probe("OK\nshell\n%s\n" % tool)
+            self.assertFalse(ok, tool)
+            self.assertIn(tool, detail)
+            self.assertIn("class '%s'" % cls, detail)
+
+    def test_the_local_image_viewer_still_passes(self):
+        # Positive control: view_image carries no generation word.
+        ok, detail = self.probe("OK\nshell\nview_image\n")
+        self.assertTrue(ok, detail)
+
+    def test_ok_without_a_list_or_none_refuses(self):
+        # Audit round 1 finding r1-2: an omitted tool list is a partial
+        # answer, not a clean probe.
+        for reply in ("OK\n", "OK.\n", "OK:\n"):
+            ok, detail = self.probe(reply)
+            self.assertFalse(ok, reply)
+            self.assertIn("NONE", detail)
+
+    def test_a_list_on_one_line_refuses_and_is_named(self):
+        # Round 6: the strict grammar refuses a one-line list outright.
+        ok, detail = self.probe("OK: shell, GithubCreateIssue\n")
+        self.assertFalse(ok)
+        self.assertIn("GithubCreateIssue", detail)
+
+    def test_the_reply_must_start_with_ok(self):
+        ok, detail = self.probe("Tools: NONE\nOK\n")
+        self.assertFalse(ok)
+        self.assertIn("OK", detail)
+
+    # Round 6 Step 0 (P-BRIDGE-POSTURE-3): the reply is read by a strict
+    # grammar - the first line exactly OK, then exactly NONE or one
+    # tool-name token per line; any other line refuses and is named.
+    def test_grammar_a_prose_line_refuses_and_is_named(self):
+        ok, detail = self.probe("OK\nNo tools available\n")
+        self.assertFalse(ok)
+        self.assertIn("No tools available", detail)
+
+    def test_grammar_okay_is_not_ok(self):
+        ok, detail = self.probe("OKAY\nNONE\n")
+        self.assertFalse(ok)
+        self.assertIn("OKAY", detail)
+
+    def test_grammar_none_mixed_with_a_tool_refuses(self):
+        for reply in ("OK\nNONE\nweb_search\n", "OK\nNONE\nshell\n",
+                      "OK\nshell\nNONE\n"):
+            ok, detail = self.probe(reply)
+            self.assertFalse(ok, reply)
+            self.assertIn("NONE", detail)
+
+    def test_grammar_ok_alone_refuses(self):
+        ok, detail = self.probe("OK")
+        self.assertFalse(ok)
+
+    def test_grammar_ok_then_none_passes(self):
+        ok, detail = self.probe("OK\nNONE")
+        self.assertTrue(ok, detail)
+
+    def test_grammar_plain_tool_tokens_pass(self):
+        ok, detail = self.probe("OK\nfunctions.exec\ntodo_list")
+        self.assertTrue(ok, detail)
+        self.assertIn("functions.exec, todo_list", detail)
+
+    def test_grammar_a_forbidden_token_refuses_naming_the_class(self):
+        ok, detail = self.probe("OK\nweb_search")
+        self.assertFalse(ok)
+        self.assertIn("web_search", detail)
+        self.assertIn("class 'search'", detail)
+
+    def test_grammar_an_offending_line_is_cut_at_80_characters(self):
+        ok, detail = self.probe("OK\n" + "x " * 100)
+        self.assertFalse(ok)
+        self.assertIn("'" + "x " * 40 + "'", detail)
+
+    def test_the_reply_is_recorded(self):
+        path = os.path.join(self.tmp, "probe.json")
+        ok, _ = self.probe("OK\nshell\nbrowser.open\n", record_path=path)
+        self.assertFalse(ok)
+        record = canonical.read_json(path)
+        self.assertEqual(record["reply"], "OK\nshell\nbrowser.open\n")
+        self.assertEqual(record["tools"], ["shell", "browser.open"])
+        self.assertEqual(record["refused_tool"], "browser.open")
+        self.assertFalse(record["ok"])
+
+
+class TestProbeAtTheOperatorSurface(BridgeCase):
+    make_run_dir = TestCli.make_run_dir
+    main_with = TestCli.main_with
+
+    def test_a_forbidden_tool_refuses_the_paid_challenge(self):
+        run_dir, challenge_dir = self.make_run_dir()
+        fake = FakeLauncher(response_text=GOOD_TEXT,
+                            smoke_stdout="OK\nweb_search\n")
+        code, printed = self.main_with(fake, ["challenge", run_dir])
+        self.assertEqual(code, 3)
+        self.assertEqual(fake.challenge_calls(), [])
+        written = canonical.read_json(
+            os.path.join(challenge_dir, "result.json"))
+        self.assertEqual(written["status"], "launch_failure")
+        self.assertIn("web_search", written["failure_reason"])
+        probe = canonical.read_json(
+            os.path.join(challenge_dir, bridge.PROBE_NAME))
+        self.assertEqual(probe["refused_tool"], "web_search")
+
+
+class TestPostureAfterTheCall(BridgeCase):
+    def test_no_tool_call_is_success_and_records_an_empty_list(self):
+        result = self.run_bridge(FakeLauncher(response_text=GOOD_TEXT,
+                                              events_lines=_stream()))
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["tool_calls"], [])
+        # The raw stream is the per-sitting record, kept beside result.json.
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.out_dir, "events.jsonl")))
+
+    def test_a_web_search_is_a_posture_breach(self):
+        result = self.run_bridge(FakeLauncher(
+            response_text=GOOD_TEXT,
+            events_lines=_stream(_item("web_search", "item_1",
+                                       query="INVENTED"))))
+        self.assertEqual(result["status"], "posture_breach")
+        self.assertEqual(result["tool_calls"], ["web_search"])
+        self.assertIn("web_search", result["failure_reason"])
+        self.assertIsNone(result["findings"])
+        self.assertEqual(self.result_on_disk()["status"], "posture_breach")
+
+    def test_a_raw_web_search_call_event_is_a_posture_breach(self):
+        result = self.run_bridge(FakeLauncher(
+            response_text=GOOD_TEXT,
+            events_lines=_stream('{"type":"web_search_call"}')))
+        self.assertEqual(result["status"], "posture_breach")
+        self.assertEqual(result["tool_calls"], ["web_search_call"])
+
+    def test_an_app_tool_is_a_posture_breach_named_by_server_and_tool(self):
+        result = self.run_bridge(FakeLauncher(
+            response_text=GOOD_TEXT,
+            events_lines=_stream(_item("mcp_tool_call", "item_1",
+                                       server="codex_apps",
+                                       tool="gmail_search",
+                                       arguments={"q": "INVENTED"}))))
+        self.assertEqual(result["status"], "posture_breach")
+        self.assertEqual(result["tool_calls"],
+                         ["mcp_tool_call:codex_apps.gmail_search"])
+        self.assertNotIn("INVENTED", json.dumps(result["tool_calls"]))
+
+    def test_sub_agent_and_image_viewing_calls_are_a_posture_breach(self):
+        # Round 7 Step 0: these tools stay listed on codex 0.156.0, so
+        # the event record, not the probe, is what voids the answer.
+        for kind, fields in (
+                ("collab_tool_call", {"tool": "spawn_agent"}),
+                ("collaboration.spawn_agent", {}),
+                ("view_image", {"path": "x.png"})):
+            with self.subTest(kind=kind):
+                shutil.rmtree(self.out_dir, ignore_errors=True)
+                result = self.run_bridge(FakeLauncher(
+                    response_text=GOOD_TEXT,
+                    events_lines=_stream(_item(kind, "item_1", **fields))))
+                self.assertEqual(result["status"], "posture_breach")
+                self.assertEqual(result["tool_calls"], [kind])
+                self.assertIn(kind, result["failure_reason"])
+
+    def test_the_sandboxed_shell_reading_is_recorded_once_not_a_breach(self):
+        result = self.run_bridge(FakeLauncher(
+            response_text=GOOD_TEXT,
+            events_lines=_stream(
+                _item("command_execution", "item_1", event="item.started",
+                      command="cat challenge_findings_schema.json"),
+                _item("command_execution", "item_1",
+                      command="cat challenge_findings_schema.json",
+                      exit_code=0))))
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["tool_calls"], ["command_execution"])
+
+
+class TestIncompleteEventStream(BridgeCase):
+    """Audit round 1 finding r1-3: the event stream is the only record
+    the posture is checked against, so a stream that is missing, cut
+    short or holds an unreadable line fails closed - never "no calls"."""
+
+    def assert_refused(self, lines):
+        result = self.run_bridge(FakeLauncher(response_text=GOOD_TEXT,
+                                              events_lines=lines))
+        self.assertEqual(result["status"], "malformed_output")
+        self.assertIn("event stream", result["failure_reason"])
+        self.assertIsNone(result["findings"])
+
+    def test_an_empty_stream_is_refused(self):
+        self.assert_refused([])
+
+    def test_a_stream_that_never_completes_the_turn_is_refused(self):
+        self.assert_refused(_STREAM_HEAD)
+
+    def test_a_truncated_tool_call_line_is_refused(self):
+        self.assert_refused(_stream(
+            '{"type":"item.completed","item":{"type":"mcp_tool_call",'
+            '"id":"item_1","server":"codex_apps","tool":"gmail'))
+
+    # Round 2 finding r2-1, closed by the architect's bracket rule
+    # (P-BRIDGE-POSTURE-1): the stream is whole only when it is the
+    # record of one complete turn - thread.started first, turn.started,
+    # an agent_message item, turn.completed last.
+    def test_only_turn_completed_is_refused(self):
+        self.assert_refused(['{"type":"turn.completed"}'])
+
+    def test_turn_completed_without_turn_started_is_refused(self):
+        self.assert_refused([_STREAM_HEAD[0]] + _STREAM_TAIL)
+
+    def test_a_turn_without_an_agent_message_is_refused(self):
+        self.assert_refused(_STREAM_HEAD + _STREAM_TAIL[1:])
+
+    def test_turn_completed_before_the_message_is_refused(self):
+        self.assert_refused(_STREAM_HEAD + [_STREAM_TAIL[1],
+                                            _STREAM_TAIL[0]])
+
+    # Round 3 finding r3-1, closed by the architect's ruling
+    # (P-BRIDGE-POSTURE-2): one whole turn means exactly one - a second
+    # thread.started, turn.started or turn.completed is a gap.
+    def test_two_turn_completed_events_are_refused_not_summed(self):
+        self.assert_refused(_stream() + [_STREAM_TAIL[1]])
+
+    def test_two_turn_started_events_are_refused(self):
+        self.assert_refused(_STREAM_HEAD + _STREAM_HEAD[1:] + _STREAM_TAIL)
+
+    def test_two_thread_started_events_are_refused(self):
+        self.assert_refused(_STREAM_HEAD[:1] + _stream())
+
+    def test_the_whole_four_event_stream_succeeds(self):
+        result = self.run_bridge(FakeLauncher(response_text=GOOD_TEXT,
+                                              events_lines=_stream()))
+        self.assertEqual(result["status"], "success")
+
+    def test_the_fake_launchers_default_stream_is_whole(self):
+        result = self.run_bridge(FakeLauncher(response_text=GOOD_TEXT))
+        self.assertEqual(result["status"], "success")
+
+
+class TestPostureOnTheEvidenceCall(EvidenceCase):
+    def with_posture(self, reads_the_web):
+        original = bridge.load_posture
+        doc = dict(original())
+        doc["evidence_audit_reads_the_web"] = reads_the_web
+        bridge.load_posture = lambda *a, **kw: doc
+        self.addCleanup(setattr, bridge, "load_posture", original)
+
+    def test_an_app_tool_breaches_the_evidence_call(self):
+        fake = EvidenceLauncher(events_lines=_stream(
+            _item("mcp_tool_call", "item_1", server="codex_apps",
+                  tool="github_get_repo")))
+        _, code, _ = self.run_evidence(fake)
+        self.assertEqual(code, 3)
+        result = canonical.read_json(
+            os.path.join(self.out_path(), bridge.RESULT_NAME))
+        self.assertEqual(result["status"], "posture_breach")
+        self.assertIn("github_get_repo", result["failure_reason"])
+
+    def test_the_web_reader_follows_the_posture_file(self):
+        stream = _stream(_item("web_search", "item_1"))
+        self.with_posture(True)
+        fake = EvidenceLauncher(events_lines=stream)
+        _, code, printed = self.run_evidence(fake)
+        self.assertEqual(code, 0, printed)
+        self.assertNotIn('web_search="disabled"',
+                         fake.challenge_calls()[0]["argv"])
+
+    def test_the_web_reader_admits_the_raw_web_search_call_event(self):
+        # Audit round 1 finding r1-1: the raw event form of a web search
+        # is the same permitted reader, not a breach.
+        self.with_posture(True)
+        fake = EvidenceLauncher(events_lines=_stream(
+            '{"type":"web_search_call"}'))
+        _, code, printed = self.run_evidence(fake)
+        self.assertEqual(code, 0, printed)
+        result = canonical.read_json(
+            os.path.join(self.out_path(), bridge.RESULT_NAME))
+        self.assertEqual(result["tool_calls"], ["web_search_call"])
+
+    def test_the_web_reader_switched_off_breaches(self):
+        stream = _stream(_item("web_search", "item_1"))
+        self.with_posture(False)
+        fake = EvidenceLauncher(events_lines=stream)
+        _, code, _ = self.run_evidence(fake)
+        self.assertEqual(code, 3)
+        self.assertIn('web_search="disabled"',
+                      fake.challenge_calls()[0]["argv"])
+        result = canonical.read_json(
+            os.path.join(self.out_path(), bridge.RESULT_NAME))
+        self.assertEqual(result["status"], "posture_breach")
+
+    def test_the_capture_records_a_breach_as_malformed_output(self):
+        # The capture's own status list is another lane's contract: a
+        # breach is recorded there exactly as an unreadable answer is,
+        # with the reason naming the tool.
+        block = bridge.evidence_challenge_block(
+            {"status": "posture_breach",
+             "failure_reason": "posture breach: mcp_tool_call:x.y"},
+            {}, "gpt-test")
+        self.assertEqual(block["status"], "failed")
+        self.assertEqual(block["failure_status"], "malformed_output")
+        self.assertIn("mcp_tool_call:x.y", block["failure_reason"])
 
 
 if __name__ == "__main__":

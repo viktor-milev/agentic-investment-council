@@ -34,12 +34,28 @@ import json
 import os
 import unicodedata
 
-from council.evidence import gate, trace
+from council.evidence import gate, sufficiency, tape, trace
+from council.evidence.brief import (
+    FI_ARCHETYPE, FI_METHOD_WORDS, FI_NATURE_WORDS, FI_NEVER_REVISED,
+    FI_NOT_RATED_SENTENCE, FI_RISK_KIND_WORDS, FI_STRESS_HEADING,
+    FI_SUBTYPE_WORDS, MEASURE_WORDS, checklist_description, fi_capital_pairs,
+    fi_kind_words, fi_stress_evidence)
 from council.lib import canonical, subjects
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 FLOORS_PATH = os.path.join(ROOT, "council", "floors", "floors.json")
 PROSE_RULES_PATH = os.path.join(ROOT, "council", "floors", "prose-rules.json")
+SEAT_ANSWERS_PATH = os.path.join(ROOT, "council", "schemas",
+                                 "seat_answers.json")
+
+
+def required_headings(path=None):
+    """The three headings every advisor answer carries (UPGRADE-2 U5.1,
+    owner ruling AC5), read from the seat-answer contracts file so the
+    brief and the host's presence check share one source."""
+    with open(path or SEAT_ANSWERS_PATH, "rb") as handle:
+        return list(json.loads(handle.read().decode("utf-8"))
+                    ["required_headings"])
 
 
 def _prose_rules():
@@ -154,6 +170,147 @@ LENS_DEFINITIONS = {
         "shape and depth of its drawdowns, the volatility regime it lives "
         "in, how it gaps on news, and how deep its trading liquidity runs.",
 }
+
+# UPGRADE-2 U5.1 (owner ruling AC5, no sixth seat): on a subject with
+# earnings, the bull, bear and base-rate lens sentences become METHOD
+# paragraphs, so those seats argue from the business and its numbers rather
+# than from a stance. What each seat decides is unchanged; only how it is told
+# to argue. The tables named are the case file's own headings (the business
+# frame). An anchorless subject has no earnings to read, so its seats keep the
+# one-sentence lens above and lead with their evidence emphasis. Market
+# structure and risk are unchanged here (U4(b) gives them the tape).
+ADVISOR_METHODS = {
+    "advisor_bull":
+        "the case for committing capital to this name at these terms, "
+        "argued from the business and its numbers, never from a stance. "
+        "Your method, in this order:\n"
+        "  1. Earnings power. Read the decisive metrics in the case file's "
+        "table of the numbers that decide this question; the margin "
+        "trajectory; cash conversion, meaning operating cash flow divided "
+        "by net income; and reinvestment intensity, meaning how much of "
+        "its cash the business puts back into itself.\n"
+        "  2. The moat: what protects these earnings from competitors, and "
+        "why that protection holds.\n"
+        "  3. Management delivery, read from the case file's table \""
+        "What management guided, beside what it delivered\"; where the "
+        "case file declares that table absent, say so and weigh the gap.\n"
+        "  4. State, in one sentence, why the headline numbers moved.",
+    "advisor_bear":
+        "the case against committing capital to this name at these terms, "
+        "argued from the business and its numbers, never from a stance. "
+        "Your method, in this order:\n"
+        "  1. The cost base and its operating leverage, meaning how far "
+        "profit swings when revenue moves.\n"
+        "  2. Competitive erosion: where rivals are taking share, price or "
+        "margin.\n"
+        "  3. Guidance credibility, read from the case file's table \""
+        "What management guided, beside what it delivered\"; where the "
+        "case file declares that table absent, say so and weigh the gap.\n"
+        "  4. Balance-sheet resilience: net debt against earnings, or, for "
+        "a business burning cash, how many months its cash lasts.\n"
+        "  5. Accounting-quality flags: receivables and inventory growing "
+        "faster than sales, one-off items, and drift in the share count.\n"
+        "  6. State, in one sentence, why the headline numbers moved.",
+    "advisor_base_rate":
+        "the outside view: what reference class does this belong to, and "
+        "what has happened to comparable subjects in that class attempting "
+        "this? Your method, in this order:\n"
+        "  1. Name the reference class explicitly. Start from the case "
+        "file's peer set; where the case file declares that table absent, "
+        "say so and weigh the gap. Where the case file reads what is changing as a "
+        "model_transition or a turnaround, the class is the companies that "
+        "attempted the same change, and you say what happened to them.\n"
+        "  2. Start from the default that the market is usually right, and "
+        "say what would have to be true for it to be wrong here.\n"
+        "  3. Name the quantities the story implies (the growth, margin or "
+        "share it needs) and set each against the base rate for that "
+        "class.",
+}
+
+
+# UPGRADE-2 U4(b) (owner ruling AC4, spec U4.4): where the pack carries a
+# daily price series, the freeze has computed the tape - the figures a seat
+# would otherwise read off a chart - and the two seats whose lenses are the
+# price and the asset's own risk are told to read it, in order. Each method
+# opens with the seat's unchanged lens sentence. The market-structure seat's
+# sixth step, insider flow and the issuer bid, rides only on a single stock,
+# the one class whose floors ask for those facts (floors 1.7.0).
+TAPE_CITE = ("Cite every tape figure by its plain-English name and its "
+             "figure as the case file gives them, never by its id.")
+INSIDER_EXAMINATION = (
+    "from the case file's insider and buyback facts, the direction, "
+    "seniority and persistence of insider dealing over twelve months, "
+    "cluster or isolated, its size against the holder's stake and the "
+    "day's volume; the buyback as a separate, dated absorber of supply. "
+    "Where the case file declares either absent, say so.")
+TAPE_INSIDER_STEP = ("  6. Insider flow and the issuer bid: "
+                     + INSIDER_EXAMINATION + "\n")
+# Audit round 1 (r1-3): AC4's second examination needs no price series,
+# so a single stock whose pack carries none still gets it after the lens.
+UNTAPED_INSIDER = (" Beside it, one examination, insider flow and the "
+                   "issuer bid: " + INSIDER_EXAMINATION)
+TAPE_METHODS = {
+    "advisor_market_structure":
+        LENS_DEFINITIONS["advisor_market_structure"]
+        + " Read the price first from the tape: the case file's figures "
+        "computed at the freeze from the daily closes. Your method, in "
+        "this order:\n"
+        "  1. The trend. Set the last close against its 50-, 100- and "
+        "200-day averages, both the distance and each average's own price; "
+        "read the slope of the 200-day average over 60 days and the days "
+        "in the last 52 weeks the price closed above it. Name the primary "
+        "trend in one sentence.\n"
+        "  2. The place in the range: where the price sits in its 52-week "
+        "range, its fall from the 52-week closing high, and the highest "
+        "and lowest closes with their dates.\n"
+        "  3. Relative strength: the price return over 21, 63, 126 and 252 "
+        "trading days, and the same windows against the benchmark; where "
+        "the case file declares the benchmark figures absent, say so.\n"
+        "  4. The volume signature: recent trading volume against its "
+        "usual level, and what it says about who is trading.\n"
+        "  5. The setup: key support and resistance as prices with their "
+        "dates, taken from the tape; a pattern only if one is honestly "
+        "present (base, breakdown, flag, double bottom), else 'none'; and "
+        "the one price that would invalidate the setup.\n",
+    "advisor_risk":
+        LENS_DEFINITIONS["advisor_risk"]
+        + " Read that risk first from the tape: the case file's figures "
+        "computed at the freeze from the daily closes. Your method, in "
+        "this order:\n"
+        "  1. The drawdown shape: the fall from the 52-week closing high, "
+        "and the highest and lowest closes of the 52 weeks with their "
+        "dates - how deep the fall runs and how long ago the high was.\n"
+        "  2. The volatility regime: realized volatility over 21, 63 and "
+        "252 trading days, annualized; say whether the recent regime is "
+        "calmer or wilder than the year's.\n"
+        "  3. The gap on news: the largest one-day fall in 52 weeks and "
+        "its date, and what the case file says happened then; where it "
+        "says nothing, say so.\n",
+}
+
+
+def advisor_remit(seat_kind, subject=None, framed=False, taped=False):
+    """The remit an advisor is briefed with: its method paragraph when the
+    capture carries a business frame (the tables the method names), its
+    lens sentence otherwise - an ETF, basket or theme with no frame
+    included (architect ruling closing P-U5a-1). Where the pack carries a
+    price series (`taped`), the market-structure and risk seats get their
+    tape method whatever the subject; the insider step only on a single
+    stock, where it rides untaped too (unit U4(b))."""
+    if taped and seat_kind in TAPE_METHODS:
+        method = TAPE_METHODS[seat_kind]
+        if (seat_kind == "advisor_market_structure"
+                and (subject or {}).get("kind") == "single_stock"):
+            method += TAPE_INSIDER_STEP
+        return method + TAPE_CITE
+    if (seat_kind == "advisor_market_structure"
+            and (subject or {}).get("kind") == "single_stock"):
+        return LENS_DEFINITIONS[seat_kind] + UNTAPED_INSIDER
+    if (framed and seat_kind in ADVISOR_METHODS
+            and not subjects.is_anchorless(subject or {})):
+        return ADVISOR_METHODS[seat_kind]
+    return LENS_DEFINITIONS[seat_kind]
+
 
 # The mannered-prose rule, VERBATIM from spec section U6.1 (owner ruling AC6).
 # It rides after ruling Z's rules in EVERY brief - the five advisors, the
@@ -736,8 +893,158 @@ def _headline_measurement(capture, ticker):
     return sorted_words
 
 
+def _checklist_words(capture, req):
+    """A checklist row's description, one line: the page's own wording
+    (checklist_description), which names a bank's, insurer's, reinsurer's
+    or holding's free-cash test as distributable capital (owner ruling
+    AC30(1)). Collapsed whole, not piece by piece, so the space between
+    the ruled words and the capture's own survives; every other row is
+    exactly _one_line of its description, as before."""
+    return _one_line(checklist_description(capture, req, str))
+
+
+def _fi_unruled(quoted, value):
+    """A value outside the ruled words: kept for the quoted-data fence the
+    caller closes its lines with, and named in the file's own voice only
+    as that. Nothing where there is no value."""
+    if value in (None, ""):
+        return ""
+    quoted.append(_one_line(value))
+    return "a value outside the ruled words (quoted below)"
+
+
+def _fi_quoted_lines(quoted):
+    if not quoted:
+        return []
+    return _fenced(
+        "Words and fact ids the lines above name that are not the ruled "
+        "words or this pack's own tier-1 fact ids - quoted as data, so they "
+        "never speak in the file's own voice:", "; ".join(quoted))
+
+
+def _fi_kind_lines(frame, measure):
+    """The kind of firm and the measure in plain words, after the
+    archetype line (owner rulings AC28 and AC30): the page's own wording,
+    read from the one-page brief's tables."""
+    quoted = []
+    kind = fi_kind_words(frame, lambda value: _fi_unruled(quoted, value))
+    rated = ""
+    if measure:
+        rated = " - rated on %s" % (MEASURE_WORDS.get(measure)
+                                    or _fi_unruled(quoted, measure))
+    return (["", "The kind of firm, in plain words: %s%s." % (kind, rated)]
+            + _fi_quoted_lines(quoted))
+
+
+def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
+    """What the seats and the outside auditor read of a financial
+    institution (owner rulings AC28 and AC30): a hybrid's other engine,
+    capital beside its requirement, the regulator's own bad year, the
+    risk-cost line and, for a holding, its net asset value part by part.
+    Evidence only - nothing here reads a figure.
+
+    A fact stands in the file's own voice, with its recorded value, ONLY
+    when it is a tier-1 id of this pack; the ruled words stand beside it.
+    Every string written at capture travels inside the quoted-data fence,
+    and any other id or word is quoted there too (P-U3e-3, AC19)."""
+    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    quoted = []
+
+    def ref(fact_id):
+        if isinstance(fact_id, str) and fact_id in fact_ids:
+            fact = facts.get(fact_id) or {}
+            return "`%s` = %s %s" % (fact_id, _one_line(fact.get("value")),
+                                     _one_line(fact.get("unit")))
+        quoted.append(_one_line(fact_id))
+        return "a fact id this pack does not carry (quoted below)"
+
+    def refs(fact_ids_named, none):
+        return ", ".join(ref(fid) for fid in fact_ids_named or ()) or none
+
+    lines = []
+    if frame.get("fi_secondary_subtype"):
+        lines += ["", "Its other engine's share is carried by %s."
+                  % refs(frame.get("fi_secondary_share_facts"),
+                         "no fact named")]
+    capital = frame.get("fi_capital")
+    capital = capital if isinstance(capital, dict) else {}
+    lines += ["", "Capital beside its requirement:"]
+    gap = capital.get("gap")
+    if gap:
+        lines.extend(_fenced("A declared gap, as the capture states it:",
+                             _mark_prose((gap or {}).get("reason"), marks)))
+    else:
+        for ratio, requirement in fi_capital_pairs(capital):
+            if ratio is None:
+                lines.append("- a requirement with no ratio named beside "
+                             "it: %s" % ref(requirement))
+            elif requirement is None:
+                lines.append("- %s, with no requirement named beside it"
+                             % ref(ratio))
+            else:
+                lines.append("- %s beside its requirement %s"
+                             % (ref(ratio), ref(requirement)))
+        for label, key in (("The regime", "regime"),
+                           ("The binding constraint", "binding_constraint")):
+            if capital.get(key):
+                lines.extend(_fenced("%s, as the capture states it:" % label,
+                                     _mark_prose(capital[key], marks)))
+        if capital.get("target_fact"):
+            lines += ["", "Management's own target: %s"
+                      % ref(capital["target_fact"])]
+    stress, stress_gaps = fi_stress_evidence(capture, ticker)
+    if stress or stress_gaps:
+        # Owner ruling AC30(5): the supervisor's own stress figures, as
+        # dated evidence - never a reading of them.
+        lines += ["", "%s. Evidence only: the pack carries these and nothing "
+                  "here reads them." % FI_STRESS_HEADING]
+        lines += ["- %s" % ref(fid) for fid in stress]
+        if stress_gaps:
+            lines.extend(_fenced(
+                "Declared gaps, as the capture states them:",
+                "\n".join("%s: %s" % (gap_row.get("fact_class"),
+                                       gap_row.get("reason"))
+                           for gap_row in stress_gaps)))
+    risk = frame.get("fi_risk_cost")
+    if isinstance(risk, dict) and risk:
+        kind = risk.get("kind")
+        lines += ["", "The risk-cost line: %s. Its facts: %s."
+                  % (FI_RISK_KIND_WORDS.get(kind)
+                     or _fi_unruled(quoted, kind) or "not stated",
+                     refs(risk.get("facts"), "none, by design"))]
+        lines.extend(_fenced("Why this line, as the capture states it:",
+                             _mark_prose(risk.get("because"), marks)))
+    bridge = frame.get("nav_bridge")
+    if isinstance(bridge, dict):
+        rows = ["| Component | How it is valued | Value |",
+                "| --- | --- | --- |"]
+        for part in bridge.get("components") or []:
+            method = part.get("method")
+            rows.append("| %s | %s | %s |"
+                        % (_mark_cell(part.get("name"), marks),
+                           FI_METHOD_WORDS.get(method)
+                           or _one_line(method),
+                           ref(part.get("value_fact"))))
+        lines.extend(_fenced_table(
+            "The net asset value, part by part - each holding's name and "
+            "any method outside the ruled words are the capture's own:",
+            rows))
+        lines.append("")
+        for label, key in (
+                ("Holding-company net debt", "holdco_net_debt_fact"),
+                ("The net asset value", "nav_total_fact"),
+                ("The company's own published net asset value",
+                 "published_nav_fact"),
+                ("The discount", "discount_fact")):
+            if bridge.get(key):
+                lines.append("- %s: %s" % (label, ref(bridge[key])))
+        lines += ["", FI_NOT_RATED_SENTENCE]
+    return lines + _fi_quoted_lines(quoted)
+
+
 def _one_frame_lines(ticker, frame, headline, measure=None,
-                     denominators=None, fact_ids=None, marks=None):
+                     denominators=None, fact_ids=None, marks=None,
+                     capture=None):
     """One instrument's business frame (owner ruling AC1). Enums and
     fact ids are machine vocabulary and stand in the file's own voice;
     every word written at capture travels inside the quoted-data
@@ -746,7 +1053,14 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
     Owner ruling AC19: where `marks` is (bases, cfg) for this frame, every
     number in the prose that traces to no recorded fact is marked inside the
     fence beside it, and the one summary line per frame stands in the file's
-    own voice beside the heading."""
+    own voice beside the heading.
+
+    Owner rulings AC28 and AC30: where `capture` is given and the frame
+    declares a financial institution, the frame also carries the kind of
+    firm, the kind of each earnings line, the first guidance beside its
+    revisions and the institution's own lines (_fi_frame_lines). Every
+    other frame renders exactly as it did without it."""
+    fi = capture is not None and frame.get("archetype") == FI_ARCHETYPE
     lines = ["", "### %s - what the business is" % _one_line(ticker)]
     if marks:
         bases, cfg = marks
@@ -764,6 +1078,8 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
                      % (archetype,
                         (" The rating measure this archetype calls for is "
                          "**%s**." % measure) if measure else ""))
+        if fi:
+            lines.extend(_fi_kind_lines(frame, measure))
         # P-U3e-2 (architect ruling 2026-09-20): name the numbers the
         # rating divides by to every seat, beside the archetype and the
         # measure, through the same one-line/escape helper the sibling
@@ -790,17 +1106,25 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
                          _mark_prose(frame["what_it_does"], marks)))
 
     rows = ["| Revenue line | Share of the latest reported period | "
-            "Facts that carry it |", "| --- | --- | --- |"]
+            "%sFacts that carry it |" % ("Kind of earnings | " if fi else ""),
+            "| --- | --- | --- |%s" % (" --- |" if fi else "")]
     for line in frame["how_it_earns"]:
-        rows.append("| %s | %s | %s |"
+        nature = line.get("nature")
+        rows.append("| %s | %s | %s%s |"
                     % (_mark_cell(line["line"], marks),
                        _one_line(line["share_of_period"]),
+                       ("%s | " % (FI_NATURE_WORDS.get(nature)
+                                   or _one_line(nature or "not stated")))
+                       if fi else "",
                        ", ".join(line["facts"])))
     lines.extend(_fenced_table(
         "How it earns - the fact ids named are tier-1 facts below, and "
         "every one of them is revenue; the share of the period is a "
         "figure one of them carries; the line itself is the capture's "
         "own words:", rows))
+    if fi:
+        lines.extend(_fi_frame_lines(capture, ticker, frame,
+                                     fact_ids or frozenset(), marks))
 
     changing = frame["what_is_changing"]
     lines.append("")
@@ -900,7 +1224,30 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
                  "passage `%s` below" % frame["competitive_position"])
 
     delivery = management["guidance_vs_delivery"]
-    if delivery:
+    if delivery and fi:
+        # Owner ruling AC30(6): the FIRST guidance, then each revision with
+        # its date, then what was delivered; an empty list reads as never
+        # revised.
+        rows = ["| Period | First guided | Each revision, with its date | "
+                "Delivered |", "| --- | --- | --- | --- |"]
+        for quarter in delivery:
+            revisions = quarter.get("revisions")
+            revised = ("; ".join(
+                "revised on %s to %s"
+                % (_one_line((item or {}).get("date")),
+                   ", ".join(_one_line(fid) for fid in
+                             (item or {}).get("guided") or [])
+                   or "nothing named")
+                for item in revisions) or FI_NEVER_REVISED
+                if isinstance(revisions, list) else "not stated")
+            rows.append("| %s | %s | %s | %s |"
+                        % (_one_line(quarter["period"]),
+                           ", ".join(quarter["guided"]), revised,
+                           quarter["delivered"]))
+        lines.extend(_fenced_table(
+            "What management first guided, each revision, and what it "
+            "delivered:", rows))
+    elif delivery:
         rows = ["| Period | Guided | Delivered |", "| --- | --- | --- |"]
         for quarter in delivery:
             rows.append("| %s | %s | %s |"
@@ -1151,8 +1498,15 @@ def _record_lines(capture, freshness_record, generated_notes):
     lines.append("")
     stale_ids = gate.stale_reading_ids(capture)
     for fact in capture.get("tier1", []):
-        lines.append("- `%s` = %s %s (as of %s)"
-                     % (fact.get("id"), _one_line(fact.get("value")),
+        # A tape figure is named by its plain-English label beside its id,
+        # so a seat can cite it by name (unit U4(b)); every other fact's
+        # line is exactly as before.
+        named = ""
+        if ((fact.get("derived") or {}).get("operation") == tape.OPERATION
+                and fact.get("label")):
+            named = " (%s)" % _one_line(fact.get("label"))
+        lines.append("- `%s`%s = %s %s (as of %s)"
+                     % (fact.get("id"), named, _one_line(fact.get("value")),
                         _one_line(fact.get("unit")), fact.get("as_of")))
         lines.append("  - source: %s" % _one_line(fact.get("source")))
         if fact.get("id") in stale_ids:
@@ -1259,8 +1613,14 @@ def _cycle_lines(capture):
         # non-blank string), so it cannot speak in the case file's own
         # voice; it travels fenced as quoted data, like every other capture
         # string here (owner ruling AC15 P4; round-7 finding r7-1).
-        lines.append("Series `%s`, as of %s:"
-                     % (_one_line(series["id"]), _one_line(series["as_of"])))
+        # Render-only (FI-ARCHETYPE (c)): the date of the series' LAST
+        # point beside its as-of, as the full document prints it - a date
+        # pattern, machine vocabulary like the as-of.
+        points = series.get("points") or []
+        lines.append("Series `%s`, as of %s%s:"
+                     % (_one_line(series["id"]), _one_line(series["as_of"]),
+                        ("; latest point %s" % _one_line(points[-1]["date"]))
+                        if points else ""))
         lines.extend(_fenced(
             "The unit these values are in, as the capture states it:",
             series["unit"]))
@@ -1307,7 +1667,7 @@ def _business_frame_lines(capture):
         lines.extend(_one_frame_lines(
             ticker, frames[ticker],
             _headline_measurement(capture, ticker), measure,
-            denominators, fact_ids, marks))
+            denominators, fact_ids, marks, capture))
     lines.append("")
     return lines
 
@@ -1384,13 +1744,13 @@ def render_casefile(pack, sufficiency_result, framed_question, subject):
         if status == "answered":
             lines.append("- [answered] `%s` (%s): %s - answered by: %s"
                          % (req.get("id"), req.get("kind"),
-                            _one_line(req.get("description")),
+                            _checklist_words(capture, req),
                             ", ".join(req.get("answered_by", [])) or "none"))
         else:
             lines.append("- [declared gap] `%s` (%s): %s - reason: %s; "
                          "test weakened: %s"
                          % (req.get("id"), req.get("kind"),
-                            _one_line(req.get("description")),
+                            _checklist_words(capture, req),
                             _one_line(req.get("gap_reason", "not stated")),
                             _one_line(req.get("weakened_test",
                                               "not stated"))))
@@ -1512,9 +1872,22 @@ _LADDER_CONTRACT = """- `scenario_ladder`: this asset has no earnings, so no rat
 """
 
 
+def _headings_block():
+    """The three required headings (U5.1), named in every advisor brief
+    from the seat-answer contracts file."""
+    return ("Your markdown carries these three headings, each written "
+            "exactly as here, as a markdown\nheading on its own line:\n\n"
+            + "".join("    ## %s\n" % heading
+                      for heading in required_headings())
+            + "\nWhat goes under each is your judgment. That each is present "
+            "is checked by machine, and an\nanswer missing one is sent back "
+            "once to add it.\n")
+
+
 def _advisor_answer_contract(subject):
     """The advisor's answer shape: one key on an anchored subject, and the
-    scenario ladder beside it where the rating must be earned."""
+    scenario ladder beside it where the rating must be earned. Either way
+    the markdown carries the three required headings."""
     if not subjects.is_anchorless(subject or {}):
         return """## Your answer - one JSON object, exactly one key, named exactly "markdown"
 
@@ -1522,7 +1895,8 @@ def _advisor_answer_contract(subject):
 
 Every number you lean on should be a number the case file carries, quoted as the case file
 states it.
-"""
+
+""" + _headings_block()
     return """## Your answer - one JSON object, exactly two keys
 
     {"markdown": "<your full analysis, as markdown text>",
@@ -1533,12 +1907,14 @@ states it.
 Every number you lean on should be a number the case file carries, quoted as the case file
 states it. Every value carrying a figure is a JSON STRING.
 
-%s""" % _LADDER_CONTRACT
+%s
+""" % _LADDER_CONTRACT + _headings_block()
 
 
-def _advisor_brief(run_id, seat_kind, casefile, subject=None):
+def _advisor_brief(run_id, seat_kind, casefile, subject=None, framed=False,
+                   taped=False):
     title = LENS_TITLES[seat_kind]
-    definition = LENS_DEFINITIONS[seat_kind]
+    definition = advisor_remit(seat_kind, subject, framed, taped)
     emphasis = seat_emphasis(subject or {}, seat_kind)
     emphasis_block = ""
     if emphasis:
@@ -1598,7 +1974,8 @@ def _ladder_lines(seat_ladder):
 
 
 def _reviewer_brief(run_id, casefile, advisor_answers, blind_mapping,
-                    subject=None, advisor_ladders=None):
+                    subject=None, advisor_ladders=None, framed=False,
+                    taped=False):
     sections = []
     for letter in BLIND_LETTERS:
         seat = blind_mapping[letter]
@@ -1637,6 +2014,18 @@ def _reviewer_brief(run_id, casefile, advisor_answers, blind_mapping,
             "those odds like any other claim: which are anchored in the "
             "record, which are asserted, and where do the five most "
             "disagree?\n\n")
+    # The frame's own table is named only where the case file has one
+    # (architect ruling closing P-U5a-2).
+    decisive = ("the case file's table\n  of the numbers that decide this "
+                "question" if framed else
+                "the evidence that decides\n  this question")
+    # Unit U4(b): where the pack carries a price series, one more line -
+    # blind, so it names responses, never seats.
+    tape_item = ("- which responses used the tape - the figures the case "
+                 "file computes from the daily\n  closes, cited by name and "
+                 "figure - and which ignored it; and whether any response\n"
+                 "  explained the price's headline move, and whether those "
+                 "explanations agree;\n" if taped else "")
     head = """# REVIEWER BRIEF - council run `%s`
 
 You are the council's one blind reviewer. Five independent advisors answered the same
@@ -1652,7 +2041,9 @@ word.
 %s
 **And you POLICE rules 1 and 2 in what you review.** Name, by term, every case-specific
 word or uncommon acronym a response uses without ever explaining it. An unexplained term is
-a defect in that response, and it belongs in your review like any other defect.
+a defect in that response, and it belongs in your review like any other defect. Beyond
+rules 1 and 2, name breaches of every numbered writing rule above and the Manner rules, by term:
+quote the words that break the rule.
 
 ## Your task - one cross-examination, one synopsis
 
@@ -1664,7 +2055,15 @@ For each response A through E, in order:
   risk waved away;
 - any writing-rule defects, named by term.
 
-%sThen, the question this review exists for: what did ALL FIVE miss?
+%sThen, across the five, say plainly:
+
+- which responses used the decisive metrics and which ignored them - %s;
+- whether any response explained why the headline numbers moved, and whether those
+  explanations agree;
+%s- whether the question's horizon was answered - the period the question asks about, by the
+  responses that answered it and by those that answered a different one.
+
+Then, the question this review exists for: what did ALL FIVE miss?
 
 ## Your answer - one JSON object, exactly two keys
 
@@ -1673,7 +2072,7 @@ For each response A through E, in order:
 The synopsis is AT MOST 180 words, counted by splitting on spaces: the bench's strongest
 case, the strongest doubt against it, and what all five missed. An overrun is re-asked
 once.
-""" % (run_id, WRITING_RULES, policing)
+""" % (run_id, WRITING_RULES, policing, decisive, tape_item)
     evidence = """%s
 
 %s
@@ -2060,7 +2459,8 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                 blind_mapping=None, reviewer_answer=None, draft_verdict=None,
                 findings=None, endorsement=None, challenger_model=None,
                 summary=None, subject=None, retry_reason=None,
-                prior_answer=None, advisor_ladders=None):
+                prior_answer=None, advisor_ladders=None, framed=False,
+                taped=False):
     """Assemble one seat's brief. Raises ValueError if the for_atlas text
     would reach a seat - that half of the question travels to nobody -
     or if a chair brief is asked for without the subject (the chair's
@@ -2072,11 +2472,12 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
     if seat_kind == "frame":
         head, evidence = _frame_brief(run_id, question_verbatim)
     elif seat_kind in ADVISOR_SEATS:
-        head, evidence = _advisor_brief(run_id, seat_kind, casefile, subject)
+        head, evidence = _advisor_brief(run_id, seat_kind, casefile, subject,
+                                        framed, taped)
     elif seat_kind == "reviewer":
         head, evidence = _reviewer_brief(run_id, casefile, advisor_answers,
                                          blind_mapping, subject,
-                                         advisor_ladders)
+                                         advisor_ladders, framed, taped)
     elif seat_kind == "chair_draft":
         head, evidence = _chair_draft_brief(run_id, casefile,
                                             advisor_answers,
@@ -2229,7 +2630,7 @@ the % sign and one decimal, always (71.3%); dates in words, day first (30 Jun 20
 """ + MANNER_BLOCK + "\n"
 
 
-def _floors_block(subject, floors=None):
+def _floors_block(subject, floors=None, capture=None):
     """The evidence minimums this council already demands of a subject
     in this class, handed over as the ruled data itself.
 
@@ -2237,16 +2638,43 @@ def _floors_block(subject, floors=None):
     is already required so it can argue about what is NOT, and any
     prose summary of a rules file is a second copy that drifts from the
     first. It is reference data, not the auditor's business to police -
-    the task block says so."""
+    the task block says so.
+
+    Owner rulings AC28 and AC30: for a financial institution (`capture`
+    given) the floors are the ones MERGED for its sub-type - the class
+    floors less the ids its sub-type lifts, the class anchors, then what
+    every financial institution and its own sub-type carry - with one
+    plain line naming what is lifted. Every other subject's block is as
+    it was."""
     floors = floors_data() if floors is None else floors
     entries = list((floors.get("classes", {}).get(subject.get("kind"))
                     or {}).get("floors") or [])
+    declared = (sufficiency._subtyped_archetype(floors, capture)
+                if capture else None)
+    lifted = list(sufficiency._archetype_lifts(floors, declared)
+                  .get("single_stock_floor_ids_lifted") or ())
+    entries = [entry for entry in entries
+               if not (entry.get("kind") == "id"
+                       and entry.get("id") in lifted)]
     entries += list(subjects.class_anchors(floors, subject))
+    if declared:
+        block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
+        entries += list(block.get("all_subtypes") or [])
+        if declared[1]:
+            entries += list(block.get(declared[1]) or [])
+    lift_lines = []
+    if lifted:
+        lift_lines = [
+            "The capital-spending floor (%s) is lifted for %s: its "
+            "free-cash test is answered by distributable capital (owner "
+            "ruling AC30(1))."
+            % (", ".join("`%s`" % fid for fid in lifted),
+               FI_SUBTYPE_WORDS.get(declared[1])), ""]
     return ["", "## The evidence minimums this council already demands "
                 "for this asset class", "",
             "Ruled data, quoted whole. It is here so you can argue about "
             "what it does NOT demand for this particular business. Do "
-            "not audit it.", "",
+            "not audit it.", ""] + lift_lines + [
             "```json",
             json.dumps(entries, indent=2, sort_keys=True,
                        ensure_ascii=True),
@@ -2328,18 +2756,18 @@ capture_sha256: %s
         if req.get("status") == "answered":
             lines.append("- [answered] `%s` (%s): %s - answered by: %s"
                          % (req.get("id"), req.get("kind"),
-                            _one_line(req.get("description")),
+                            _checklist_words(capture, req),
                             ", ".join(req.get("answered_by", [])) or "none"))
         else:
             lines.append("- [declared gap] `%s` (%s): %s - reason: %s; "
                          "test weakened: %s"
                          % (req.get("id"), req.get("kind"),
-                            _one_line(req.get("description")),
+                            _checklist_words(capture, req),
                             _one_line(req.get("gap_reason", "not stated")),
                             _one_line(req.get("weakened_test",
                                               "not stated"))))
     lines.append("")
-    lines.extend(_floors_block(subject, floors))
+    lines.extend(_floors_block(subject, floors, capture))
     return head + EVIDENCE_BANNER + "\n".join(lines)
 
 
@@ -2440,7 +2868,39 @@ def _frame_cites(frame, delta):
     for row in frame.get("decisive_metrics") or []:
         if set(row.get("answered_by") or []) & delta:
             return True
-    return False
+    # Owner rulings AC28 and AC30: the facts a financial institution's own
+    # lines cite - a corrected capital ratio brings its frame into the delta.
+    capital = frame.get("fi_capital")
+    capital = capital if isinstance(capital, dict) else {}
+    risk = frame.get("fi_risk_cost")
+    risk = risk if isinstance(risk, dict) else {}
+    bridge = frame.get("nav_bridge")
+    bridge = bridge if isinstance(bridge, dict) else {}
+    cited = (list(capital.get("ratio_facts") or [])
+             + list(capital.get("requirement_facts") or [])
+             + [capital.get("target_fact")] + list(risk.get("facts") or [])
+             + list(frame.get("fi_secondary_share_facts") or [])
+             + [part.get("value_fact") for part in bridge.get("components")
+                or [] if isinstance(part, dict)]
+             + [bridge.get(key) for key in (
+                 "holdco_net_debt_fact", "nav_total_fact",
+                 "published_nav_fact", "discount_fact")])
+    # Owner ruling AC30(6): a financial institution's guidance table - the
+    # first guidance, each revision and the delivery - is its own line,
+    # so a corrected id in it brings the frame too (audit round three,
+    # r3-2).
+    if frame.get("archetype") == FI_ARCHETYPE:
+        management = frame.get("management")
+        management = management if isinstance(management, dict) else {}
+        for quarter in management.get("guidance_vs_delivery") or []:
+            if not isinstance(quarter, dict):
+                continue
+            cited += list(quarter.get("guided") or [])
+            cited.append(quarter.get("delivered"))
+            for revision in quarter.get("revisions") or []:
+                if isinstance(revision, dict):
+                    cited += list(revision.get("guided") or [])
+    return any(isinstance(fid, str) and fid in delta for fid in cited)
 
 
 def _delta_frame_lines(capture, delta_ids):
@@ -2455,6 +2915,9 @@ def _delta_frame_lines(capture, delta_ids):
     delta = set(delta_ids)
     frames = capture.get("business_frame") or {}
     cfg = trace.config(floors_data())
+    # A financial institution's lines name a fact inline only when it is
+    # one of this pack's own tier-1 ids (P-U3e-3).
+    fact_ids = frozenset(fact.get("id") for fact in capture.get("tier1") or [])
     lines = []
     for ticker in sorted(frames):
         frame = frames[ticker]
@@ -2462,7 +2925,7 @@ def _delta_frame_lines(capture, delta_ids):
             marks = (trace._fact_bases(capture, ticker, cfg), cfg)
             lines.extend(_one_frame_lines(
                 ticker, frame, _headline_measurement(capture, ticker),
-                marks=marks))
+                fact_ids=fact_ids, marks=marks, capture=capture))
     return lines
 
 
@@ -2533,7 +2996,7 @@ capture_sha256: %s
         lines.extend(frame_lines)
     lines.append("")
     lines.extend(_staged_pass_lines(prior_block))
-    lines.extend(_floors_block(subject, floors))
+    lines.extend(_floors_block(subject, floors, capture))
     return head + EVIDENCE_BANNER + "\n".join(lines)
 
 

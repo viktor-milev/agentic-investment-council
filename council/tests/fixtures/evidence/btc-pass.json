@@ -1,11 +1,12 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T06:00Z",
  "gaps": [],
  "market_state": {
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is Bitcoin attractive at today's price?",
  "question_verbatim": "Is Bitcoin attractive at today's price? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "crypto",
@@ -464,8 +465,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186274632d70617373",
-  "evidence_sha256": "bfb18928ca7c13a50ab816237b7a85a52b4f708c20d7b0789a34fa508136fb5a",
+  "evidence_sha256": "f9bf7df2f47d6002f4881fa3a63c07749ca9d238056a63319856611563f8fbb2",
   "post_audit_changes": [],
-  "post_audit_sha256": "bfb18928ca7c13a50ab816237b7a85a52b4f708c20d7b0789a34fa508136fb5a"
+  "post_audit_sha256": "f9bf7df2f47d6002f4881fa3a63c07749ca9d238056a63319856611563f8fbb2"
  }
 }

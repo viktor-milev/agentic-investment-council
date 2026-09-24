@@ -1,5 +1,5 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "subject": {
   "kind": "single_stock",
   "asset_class": "equity",
@@ -8,6 +8,7 @@
   "listing": "NASDAQ",
   "currency": "USD"
  },
+ "question_line": "Would you buy Apple at today's price?",
  "question_verbatim": "Would you buy Apple at today's price? (INVENTED FIXTURE)",
  "captured_at": "2026-08-28T15:30Z",
  "market_state": {
@@ -536,7 +537,14 @@
    ]
   }
  ],
- "gaps": [],
+ "gaps": [
+  {
+   "fact_class": "insider_flow_",
+   "reason": "INVENTED FIXTURE - this fixture records no insiders' dealings: it was written before floors 1.7.0 asked for them, and it invents none",
+   "reason_kind": "absent_by_design",
+   "weakened_test": "insider flow cannot be read: who inside the company is buying or selling, how persistently, and at what size"
+  }
+ ],
  "sufficiency": {
   "requirements": [
    {
@@ -749,8 +757,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186161706c2d706173",
-  "evidence_sha256": "5b5e2c7e048f430a86bd9baa9220559c723aea2d4016fad2bea356ae76abe94b",
+  "evidence_sha256": "ed476236137710a4d601e9e755207f0a72a6ace18d97e68c7ff0b14dae390bd0",
   "post_audit_changes": [],
-  "post_audit_sha256": "5b5e2c7e048f430a86bd9baa9220559c723aea2d4016fad2bea356ae76abe94b"
+  "post_audit_sha256": "ed476236137710a4d601e9e755207f0a72a6ace18d97e68c7ff0b14dae390bd0"
  }
 }

@@ -1,5 +1,5 @@
 {
- "capture_version": "1.6.0",
+ "capture_version": "1.8.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -13,6 +13,7 @@
   "disclosure": null,
   "state": "open"
  },
+ "question_line": "Is the Example Thematic Robotics Fund attractive here?",
  "question_verbatim": "Is the Example Thematic Robotics Fund attractive here? (INVENTED FIXTURE)",
  "subject": {
   "asset_class": "equity",

@@ -164,8 +164,24 @@ class TestContractSchemas(unittest.TestCase):
 
         self.assertEqual(bare(recorded), bare(declared))
 
-    def test_capture_contract_is_version_1_6_0(self):
-        # Bumped by unit UPGRADE-2 U3e (owner ruling AC15, P2 and P4): the
+    def test_capture_contract_is_version_1_8_0(self):
+        # MINOR, unit UPGRADE-2 FI-ARCHETYPE (owner rulings AC28, AC30 and
+        # AC32): the financial-institution archetype and its optional frame
+        # fields, and the owner's one-line question. All optional in the
+        # contract; the gate and the sufficiency gate enforce them.
+        #
+        # Before that:
+        # PATCH 1.7.1, unit UPGRADE-2 U4(a2): a derived fact may be a tape
+        # row ("series_stat", with its optional window, formula and date,
+        # one operand allowed) - computed at freeze from the series.
+        #
+        # Before that, bumped by unit UPGRADE-2 U4(a) (owner ruling AC4): an optional
+        # price_series and benchmark_series (the daily closes the tape table
+        # is computed from) and an optional per-sitting benchmark. All three
+        # are optional, so a pack that carries none - every capture written
+        # before this unit, a coin, bullion - is still valid unchanged.
+        #
+        # Before that, bumped by unit UPGRADE-2 U3e (owner ruling AC15, P2 and P4): the
         # business frame gains the subject's archetype and why, and whether
         # its thesis rests on an identifiable cycle and why; the third
         # canonical test gains the rating measure that archetype calls for;
@@ -178,7 +194,29 @@ class TestContractSchemas(unittest.TestCase):
                   "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
         self.assertEqual(doc["properties"]["capture_version"]["const"],
-                         "1.6.0")
+                         "1.8.0")
+        for optional in ("price_series", "benchmark_series", "benchmark",
+                         "question_line"):
+            self.assertIn(optional, doc["properties"])
+            self.assertNotIn(optional, doc["required"])
+
+    def test_floors_data_is_version_1_7_0(self):
+        # MINOR, unit UPGRADE-2 FI-ARCHETYPE (owner rulings AC28 and AC30):
+        # the financial-institution archetype row with its sub-types, the
+        # capital and cost-of-risk families, and the sub-type floors. MINOR
+        # again, unit U4(b) (owner ruling AC4): insiders' dealings and the
+        # company's own buying, two conditional single-stock floors.
+        with open(os.path.join(ROOT, "council", "floors", "floors.json"),
+                  "rb") as f:
+            floors = json.loads(f.read().decode("utf-8"))
+        self.assertEqual(floors["floors_version"], "1.7.0")
+        table = floors["archetype_measures"]["table"]
+        self.assertEqual(sorted(table["financial_institution"]["subtypes"]),
+                         ["alternative_asset_manager", "bank",
+                          "financial_holding", "insurer", "reinsurer",
+                          "traditional_asset_manager"])
+        for key in ("fi_families", "archetype_floors"):
+            self.assertIn(key, floors)
 
     def test_rating_scale_is_the_owners_five_words(self):
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:

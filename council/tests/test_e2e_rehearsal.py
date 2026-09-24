@@ -51,6 +51,16 @@ def fixture(name):
         return json.loads(handle.read().decode("utf-8"))
 
 
+def assert_headings_present(test, run_dir):
+    """UPGRADE-2 U5(a): the canned advisor answers carry the three required
+    headings, so every rehearsal takes the happy path - one check per seat,
+    each `present`, and no heading re-ask."""
+    checks = [(e["seat"], e["outcome"]) for e in runrecord.read_events(run_dir)
+              if e["event"] == "headings_checked"]
+    test.assertEqual(sorted(checks), sorted(
+        (seat, "present") for seat in host.ADVISOR_SEATS))
+
+
 class TestEndToEndRehearsal(unittest.TestCase):
     """One test class, one story, asserted stage by stage."""
 
@@ -238,6 +248,7 @@ class TestEndToEndRehearsal(unittest.TestCase):
         events = [e["event"] for e in runrecord.read_events(run_dir)]
         self.assertIn("challenge_requested", events)
         self.assertIn("published", events)
+        assert_headings_present(self, run_dir)
         self.assertEqual(events[-1], "run_finished")
 
         # Stage 6 - the report, rendered by the real renderer over this
@@ -422,6 +433,7 @@ class TestKindRehearsals(unittest.TestCase):
                           "state %s" % status["state"])
         self.assertEqual(host.status(run_dir)["state"], "DONE")
         self.assertEqual(readback.check(run_dir), 0)
+        assert_headings_present(self, run_dir)
         verdict = canonical.read_json(os.path.join(run_dir,
                                                    "verdict.json"))
         with open(os.path.join(ROOT, "council", "schemas",
