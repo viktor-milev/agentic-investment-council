@@ -10,14 +10,19 @@ platform.
 ## The seven suites
 
 ```
-python council/tests/test_foundations.py
-python council/tests/test_evidence.py
-python council/tests/test_engine.py
-python council/tests/test_bridge.py
-python council/tests/test_report.py
-python council/tests/test_e2e_rehearsal.py
-python council/tests/test_ledger.py
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_foundations
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_evidence
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_engine
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_bridge
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_report
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_e2e_rehearsal
+PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_ledger
 ```
+
+This module form runs every test in the file, and it is the only form the battery prints. The
+script form is not supported: a test file's path handed to `python` once stopped at a main guard
+sitting mid-file and ran part of a suite. On Windows, set the variable in the shell first, then
+run the `python -m unittest …` part.
 
 - **foundations** — canonical bytes and hashing, the schema validator, the
   contract schemas, the ruled floors data (including the asset-class anchor

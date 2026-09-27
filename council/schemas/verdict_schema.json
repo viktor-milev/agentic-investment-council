@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Council verdict 1.4.0 - the published document (REBUILD-SPEC section 8)",
-  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). Since 1.4.0 (UPGRADE-2 U7, owner ruling AC7) the provenance names the ledger row this verdict is recorded under, so the sitting can be judged against what happened. No field for what the owner owns exists anywhere in this contract.",
+  "title": "Council verdict 1.7.0 - the published document (REBUILD-SPEC section 8)",
+  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). Since 1.4.0 (UPGRADE-2 U7, owner ruling AC7) the provenance names the ledger row this verdict is recorded under, so the sitting can be judged against what happened. Since 1.5.0 (UPGRADE-2 U5(b), owner rulings AC5, AC35(3) and AC25(4)) the chairman says what decided it - decisive_argument, business_read and decisive_metrics_read, required keys that are null where he did not supply the field in the form asked after the host's one re-ask - and the provenance names the codex version that ran the sitting's outside calls; the Atlas envelope is unchanged. Since 1.6.0 (UPGRADE-2 READ-C1, owner rulings AC44 and AC45) the chairman writes answer_line, one line answering the owner's question, a required key that is null where he did not supply it after the host's one re-ask; and each entry of the three tripwire lists may name the measure it tests, so the page reads the lists as one scorecard - the Atlas envelope carries the lists without that name and never the answer line, so the hand-off is unchanged. Since 1.7.0 (UPGRADE-2 GROWTH-ARCHETYPE, sub-charge b; owner ruling AC50(8), architect ruling A7) a change-appendix row may carry the label runway_cap: a growth company whose cash covers fewer months of its last four quarters' cash burn than the line the owner ruled publishes at most hold, sell still open, and the row names the rating the chairman gave, beside one warning naming the months, the line and the ruling - the degradation_cap precedent; the label list only widens, so every verdict written before stays as it was, and the Atlas envelope is unchanged. No field for what the owner owns exists anywhere in this contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,6 +12,10 @@
     "frame",
     "rating",
     "conviction_rationale",
+    "answer_line",
+    "decisive_argument",
+    "business_read",
+    "decisive_metrics_read",
     "mispricing",
     "scenario_rating",
     "tripwires",
@@ -25,7 +29,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.4.0"
+      "const": "1.7.0"
     },
     "run_id": {
       "type": "string",
@@ -292,6 +296,98 @@
     "conviction_rationale": {
       "type": "string",
       "minLength": 1
+    },
+    "answer_line": {
+      "description": "Since 1.6.0 (owner ruling AC44(1)): the chairman's one line answering the owner's question - the rating in plain words, the price levels he names and the next dated test - asked of him within the word cap his brief states and published as he wrote it. A figure in it that traces to no recorded fact of the case file and to none of his key numbers is marked where the page prints it, never refused. Never carried into the Atlas envelope. Null where he did not supply it after the host's one re-ask.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+    },
+    "decisive_argument": {
+      "description": "Since 1.5.0 (owner rulings AC5, AC35(3)): the advisor whose argument decided the rating, by seat kind, and why, in the chairman's words. Null where the chairman did not supply it in this shape after the host's one re-ask.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "seat",
+        "why"
+      ],
+      "properties": {
+        "seat": {
+          "enum": [
+            "advisor_bear",
+            "advisor_bull",
+            "advisor_base_rate",
+            "advisor_market_structure",
+            "advisor_risk"
+          ]
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        }
+      }
+    },
+    "business_read": {
+      "description": "Since 1.5.0 (owner rulings AC5, AC35(3)): what this business is and what is changing, in the chairman's own words, asked of him in at most 120 words and published as he wrote it. Null where he did not supply it after the host's one re-ask.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+    },
+    "decisive_metrics_read": {
+      "description": "Since 1.5.0 (owner rulings AC5, AC35(3)): one row per decisive metric of the business frame - per constituent where there are several - with its value as the case file gives it and what it implies for the rating. Rows beyond the frame's metrics are allowed. Empty where the subject has no frame; null where he did not supply the list after the host's one re-ask.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "metric",
+          "constituent",
+          "value",
+          "implies"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "constituent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "implies": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+          },
+          "mark": {
+            "description": "Written by the host alone (architect ruling closing P-U5b-2; owner rulings AC13(1), AC19): present where the value writes a figure that traces to none of its metric's recorded facts. A mark, never a refusal.",
+            "enum": [
+              "not traced to a recorded fact"
+            ]
+          }
+        }
+      }
     },
     "mispricing": {
       "type": "object",
@@ -589,6 +685,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "measure": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
               }
             }
           }
@@ -640,6 +743,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "measure": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
               }
             }
           }
@@ -678,6 +788,13 @@
                   "string",
                   "null"
                 ]
+              },
+              "measure": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
               },
               "theme_falsifier_id": {
                 "type": [
@@ -972,7 +1089,8 @@
                   "change",
                   "endorsed_raise",
                   "unendorsed_raise",
-                  "degradation_cap"
+                  "degradation_cap",
+                  "runway_cap"
                 ]
               }
             }
@@ -1328,6 +1446,7 @@
         "ledger_row_id",
         "models_per_seat",
         "challenger_model_requested",
+        "codex_version",
         "timestamps",
         "tokens",
         "prompt_bytes_total",
@@ -1355,6 +1474,29 @@
         "challenger_model_requested": {
           "type": "string",
           "minLength": 1
+        },
+        "codex_version": {
+          "description": "Owner ruling AC25(4), since 1.5.0: the codex CLI version that ran this sitting's outside calls, as the bridge recorded it beside each result - the challenge's and the evidence audit's. Null where the bridge recorded none.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "challenge",
+            "evidence_audit"
+          ],
+          "properties": {
+            "challenge": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "evidence_audit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
         },
         "timestamps": {
           "type": "object",

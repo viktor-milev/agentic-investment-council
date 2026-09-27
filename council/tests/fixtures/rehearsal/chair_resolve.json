@@ -14,6 +14,38 @@
  "final_markdown": "## The chairman's final word\n\nBoth findings were fair and both are now in the text: the growth claim is labeled as one quarter, and the cancellations are sized at roughly 4 percent of guided revenue. Neither changes the arithmetic that carries the rating: a sixth below the company's own average rating, and cash yield 3.7 points over the bill. Buy at 123.45; wrong below 80; scored on 2026-10-22.",
  "final_verdict": {
   "conviction_rationale": "The record supports paying today's price. Reported profit grew 12% again on 7% revenue growth in the June 2026 quarter. Net cash stands at $2.62B, per the balance sheet. Free cash flow ran $410M for the year. At $50 the price sits below the $62 the record supports, and the tripwires sit at the 20 Oct 2026 results. The rating is buy.",
+  "answer_line": "INVENTED FIXTURE - a buy at 123.45; the next test is the October results.",
+  "decisive_argument": {
+   "seat": "advisor_bull",
+   "why": "INVENTED FIXTURE - the bull showed service revenue compounding faster than equipment and the free cash flow covering it; the bear's cycle case did not meet those two rows."
+  },
+  "business_read": "INVENTED FIXTURE - Example Manufacturing builds industrial pumps and sells the service contracts that keep them running. What is changing is the mix: service is growing faster than new equipment, and the cash it throws off is rising with it.",
+  "decisive_metrics_read": [
+   {
+    "metric": "Order backlog",
+    "constituent": null,
+    "value": "not given as a figure in the case file's table",
+    "implies": "Demand cannot be read from a backlog here; the rating rests on the other rows."
+   },
+   {
+    "metric": "Service revenue against last year",
+    "constituent": null,
+    "value": "570.0 USD_m against 500.0 USD_m",
+    "implies": "Service is compounding: the core of the buy."
+   },
+   {
+    "metric": "Free cash flow after capital spending",
+    "constituent": null,
+    "value": "1000.0 USD_m against 880.00 USD_m",
+    "implies": "The growth pays for itself."
+   },
+   {
+    "metric": "Price/earnings, against its own history and peers",
+    "constituent": null,
+    "value": "18.4 x",
+    "implies": "The price does not yet pay for the mix shift."
+   }
+  ],
   "evidence_dependencies": [
    "price_last",
    "pe_ratio_current",

@@ -1,4 +1,5 @@
 {
+ "answer_line": "Not cheap at 88.40 any more: watch, not buy; the next test is the full-year results on 4 Feb 2027.",
  "atlas_envelope": {
   "asset_class": "equity",
   "challenge_status": "success",
@@ -122,6 +123,7 @@
    "One frozen fact is older than its own freshness rule. The council reasoned over it knowingly."
   ]
  },
+ "business_read": "Specimen Works is an invented maker of specialist equipment whose growth story the market already prices. What is changing is the pace of new orders; until one of the named triggers fires, nothing in the record says the premium is earned.",
  "challenge": {
   "change_appendix": [
    {
@@ -173,6 +175,24 @@
  },
  "constituent_notes": null,
  "conviction_rationale": "The evidence answers the four tests, but the price already carries the growth story. No view is worth paying for until one of the named triggers fires.",
+ "decisive_argument": {
+  "seat": "advisor_base_rate",
+  "why": "The base-rate reading carried it: a company rated about a fifth above its own five-year average has, more often than not, given that premium back before the growth arrived, and no advisor showed why this one is different."
+ },
+ "decisive_metrics_read": [
+  {
+   "constituent": null,
+   "implies": "The price is rich: about a fifth above its own history.",
+   "metric": "Forward earnings multiple against its own history",
+   "value": "24.1 times against a five-year average near 20 times"
+  },
+  {
+   "constituent": null,
+   "implies": "A wide range: the triggers sit far enough out to mean something.",
+   "metric": "Realized volatility, 90 days",
+   "value": "41.7%"
+  }
+ ],
  "evidence_dependencies": [
   "last_price",
   "forward_earnings_multiple",
@@ -192,6 +212,10 @@
  },
  "provenance": {
   "challenger_model_requested": "gpt-5.6-sol",
+  "codex_version": {
+   "challenge": null,
+   "evidence_audit": null
+  },
   "evidence": {
    "approval_note": "Invented fixture note: read the one page, checked the two segment figures against the quarter, and asked for nothing more.",
    "approved_at": "2026-08-30T09:05Z",
@@ -246,7 +270,7 @@
  "rating": "monitor",
  "run_id": "report-fixture-invented-1",
  "scenario_rating": null,
- "schema_version": "1.4.0",
+ "schema_version": "1.7.0",
  "sizing_inputs": [
   {
    "as_of": "2026-08-28",

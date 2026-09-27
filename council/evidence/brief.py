@@ -20,13 +20,15 @@ The capture's own cost sidecar defaults to capture-usage.json beside the
 brief. Exit codes: 0 written, 1 usage error or crash.
 """
 
+import decimal
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from council.evidence import gate, tape, trace  # noqa: E402
+from council.evidence import gate, sufficiency, tape, trace  # noqa: E402
 from council.lib import canonical  # noqa: E402
 
 # One page is the ruling (AC3), and a schema-valid capture can write at
@@ -88,6 +90,11 @@ CALENDAR_PREFIX = "calendar_"
 PRICE_ID = "price_last"
 RANGE_LOW_ID = "range_52w_low"
 RANGE_HIGH_ID = "range_52w_high"
+# The tape's own figures the one page shows beside the price (unit
+# READ-B2): the 200-day average and the price against it, then the
+# 52-week closing range.
+AVERAGE_IDS = ("tape_sma200_level", "tape_close_vs_sma200")
+CLOSING_RANGE_IDS = ("tape_low_close_252", "tape_high_close_252")
 
 # The head line of every rendered brief and full document names the pack
 # it was built from, with this exact prefix in front of the sha256 in
@@ -307,8 +314,11 @@ def _freshness_mark(pack, fact_id):
 
 
 def _figure(pack, facts, fact_id, passages=None):
-    """One frozen answer, as the capture wrote it: value, unit, date,
-    staleness. Never reformatted, never recomputed.
+    """One frozen answer, as the reader reads it (unit READ-B2): its plain
+    label, then its figure in the market form (owner ruling AC16(4)), then
+    staleness. The exact recorded value is printed beside the formatted one
+    in the fact's own entry of the full document; the figure is never
+    recomputed.
 
     A decisive metric may be answered by a tier-2 PASSAGE that states its
     figures - a backlog written in prose is still a frozen answer - so
@@ -318,19 +328,134 @@ def _figure(pack, facts, fact_id, passages=None):
     if fact is None:
         passage = (passages or {}).get(fact_id)
         if passage is None:
-            return "`%s` is named but is not in the pack" % _one_line(fact_id)
+            return "%s is named but is not in the pack" % _safe(fact_id)
         figures = ", ".join(_safe(item)
                             for item in passage.get("figures") or [])
-        return "`%s` (passage, as of %s) states %s: %s" % (
-            _one_line(fact_id), _one_line(passage.get("as_of")),
-            figures or "no figure",
+        return "the passage %s states %s: %s" % (
+            _passage_title(fact_id), figures or "no figure",
             _safe(_trim(passage.get("text"), SHORT_TRIM,
                         passage.get("figures"))))
-    unit = _safe(fact.get("unit"))
-    return "`%s` = %s%s (as of %s)%s" % (
-        _one_line(fact_id), _safe(fact.get("value")),
-        (" " + unit) if unit else "", _one_line(fact.get("as_of")),
-        _freshness_mark(pack, fact_id))
+    return "%s: %s%s" % (_fact_name(fact), _shown(fact),
+                         _freshness_mark(pack, fact_id))
+
+
+# Owner ruling AC45(9): a row the gate let wait for its outcome - a period
+# the pack has not yet reported - leaves what was delivered open. The
+# words are NOT_REPORTED, defined once with the guidance tables below.
+
+
+def _delivered(pack, facts, row):
+    """What a guidance row says was delivered: the figure, or - on a row
+    that leaves it open - that the period is not reported yet."""
+    if row.get("delivered") is None:
+        return NOT_REPORTED
+    return _figure(pack, facts, row.get("delivered"))
+
+
+# ------------------------------------------------ the reader's figures
+# Unit READ-B2 (owner rulings AC16(4) and AC40(2c)): the document a person
+# approves shows every figure in the market form the report uses, and the
+# full document prints the exact recorded value beside it. The frozen
+# evidence itself stays exact (the ruling closing PRECISION-REG-1): only
+# the reading is formatted. The report's formatter is loaded when first
+# used, never at the top: the report imports this module at its own top.
+
+RECORD_KEY_LINE = "- Record key: "
+
+
+def _format_number(value, unit):
+    from council.report import render_report
+    return render_report.format_number(value, unit)
+
+
+def _format_date(value):
+    from council.report import render_report
+    return render_report.format_date(value)
+
+
+def _unit_words(unit):
+    """A recorded unit as words: its underscores read as spaces."""
+    return _one_line(unit).replace("_", " ")
+
+
+def _shown(fact):
+    """A fact's value in the market form, neutralized for the document."""
+    return _safe(_format_number(fact.get("value"), fact.get("unit")))
+
+
+def _exact(fact):
+    """A fact's value exactly as recorded, with its unit in words."""
+    unit = _unit_words(fact.get("unit"))
+    return _safe(fact.get("value")) + ((" " + _safe(unit)) if unit else "")
+
+
+def _value_words(fact):
+    """The formatted value with the exact recorded value beside it, or the
+    exact value alone where formatting changes nothing a reader sees."""
+    shown = _format_number(fact.get("value"), fact.get("unit"))
+    raw = _one_line(fact.get("value"))
+    unit = _unit_words(fact.get("unit"))
+    if _one_line(shown) in (raw, ("%s %s" % (raw, unit)).strip()):
+        return _exact(fact)
+    return "%s — recorded %s" % (_safe(shown), _exact(fact))
+
+
+def _fact_name(fact):
+    """A fact's plain name: its label, or its key read as words where it
+    carries none (unit READ-B2: the key itself stands only in the fact's
+    own entry, in small print)."""
+    label = str(fact.get("label") or "").strip()
+    return _safe(label) if label else _words_of_id(fact.get("id"))
+
+
+def _words_of_id(identifier):
+    """A machine name read as words: a passage's tier prefix dropped, its
+    underscores read as spaces, the first letter capitalised."""
+    return _safe(_id_words(identifier))
+
+
+def _id_words(identifier):
+    """_words_of_id before the escaping, for a printer that escapes."""
+    text = _one_line(identifier)
+    if text.startswith("t2_"):
+        text = text[len("t2_"):]
+    text = " ".join(text.replace("_", " ").split())
+    return text[:1].upper() + text[1:]
+
+
+def _point_words(text):
+    """An outside point on the one page: its first sentence, then the pack
+    pointer when more follows - never a cut inside a sentence (architect
+    ruling, round 2 of UPGRADE2-READ-B2; the seed's item 14). A first
+    sentence longer than the page budget gives its place to the pointer
+    alone (architect ruling closing r2-1, Step 0 of round 3)."""
+    text = _one_line(text)
+    first = _first_sentence(text)
+    if len(first) > TRIM_CHARS:
+        return "(%s)" % IN_THE_PACK
+    if first == text:
+        return text
+    return "%s (%s)" % (first, IN_THE_PACK)
+
+
+def _passage_title(passage_id):
+    return "\"%s\"" % _words_of_id(passage_id)
+
+
+def _first_sentence(text):
+    """The first sentence of a stretch of prose: up to the first full stop
+    that ends a lower-case word, a figure or a bracket and is followed by
+    a space; the whole text where there is none."""
+    text = _one_line(text)
+    at = 0
+    while True:
+        at = text.find(". ", at)
+        if at == -1:
+            return text
+        before = text[at - 1:at]
+        if before and (before.islower() or before.isdigit() or before == ")"):
+            return text[:at + 1]
+        at += 2
 
 
 def _source(facts, fact_id, passages=None):
@@ -350,11 +475,16 @@ def _head_lines(pack, pack_sha256):
     ticker = _safe(subject.get("ticker"))
     lines = ["# The evidence, in one page - what the council will be "
              "allowed to know", ""]
-    lines.append("**Subject:** %s%s - %s. **Captured:** %s."
-                 % (name or "not named",
+    kind = subject.get("kind")
+    # Unit READ-B2: the subject in words and the gathering time as a date,
+    # never the schema's kind or a machine timestamp.
+    lines.append("**%s%s, %s.** Evidence gathered %s."
+                 % (name or "Not named",
                     (" (%s)" % ticker) if ticker else "",
-                    _one_line(subject.get("kind")) or "kind not stated",
-                    _one_line(capture.get("captured_at"))))
+                    SUBJECT_KIND_WORDS.get(kind) or _safe(kind)
+                    or "its kind not stated",
+                    _safe(_moment_words(capture.get("captured_at")))
+                    or "at a time not recorded"))
     # What this line may claim, and what it may not (closing pass, r7-1;
     # closing incremental, r8-1). The page is ASSEMBLED by rule and
     # nothing on it was written for it - but it quotes the capture
@@ -374,6 +504,19 @@ def _head_lines(pack, pack_sha256):
                  "read as such." % (PACK_HEAD_PREFIX, pack_sha256))
     lines.append("")
     return lines
+
+
+_MOMENT = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::\d{2})?Z$")
+
+
+def _moment_words(stamp):
+    """A capture's UTC time stamp as a reader writes it: "24 Sep 2026,
+    16:05 UTC". Any other text passes to the report's date rule."""
+    match = _MOMENT.match(_one_line(stamp))
+    if match:
+        return "%s, %s:%s UTC" % (_format_date(match.group(1)),
+                                  match.group(2), match.group(3))
+    return _format_date(_one_line(stamp))
 
 
 def pack_sha256_at_head(text):
@@ -397,6 +540,18 @@ def pack_sha256_at_head(text):
 # owner approves (owner ruling AC3) carries the capture's one-line question
 # at its top, so the report's masthead may print that line on his approval.
 QUESTION_LINE_LABEL = "The question, in one line:"
+QUESTION_IN_FULL_LABEL = "The question in full:"
+QUESTION_REPEAT_POINTER = "(his words, as in the line above)"
+
+SUBJECT_KIND_WORDS = {
+    "single_stock": "one stock",
+    "etf": "an exchange-traded fund",
+    "bitcoin": "bitcoin",
+    "gold": "gold",
+    "commodity": "a commodity",
+    "theme": "a theme",
+    "basket": "a basket",
+}
 
 
 def question_line(capture):
@@ -421,26 +576,52 @@ def question_line_row(capture):
 
 
 def _question_lines(capture):
+    """The one-line row, then the question in full, once (unit READ-B2):
+    where the full question repeats the one line word for word, the repeat
+    is replaced by a pointer to the row above, so no text prints twice."""
     lines = ["## The question", ""]
     row = question_line_row(capture)
+    line = question_line(capture)
+    verbatim = _one_line(capture.get("question_verbatim"))
     if row:
         lines += [row, ""]
-    return lines + [_safe(capture.get("question_verbatim"))
-                    or "The pack carries no question.", ""]
+    if not verbatim:
+        return lines + ["The pack carries no question.", ""]
+    if line and verbatim == line:
+        return lines
+    if line and line in verbatim:
+        verbatim = verbatim.replace(line, QUESTION_REPEAT_POINTER)
+    return lines + ["%s %s" % (QUESTION_IN_FULL_LABEL, _safe(verbatim)), ""]
 
 
-def _how_it_earns_words(frame, bases):
-    shown, note = _rows(frame.get("how_it_earns") or [], "revenue lines")
-    parts = ["%s (%s of the latest reported period)"
-             % (_marked_trim(row.get("line"), bases, SHORT_TRIM,
-                             row.get("figures")),
-                _one_line(row.get("share_of_period")))
-             for row in shown]
+def _how_it_earns_words(pack, frame, bases):
+    """Each revenue line by its short name, its revenue and its share of
+    the firm, read from the one table both pages print (unit READ-B1); a
+    share the frame records as a share reads as the table reads it."""
+    table = earnings_rows(pack, frame)
+    lines = frame.get("how_it_earns") or []
+    shown, note = _rows(list(zip(lines, table["rows"])), "revenue lines")
+    at = table["head"].index(EARNINGS_HEAD[2])
+    parts = []
+    for line, row in shown:
+        revenue, share = row[at], row[at + 1]
+        words = _md_cell(row[0], bases)
+        if revenue["kind"] == "fact":
+            words += ": %s" % _md_cell(revenue, bases)
+        if share["kind"] == "calc":
+            words += ", %s of the firm (calculated)" % _md_cell(share, bases)
+        elif share["kind"] == "fact":
+            words += ", %s of the latest reported period" % _md_cell(
+                share, bases)
+        parts.append(words)
     words = "; ".join(parts) if parts else "no revenue lines are stated"
     return words + ("" if note is None else " - " + note)
 
 
-def _management_words(pack, facts, frame):
+def _management_words(pack, facts, frame, guidance=True):
+    """Management on one line: tenure and ownership, then - on the one
+    page - its guidance as a sentence. The full document passes
+    guidance=False and prints the guidance as tables (unit READ-B1)."""
     management = frame.get("management") or {}
     bits = []
     for label, key in (("CEO tenure", "ceo_tenure_years"),
@@ -448,11 +629,13 @@ def _management_words(pack, facts, frame):
                        ("insider ownership", "insider_ownership_pct")):
         fact_id = management.get(key)
         if fact_id:
-            bits.append("%s %s" % (label, _figure(pack, facts, fact_id)))
-    rows, note = _rows(management.get("guidance_vs_delivery") or [],
-                       "guided quarters")
+            named = str((facts.get(fact_id) or {}).get("label") or "").strip()
+            figure = _figure(pack, facts, fact_id)
+            bits.append(figure if named else "%s %s" % (label, figure))
+    rows, note = _rows((management.get("guidance_vs_delivery") or [])
+                       if guidance else [], "guided quarters")
     for row in rows:
-        guided = ", ".join(_figure(pack, facts, fact_id)
+        guided = " / ".join(_figure(pack, facts, fact_id)
                            for fact_id in row.get("guided") or [])
         revisions = row.get("revisions")
         if isinstance(revisions, list):
@@ -461,25 +644,29 @@ def _management_words(pack, facts, frame):
             # against the first; an empty list says it was never revised.
             revised = "; ".join(
                 "revised on %s to %s"
-                % (_safe((item or {}).get("date")),
-                   ", ".join(_figure(pack, facts, fact_id)
+                % (_safe(_format_date((item or {}).get("date"))),
+                   " / ".join(_figure(pack, facts, fact_id)
                              for fact_id in (item or {}).get("guided")
                              or []) or "nothing named")
                 for item in revisions) or FI_NEVER_REVISED
             bits.append("%s first guided %s; %s; delivered %s"
                         % (_safe(row.get("period")),
                            guided or "nothing named", revised,
-                           _figure(pack, facts, row.get("delivered"))))
+                           _delivered(pack, facts, row)))
             continue
         bits.append("%s guided %s, delivered %s"
                     % (_safe(row.get("period")),
                        guided or "nothing named",
-                       _figure(pack, facts, row.get("delivered"))))
+                       _delivered(pack, facts, row)))
     if note is not None:
         bits.append(note)
     if not bits:
-        return "the pack states nothing about management"
+        return MANAGEMENT_NOTHING
     return "; ".join(bits)
+
+
+MANAGEMENT_NOTHING = "the pack states nothing about management"
+MANAGEMENT_GUIDANCE_ONLY = "What it guided, and what it delivered, follows."
 
 
 def _peers_words(frame):
@@ -509,6 +696,11 @@ _ARCHETYPE_WORDS = {
     "stabilised_lessor": "stabilised lessor",
     "no_earnings_asset": "asset with no earnings",
     "financial_institution": "financial institution",
+    # Owner rulings AC49(1) and AC50 (GROWTH-ARCHETYPE (c)): the growth
+    # company and its one measure, one wording on every page.
+    "reinvesting_grower": "a growth company that does not yet make a profit",
+    # Owner rulings AC51-AC54 (RESOURCE-ARCHETYPE (c)): the producer.
+    "resource_producer": "an oil, gas or mining producer",
 }
 _MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -532,6 +724,11 @@ _MEASURE_WORDS = {
     "price_to_fee_earnings_against_fee_earning_assets":
         "price against fee earnings, read against the fee-earning assets",
     "price_to_net_asset_value": "price against net asset value",
+    "ev_to_gross_profit_against_revenue_growth":
+        "enterprise value against gross profit, read beside sales growth",
+    "ev_to_reserves_against_cash_flow_at_the_recorded_price":
+        "enterprise value against its reserves and against the cash they "
+        "earn, each beside the price it rests on",
 }
 # The same table under a public name, so the seats' case file (unit
 # FI-ARCHETYPE (c)) reads this one wording rather than a second copy.
@@ -576,6 +773,115 @@ FI_FREE_CASH_WORDS = ("capital the firm can pay out and still stay above its "
 FI_STRESS_HEADING = "The regulator's own bad year for this firm"
 FI_STRESS_PREFIX = "stress_"
 FI_NEVER_REVISED = "never revised"
+
+# Owner rulings AC49(1) and AC50 (GROWTH-ARCHETYPE (c), the pages): the plain
+# words for what a growth company's frame declares, read by every renderer -
+# the seats' case file imports them and the report holds its own archetype and
+# measure tables equal to this module's by a test. Evidence and the ruled
+# sentence only: no word here reads the yardstick.
+GROWER_ARCHETYPE = "reinvesting_grower"
+GROWER_SUBTYPE_WORDS = {
+    "recurring_revenue": "a subscription business",
+    "transaction_platform": "a platform that earns a cut of what passes "
+                            "through it",
+}
+GROWER_NATURE_WORDS = {
+    "subscription": "subscription income",
+    "usage": "usage income",
+    "transaction": "transaction income",
+    "product": "product sales",
+}
+# Owner ruling AC50(8): below the line the council rates the company at most
+# hold, sell still allowed, and the front says so in this one sentence. The
+# line is the floors' own figure, filled in where the sentence is printed.
+GROWER_CAP_SENTENCE = ("The company's cash covers fewer than %s months at its "
+                       "recent burn, so the council may not rate it above "
+                       "hold.")
+GROWER_MONTHS_LEAD = "Months of cash left: "
+GROWER_NOT_BURNING = "not burning cash"
+GROWER_NOT_COUNTED = "shown, not counted"
+GROWER_UNDRAWN_LEAD = "Undrawn credit lines, shown and not counted: "
+GROWER_GUIDED = "guided by the company - shown beside, never rated on"
+CALCULATED = "calculated"
+RECORDED = "recorded"
+# The facts the yardstick and what stands beside it are read from (owner
+# rulings AC50(5), (6) and (9)), by the ids the grower's floors require.
+GROWER_REVENUE_PAIR = ("revenue_q", "revenue_prior_year_q")
+GROWER_STOCK_PAY = "stock_based_compensation_q"
+GROWER_SHARES_PAIR = ("diluted_shares_q", "diluted_shares_prior_year_q")
+GROWER_ARR_PREFIX = "arr_"
+GROWER_GUIDED_PREFIX = "guidance_breakeven_"
+GROWER_QUARTER_PREFIXES = ("revenue_quarter_", "gross_profit_quarter_",
+                           "operating_income_quarter_")
+QUARTERS_HEAD = ("Quarter", "Sales", "Gross profit", "Operating profit")
+YARDSTICK_HEAD = ("Figure", "Value", "How it is struck")
+RUNWAY_HEAD = ("Figure", "Value", "How it counts")
+
+# Owner rulings AC51-AC56 (RESOURCE-ARCHETYPE (c), the pages): the plain words
+# for what a producer's frame declares, read by every renderer as the grower's
+# are. Evidence and the ruled sentence only: no word here reads the yardstick
+# or judges the reserves.
+PRODUCER_ARCHETYPE = gate._PRODUCER_ARCHETYPE
+PRODUCER_SUBTYPE_WORDS = {
+    "oil_and_gas_producer": "an oil and gas producer",
+    "miner": "a miner",
+    "royalty_and_streaming": "a royalty and streaming company",
+}
+PRODUCT_WORDS = {
+    "crude_oil": "crude oil",
+    "natural_gas": "natural gas",
+    "gold": "gold",
+    "silver": "silver",
+    "copper": "copper",
+}
+PRODUCER_NATURE_WORDS = {
+    "commodity_sales": "commodity sales",
+    "royalty": "royalty income",
+    "stream": "stream income",
+}
+RESERVES_STANDARD_WORDS = {
+    "sec_oil_and_gas": "the US SEC's oil and gas rules",
+    "sec_s_k_1300": "the US SEC's mining rules (S-K 1300)",
+    "ni_43_101": "Canada's NI 43-101",
+    "jorc": "Australia's JORC code",
+    "prms": "the SPE petroleum resources management system",
+}
+# Owner ruling AC53(R9), the words the architect confirmed: where today's price
+# is below the price some reserves were counted at, every page says so.
+RESERVE_PRICE_SENTENCE = ("Today's price is below the price some of these "
+                          "reserves were counted at, so they rest on a price "
+                          "the market is not paying today.")
+# A quantity unit read after "per" (register item P-RESOURCEb-5); a unit the
+# table does not name reads as its own words.
+PER_UNIT_WORDS = {
+    "boe": "barrel of oil equivalent",
+    "bbl": "barrel",
+    "mcf": "thousand cubic feet",
+    "oz": "ounce",
+    "lb": "pound",
+    "tonnes": "tonne",
+}
+PRODUCER_LIFE_LEAD = "Reserve life: "
+BY_PRODUCT_WORDS = " - a by-product, shown apart and not rated on"
+NOT_COMPARABLE = "not comparable in one unit"
+NEGATIVE_CASH = "negative, not a multiple"
+PRODUCER_NO_HEDGE = "none - the company does not hedge"
+PRODUCER_NOT_NETTED = "shown, never netted"
+PRODUCER_BESIDE = "shown beside, never the denominator"
+INTEGRATED_BESIDE_LEAD = "Its reserves and today's price, shown beside: "
+PRODUCER_STANDARDIZED = sufficiency._PRODUCER_STANDARDIZED
+PRODUCER_BALANCE_IDS = sufficiency._PRODUCER_BALANCE
+PRODUCER_QUARTER_PREFIXES = ("production_quarter_", "realized_price_quarter_")
+PRODUCER_LATEST_PAIRS = tuple(zip(sufficiency._PRODUCER_HEADLINES,
+                                 sufficiency._PRODUCER_YEAR_AGO))
+RESERVES_HEAD = ("Reserves", "Amount", "Standard", "Report date",
+                 "Counted at", "Today's price")
+PRODUCER_QUARTERS_HEAD = ("Quarter", "Output", "Price received")
+# The rating row is the producer's third standard test (owner ruling
+# AC54(R14)(iii)): the yardstick, named in the measure's own words.
+PRODUCER_THIRD_TEST = ("rating_vs_history_or_peers",
+                       "a producer's third standard test - the producer's "
+                       "yardstick: %s")
 
 _FLOORS = None
 
@@ -682,18 +988,16 @@ def _rating_subject_denominators(capture):
 
 def _fi_value(pack, facts, fact_id):
     """One fact a financial institution's frame names, as the page shows
-    it: its plain label where one exists, then the frozen value. The id is
-    named in the file's own voice ONLY when it is a tier-1 id of this pack;
-    anything else is sent through _safe, as data (P-U3e-3)."""
+    it: its plain label, then the figure in the market form (unit READ-B2).
+    Anything that is not a tier-1 id of this pack is sent through _safe,
+    as data (P-U3e-3)."""
     if not isinstance(fact_id, str) or fact_id not in facts:
         return "%s (not in the pack)" % _safe(fact_id)
-    label = str(facts[fact_id].get("label") or "").strip()
-    figure = _figure(pack, facts, fact_id)
-    return ("%s: %s" % (_safe(label), figure)) if label else figure
+    return _figure(pack, facts, fact_id)
 
 
 def _fi_values(pack, facts, fact_ids):
-    return ", ".join(_fi_value(pack, facts, fid) for fid in fact_ids or ())
+    return "; ".join(_fi_value(pack, facts, fid) for fid in fact_ids or ())
 
 
 def fi_kind_words(frame, escape):
@@ -730,9 +1034,37 @@ def _fi_pair_words(pack, facts, ratio, requirement):
     if requirement is None:
         return ("%s, with no requirement named beside it"
                 % _fi_value(pack, facts, ratio))
-    return ("%s beside its requirement %s"
+    cushion = _cushion_words(facts.get(ratio), facts.get(requirement))
+    return ("%s, against %s%s"
             % (_fi_value(pack, facts, ratio),
-               _fi_value(pack, facts, requirement)))
+               _fi_value(pack, facts, requirement), cushion))
+
+
+_PERCENT_UNITS = ("percent", "%", "pct")
+
+
+def _cushion_words(ratio, requirement):
+    """The gap between a capital ratio and its requirement, in points to
+    one decimal, struck at display from the two recorded percentages
+    (unit READ-B2: reading precision belongs to the page, the ruling
+    closing PRECISION-REG-1). Nothing where either is not a percentage."""
+    if not ratio or not requirement:
+        return ""
+    if (ratio.get("unit") not in _PERCENT_UNITS
+            or requirement.get("unit") not in _PERCENT_UNITS):
+        return ""
+    try:
+        gap = (decimal.Decimal(str(ratio.get("value")))
+               - decimal.Decimal(str(requirement.get("value"))))
+    except (decimal.InvalidOperation, ValueError):
+        return ""
+    if not gap.is_finite():
+        return ""
+    points = gap.quantize(decimal.Decimal("0.1"),
+                          rounding=decimal.ROUND_HALF_UP)
+    if points < 0:
+        return " - short of it by %s points (calculated)" % abs(points)
+    return " - a cushion of %s points (calculated)" % points
 
 
 def _fi_archetype_line(capture, frame):
@@ -748,16 +1080,276 @@ def _fi_archetype_line(capture, frame):
     return line
 
 
+def grower_subject_frame(capture):
+    """The single name's own frame where it declares the growth
+    archetype, or None."""
+    subject = capture.get("subject") or {}
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if isinstance(frame, dict) and frame.get("archetype") == GROWER_ARCHETYPE:
+        return frame
+    return None
+
+
+def grower_kind_words(frame, escape):
+    """What kind of growth company this is, in the page's words: the
+    archetype and the sub-type. `escape` is the renderer's own
+    neutralisation, applied only to a value outside the ruled words."""
+    subtype = frame.get("grower_subtype")
+    return "%s - %s" % (_ARCHETYPE_WORDS[GROWER_ARCHETYPE],
+                        GROWER_SUBTYPE_WORDS.get(subtype) or escape(subtype)
+                        or "its kind not stated")
+
+
+def grower_runway(pack):
+    """The months of cash left as sufficiency.growth_runway reads them
+    under the ruled floors (owner rulings AC50(7) and AC50(8); architect
+    ruling A6) - the one reading every page prints; nothing here works
+    the months out again. None for any other subject."""
+    return sufficiency.growth_runway(pack, _floors())
+
+
+def grower_cap_sentence(runway):
+    """The ruled sentence (owner ruling AC50(8)) where the company's cash
+    covers fewer months than the line, its figure the floors' own; None
+    at or above the line and for any other subject."""
+    if not runway or not runway.get("below"):
+        return None
+    return GROWER_CAP_SENTENCE % runway["threshold_months"]
+
+
+def grower_months_words(runway):
+    """The months of cash left as every page prints them: the helper's
+    figure, cut toward zero to one place and marked calculated, against
+    the ruled line; a company generating cash is not burning it."""
+    if runway is None:
+        return NOT_CALCULABLE
+    if runway.get("burn") is None:
+        return GROWER_NOT_BURNING
+    return ("%s months (%s), at the last four quarters' cash burn, against "
+            "the owner's line of %s months"
+            % (runway["months"], CALCULATED, runway["threshold_months"]))
+
+
+def grower_months_line(runway, with_cap=True):
+    """The one line the one-page brief, the full document and the case
+    file print alike: the months of cash left, then - below the line -
+    the ruled sentence (the report's front sets that sentence in a card
+    of its own, `with_cap` False)."""
+    cap = grower_cap_sentence(runway) if with_cap else None
+    return "%s%s.%s" % (GROWER_MONTHS_LEAD, grower_months_words(runway),
+                        (" " + cap) if cap else "")
+
+
+def grower_undrawn_words(pack, frame):
+    """Each undrawn credit line the runway block names - its plain name and
+    its figure - before either printer escapes them, for the summaries that
+    print the months of cash left (owner ruling AC50(7): shown, not
+    counted; audit finding r1-4). Empty where the block names none."""
+    block = frame.get("growth_runway")
+    block = block if isinstance(block, dict) else {}
+    facts = _facts_by_id(pack["capture"])
+    return ["%s %s" % (_plain_name(facts, fid),
+                       cell_text(_fact_cell(pack, facts, fid)))
+            if isinstance(fid, str) and fid in facts
+            else _plain_name(facts, fid)
+            for fid in block.get("undrawn_facility_facts") or []]
+
+
+def _grower_archetype_line(capture, frame, kind_words=None):
+    """The one-page brief's archetype line for a growth company (or, with
+    `kind_words`, a producer): the kind of business, its sub-type and the
+    measure."""
+    measure = _rating_measure(capture)
+    line = "- Archetype: %s" % (kind_words or grower_kind_words)(frame, _safe)
+    if measure:
+        line += " - rated on %s" % _MEASURE_WORDS.get(measure, _safe(measure))
+    return line
+
+
+def producer_subject_frame(capture):
+    """The single name's own frame where it declares the producer
+    archetype, or None."""
+    subject = capture.get("subject") or {}
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if (isinstance(frame, dict)
+            and frame.get("archetype") == PRODUCER_ARCHETYPE):
+        return frame
+    return None
+
+
+def _resource_block(frame):
+    block = frame.get("resource_base")
+    return block if isinstance(block, dict) else {}
+
+
+def producer_kind_words(frame, escape):
+    """What kind of producer this is, in the page's words: the archetype,
+    the sub-type and the main commodity. `escape` is the renderer's own
+    neutralisation, applied only to a value outside the ruled words."""
+    subtype = frame.get("producer_subtype")
+    product = _resource_block(frame).get("product")
+    return "%s - %s whose main commodity is %s" % (
+        _ARCHETYPE_WORDS[PRODUCER_ARCHETYPE],
+        PRODUCER_SUBTYPE_WORDS.get(subtype) or escape(subtype)
+        or "its kind not stated",
+        PRODUCT_WORDS.get(product) or escape(product) or "not stated")
+
+
+def producer_readings(pack):
+    """The producer's worked-out figures as sufficiency.resource_readings
+    reads them under the ruled floors (owner rulings AC52(R5), AC53(R9),
+    AC54(R13)) - the one reading every page prints; nothing here works a
+    figure out again. None for any other subject."""
+    return sufficiency.resource_readings(pack, _floors())
+
+
+def reserve_price_sentence(readings):
+    """The ruled sentence (owner ruling AC53(R9)) where today's price is
+    below the price some reserves were counted at; None otherwise."""
+    if not readings or readings.get("today_below_reserve_price") is not True:
+        return None
+    return RESERVE_PRICE_SENTENCE
+
+
+def producer_life_words(readings):
+    """The reserve life as every page prints it: the helper's figure, cut
+    toward zero to one place and marked calculated; where the reserves and
+    the output are read but not in one unit, not comparable - the council
+    converts nothing."""
+    life = (readings or {}).get("reserve_life_years")
+    if life is not None:
+        return ("%s years (%s), the reserves against the last four quarters' "
+                "output" % (life, CALCULATED))
+    output = (readings or {}).get("production_ttm")
+    if (readings or {}).get("reserves") is not None and output is not None \
+            and output > 0:
+        return NOT_COMPARABLE
+    return NOT_CALCULABLE
+
+
+def producer_life_line(readings, with_sentence=True):
+    """The one line the one-page brief, the full document and the case
+    file print alike: the reserve life, then - where today's price is below
+    the reserves' - the ruled sentence (the report's front sets that
+    sentence in a card of its own, `with_sentence` False)."""
+    sentence = reserve_price_sentence(readings) if with_sentence else None
+    return "%s%s.%s" % (PRODUCER_LIFE_LEAD, producer_life_words(readings),
+                        (" " + sentence) if sentence else "")
+
+
+def _tier1_ids(capture):
+    return [fact["id"] for fact in capture.get("tier1") or []
+            if isinstance(fact.get("id"), str)]
+
+
+def _resource_rule():
+    return (_floors().get("archetype_measures") or {}).get(
+        "resource_rule") or {}
+
+
+def _family(field, subtype=None):
+    """The id prefixes the producer rule reads a resource-block field by
+    (architect ruling B12), the sub-type's own where the floors give one."""
+    rule = _resource_rule()
+    prefixes = dict(rule.get("block_families") or {})
+    prefixes.update((rule.get("block_families_by_subtype") or {}).get(
+        subtype) or {})
+    return tuple(prefixes.get(field) or ())
+
+
+def integrated_major_frame(capture):
+    """The single name's own frame where it carries the integrated_major
+    block (owner ruling AC52(1)), or None."""
+    subject = capture.get("subject") or {}
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if isinstance(frame, dict) and isinstance(frame.get("integrated_major"),
+                                              dict):
+        return frame
+    return None
+
+
+def integrated_major_ids(capture):
+    """Owner ruling AC52(1), register item P-RESOURCEa-4: a passing
+    integrated major is shown with its reserves and today's commodity price
+    beside - every reported reserve, and every today's price of crude oil or
+    natural gas the three-arm test reads (the architect's ruling on
+    P-RESOURCEc-3: the one set, sufficiency.integrated_major_prices). None
+    for any subject whose own frame carries no integrated_major block."""
+    if integrated_major_frame(capture) is None:
+        return None
+    order = _tier1_ids(capture)
+    products = (_floors().get("archetype_measures") or {}).get(
+        "resource_products") or {}
+    return (sufficiency._reserve_ids(_resource_rule(), order),
+            [fid for fid, _ in sufficiency.integrated_major_prices(
+                _resource_rule(), products, order)])
+
+
+def integrated_major_words(pack):
+    """The integrated major's reserves and today's price in one line of
+    evidence, before either printer escapes it; None for any other
+    subject."""
+    found = integrated_major_ids(pack["capture"])
+    if found is None:
+        return None
+    facts = _facts_by_id(pack["capture"])
+    parts = ["%s %s" % (_plain_name(facts, fid),
+                        cell_text(_fact_cell(pack, facts, fid)))
+             for fid in found[0] + found[1]]
+    if not found[1]:
+        parts.append("today's price is not in the pack")
+    return "; ".join(parts)
+
+
+UNTRACED_LEAD = "Not traced: "
+UNTRACED_SENTENCE = ("%d figure(s) in this business description match no "
+                     "recorded fact and are marked in the text")
+UNREADABLE_SENTENCE = "%d figure(s) in it could not be read"
+NOT_CHANGING_WORDS = "The business is not changing its model."
+CHANGING_KIND_WORDS = {
+    "mix_shift": "its mix is shifting",
+    "model_transition": "its model is changing",
+    "turnaround": "a turnaround",
+    "cyclical_trough": "at the bottom of its cycle",
+    "cyclical_peak": "at the top of its cycle",
+    "rollup": "a roll-up of acquisitions",
+}
+
+
+def _untraced_sentence(capture, ticker, frame):
+    """The AC19 summary, only where a figure is not traced or not read."""
+    _traced, untraced, unreadable = trace.frame_counts(
+        capture, ticker, frame, _marks_config())
+    parts = []
+    if untraced:
+        parts.append(UNTRACED_SENTENCE % untraced)
+    if unreadable:
+        parts.append(UNREADABLE_SENTENCE % unreadable)
+    return (UNTRACED_LEAD + "; ".join(parts) + ".") if parts else None
+
+
+def _changing_opening(changing):
+    """What is changing, opened in words: the kind of change, or, where
+    the capture says none, that the business is not changing its model."""
+    kind = changing.get("kind")
+    if kind == "none":
+        return NOT_CHANGING_WORDS + " "
+    words = CHANGING_KIND_WORDS.get(kind) or _safe(kind)
+    return ("%s%s. " % (words[:1].upper(), words[1:])) if words else ""
+
+
 def _one_frame_lines(pack, facts, passages, ticker, frame):
     """One business, in a handful of lines (spec section U3.1)."""
     capture = pack["capture"]
     bases = _frame_bases(capture, ticker)
     lines = ["**%s**" % _safe(ticker)]
-    # Owner ruling AC19: the one summary line per frame, before the prose,
-    # so a reader sees at once how much of this description traces to the
-    # record. The numbers below are marked where they are shown.
-    lines.append("- %s" % trace.summary_sentence(
-        trace.frame_counts(capture, ticker, frame, _marks_config())))
+    # Owner ruling AC19: the numbers below are marked where they are shown.
+    # The summary count stands before the prose only when a figure is NOT
+    # traced (unit READ-B2): a checking statistic that finds nothing is
+    # not in the reader's path.
+    untraced = _untraced_sentence(capture, ticker, frame)
+    if untraced:
+        lines.append("- %s" % untraced)
     archetype = frame.get("archetype")
     if archetype == FI_ARCHETYPE:
         # Owner rulings AC28 and AC30: the kind of firm and its capital
@@ -768,6 +1360,27 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
                      % _fi_capital_words(pack, facts,
                                          frame.get("fi_capital") or {},
                                          bases))
+    elif (archetype == GROWER_ARCHETYPE
+          and grower_subject_frame(capture) is frame):
+        # Owner rulings AC49(1) and AC50: the kind of growth company, the
+        # measure and the months of cash left stand on the one page, with
+        # the ruled sentence below the line; the rest is in the full
+        # document.
+        lines.append(_grower_archetype_line(capture, frame))
+        lines.append("- " + grower_months_line(grower_runway(pack)))
+        undrawn = grower_undrawn_words(pack, frame)
+        if undrawn:
+            lines.append("- %s%s" % (GROWER_UNDRAWN_LEAD, "; ".join(
+                _safe(words) for words in undrawn)))
+    elif producer_subject_frame(capture) is frame:
+        # Owner rulings AC51-AC54: the kind of producer, the measure and the
+        # reserve life stand on the one page, with the ruled sentence where
+        # today's price is below the reserves'; the rest is in the full
+        # document.
+        lines.append(_grower_archetype_line(capture, frame,
+                                            producer_kind_words))
+        lines.append("- " + _safe(producer_life_line(producer_readings(
+            pack))))
     elif archetype:
         measure = _rating_measure(capture)
         rated = ((" - rated on %s"
@@ -776,13 +1389,17 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
         lines.append("- Archetype: %s%s"
                      % (_ARCHETYPE_WORDS.get(archetype, _safe(archetype)),
                         rated))
+        if integrated_major_frame(capture) is frame:
+            lines.append("- %s%s" % (INTEGRATED_BESIDE_LEAD,
+                                     _safe(integrated_major_words(pack))))
     lines.append("- What it does: %s"
                  % _marked_trim(frame.get("what_it_does"), bases,
                                 figures=frame.get("what_it_does_figures")))
-    lines.append("- How it earns: %s" % _how_it_earns_words(frame, bases))
+    lines.append("- How it earns: %s" % _how_it_earns_words(pack, frame,
+                                                            bases))
     changing = frame.get("what_is_changing") or {}
-    lines.append("- What is changing (%s): %s"
-                 % (_one_line(changing.get("kind")) or "not stated",
+    lines.append("- What is changing: %s%s"
+                 % (_changing_opening(changing),
                     _marked_trim(changing.get("statement"), bases,
                                  figures=changing.get("figures"))))
     decline = frame.get("headline_decline_read")
@@ -797,9 +1414,8 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
     lines.append("- Management: %s" % _management_words(pack, facts, frame))
     standing = frame.get("competitive_position")
     passage = passages.get(standing) or {}
-    lines.append("- Competitive standing (passage `%s`): %s"
-                 % (_one_line(standing),
-                    _safe(_trim(passage.get("text"),
+    lines.append("- Competitive standing: %s"
+                 % (_safe(_trim(_first_sentence(passage.get("text")),
                                 figures=passage.get("figures")))
                     or "the passage is not in the pack"))
     cycle_dep = frame.get("cycle_dependence")
@@ -846,9 +1462,14 @@ def _business_lines(pack, facts, passages, capture):
     return lines
 
 
+DECISIVE_TABLE_HEAD = ("| The number that decides | What answers it |",
+                       "| --- | --- |")
+
+
 def _decisive_lines(pack, facts, passages, capture):
-    """The numbers that decide THIS question, with their values and the
-    source each came from."""
+    """The numbers that decide THIS question, as one small table (unit
+    READ-B2): each metric beside its answering figures, by label, in the
+    market form. The bound keeps the table whole or drops it whole."""
     lines = ["## The numbers that decide this question", ""]
     stale_ids = gate.stale_reading_ids(capture)
     frames = capture.get("business_frame") or {}
@@ -862,67 +1483,100 @@ def _decisive_lines(pack, facts, passages, capture):
         lines.append("")
         return lines
     shown, note = _rows(metrics, "decisive metrics")
+    lines.extend(DECISIVE_TABLE_HEAD)
     for ticker, metric in shown:
         bases = _frame_bases(capture, ticker)
-        lines.append("- **%s** (%s, %s): %s"
-                     % (_marked_trim(metric.get("name"), bases, SHORT_TRIM),
-                        _safe(ticker),
-                        _one_line(metric.get("kind")),
-                        _marked_trim(metric.get("why_it_decides"), bases,
-                                     figures=metric.get("figures"))))
+        name = _marked_trim(metric.get("name"), bases, SHORT_TRIM)
+        if len(frames) > 1:
+            name += " (%s)" % _safe(ticker)
         gap = metric.get("gap")
         if gap:
-            lines.append("  - NOT ANSWERED. %s. The test it weakens: %s."
-                         % (_marked_trim(gap.get("reason"), bases, SHORT_TRIM),
-                            _marked_trim(gap.get("weakened_test"), bases,
-                                         SHORT_TRIM)))
-            continue
-        # Through _rows, like every other bounded list on this page: a
-        # bare slice dropped the sixth frozen answer - a decisive figure
-        # and its source - with nothing said (audit round 1, r1-6).
-        answers, answers_note = _rows(metric.get("answered_by") or [],
-                                      "answers")
-        for fact_id in answers:
-            lines.append("  - %s, source: %s"
-                         % (_figure(pack, facts, fact_id, passages),
-                            _source(facts, fact_id, passages)))
-            if fact_id in stale_ids:
-                lines.append("    - READING STALE: corrected without a new "
-                             "source - re-gather before relying on it.")
-        if answers_note is not None:
-            lines.append("  - %s" % answers_note)
+            answer = ("NOT ANSWERED. %s. The test it weakens: %s."
+                      % (_marked_trim(gap.get("reason"), bases, SHORT_TRIM),
+                         _marked_trim(gap.get("weakened_test"), bases,
+                                      SHORT_TRIM)))
+        else:
+            # Through _rows, like every other bounded list on this page: a
+            # bare slice dropped the sixth frozen answer with nothing said
+            # (audit round 1, r1-6).
+            answers, answers_note = _rows(metric.get("answered_by") or [],
+                                          "answers")
+            parts = []
+            for fact_id in answers:
+                part = _figure(pack, facts, fact_id, passages)
+                if fact_id in stale_ids:
+                    part += (" (READING STALE: corrected without a new "
+                             "source - re-gather before relying on it)")
+                parts.append(part)
+            if answers_note is not None:
+                parts.append(answers_note)
+            answer = "; ".join(parts) or "nothing is named"
+        lines.append("| %s | %s |" % (name, answer))
     if note is not None:
+        lines.append("")
         lines.append("- %s" % note)
     lines.append("")
     return lines
 
 
+# Owner ruling AC41(4): the outside model's job before the sitting is the
+# "evidence check", and a point the record rejected is "set aside". The
+# words for a point's kind and severity are data, as the report's are.
+EVIDENCE_CHECK = "evidence check"
+FINDING_KIND_WORDS = {
+    "missing_decisive_fact": "a deciding figure is missing",
+    "suspect_figure": "a figure looks wrong",
+    "framing_error": "the business is read wrongly",
+    "missing_checklist_row": "a question is missing from the checklist",
+    "source_doubt": "the source prints a different figure",
+}
+SEVERITY_WORDS = {
+    "blocking": "Blocking",
+    "material": "Material",
+    "minor": "Minor",
+}
 _DISPOSITION_WORDS = {
     "captured": "gathered, and it is in the pack",
-    "gap_declared": "could not be gathered; the gap is declared",
-    "overruled": "set aside by the session that gathered the evidence",
+    "gap_declared": "conceded as a gap",
+    "overruled": "set aside",
 }
 
 
-def _resolution_words(resolution):
+def _finding_title(finding):
+    """A point's name, severity and kind in words: "Point E1, blocking - a
+    deciding figure is missing"."""
+    severity = finding.get("severity")
+    kind = finding.get("kind")
+    severity_words = SEVERITY_WORDS.get(severity) or _safe(severity)
+    return "Point %s, %s - %s" % (_safe(finding.get("id")),
+                                  severity_words.lower(),
+                                  FINDING_KIND_WORDS.get(kind) or _safe(kind))
+
+
+def _resolution_words(resolution, facts):
+    """The record's answer to one point, in words: what was gathered, by
+    label, or the reason's first sentence; the whole of the reason is in
+    the full evidence."""
     resolution = resolution or {}
     disposition = resolution.get("disposition")
     words = _DISPOSITION_WORDS.get(disposition)
     if words is None:
-        return "NOT ANSWERED"
+        return None
     if disposition == "captured":
-        named = ", ".join(_one_line(item)
+        named = "; ".join(_fact_ref(facts, item)
                           for item in resolution.get("fact_ids") or [])
-        return "%s (%s)" % (words, named or "no id named")
+        return "%s (%s)" % (words, named or "no figure named")
+    # Bounded by characters as well as by sentence: one Markdown line that
+    # wraps across the page defeats the one-page bound (audit round 1 of
+    # UPGRADE2-READ-B2).
+    reason = _safe(_trim(_first_sentence(resolution.get("reason")),
+                         SHORT_TRIM)) or "no reason given"
     if disposition == "gap_declared":
-        return ("%s; it weakens %s - %s"
-                % (words,
+        return ("%s: %s The test it weakens: %s"
+                % (words, reason,
                    _safe(_trim(resolution.get("weakened_test"), SHORT_TRIM))
-                   or "no named test",
-                   _safe(_trim(resolution.get("reason"), SHORT_TRIM))
-                   or "no reason given"))
-    return "%s: %s" % (words,
-                       _safe(_trim(resolution.get("reason"), SHORT_TRIM)))
+                   or "not named"))
+    return "%s: %s" % (words, reason)
 
 
 def _conceded_gaps(block):
@@ -939,18 +1593,25 @@ def _conceded_gaps(block):
 
 
 def _auditor_lines(capture):
+    """The evidence check, every point shown (unit READ-B2): the point's
+    severity and kind in words, the point's first sentence with the pack
+    pointer, then the record's answer. This section is cut last
+    by the page's line bound; the whole of each point is in the full
+    evidence."""
     block = capture.get("evidence_challenge") or {}
-    lines = ["## What the outside auditor asked for, and what happened", ""]
+    lines = ["## The %s: what the outside model asked for, and what "
+             "happened" % EVIDENCE_CHECK, ""]
     if block.get("status") != "success":
         lines.append("**NOTHING HERE WAS CHECKED BY A SECOND MODEL.** The "
-                     "outside audit of this evidence failed: %s - %s. Every "
-                     "figure on this page is one session's work."
+                     "evidence check failed: %s - %s. Every figure on this "
+                     "page is one session's work."
                      % (_one_line(block.get("failure_status"))
                         or "no status recorded",
                         _safe(_trim(block.get("failure_reason"), SHORT_TRIM))
                         or "no reason recorded"))
         lines.append("")
         return lines
+    facts = _facts_by_id(capture)
     findings = block.get("findings") or []
     resolutions = block.get("resolutions") or {}
     lines.append("A model outside this council's own family (%s) read this "
@@ -958,17 +1619,15 @@ def _auditor_lines(capture):
                  % (_safe(block.get("model")) or "not recorded"))
     if not findings:
         lines.append("- It found nothing to raise against this evidence.")
-    shown, note = _rows(findings, "points")
-    for finding in shown:
-        lines.append("- **%s** (%s, %s): %s"
-                     % (_safe(finding.get("id")),
-                        _one_line(finding.get("kind")),
-                        _one_line(finding.get("severity")),
-                        _safe(_trim(finding.get("detail")))))
-        lines.append("  - the record's answer: %s"
-                     % _resolution_words(resolutions.get(finding.get("id"))))
-    if note is not None:
-        lines.append("- %s" % note)
+    for finding in findings:
+        # One line per point, the answer beside it (the review's row).
+        answer = _resolution_words(resolutions.get(finding.get("id")),
+                                   facts)
+        lines.append("- **%s.** %s %s"
+                     % (_finding_title(finding),
+                        _safe(_point_words(finding.get("detail"))),
+                        ("**Answered:** %s" % answer) if answer is not None
+                        else "**NOT ANSWERED by the record.**"))
     overall = _safe(_trim(block.get("overall")))
     if overall:
         lines.append("- Its overall reading: %s" % overall)
@@ -1031,14 +1690,17 @@ def _gaps_lines(capture):
         named.append("decisive metrics with no answer: %s"
                      % ", ".join(unanswered))
     if conceded:
-        named.append("conceded to the outside auditor: %s"
-                     % ", ".join(_safe(point_id) for point_id, _ in conceded))
+        named.append("conceded in the %s: %s"
+                     % (EVIDENCE_CHECK,
+                        ", ".join("point %s" % _safe(point_id)
+                                  for point_id, _ in conceded)))
     lines.append("- Every gap on this record, named - %s." % "; ".join(named))
     shown, note = _rows(gaps, "declared gaps")
     for gap in shown:
-        lines.append("- %s: %s (the test it weakens: %s)"
-                     % (_safe(gap.get("fact_class")),
-                        _safe(_trim(gap.get("reason"), SHORT_TRIM)),
+        # Unit READ-B2: each gap by its reason first, its class after.
+        lines.append("- %s (%s; the test it weakens: %s)"
+                     % (_safe(_trim(gap.get("reason"), SHORT_TRIM)),
+                        _safe(gap.get("fact_class")),
                         _safe(_trim(gap.get("weakened_test"), SHORT_TRIM))))
     if note is not None:
         lines.append("- %s" % note)
@@ -1055,9 +1717,9 @@ def _gaps_lines(capture):
         # claim that can go stale inside a single render.
         shown_conceded, conceded_note = _rows(conceded, "conceded gaps")
         for point_id, entry in shown_conceded:
-            lines.append("- Conceded to the outside auditor - %s: %s (the "
+            lines.append("- Conceded in the %s - point %s: %s (the "
                          "test it weakens: %s)"
-                         % (_safe(point_id),
+                         % (EVIDENCE_CHECK, _safe(point_id),
                             _safe(_trim(entry.get("reason"), SHORT_TRIM))
                             or "no reason given",
                             _safe(_trim(entry.get("weakened_test"), SHORT_TRIM))
@@ -1121,14 +1783,30 @@ def _price_and_calendar_lines(pack, facts, capture):
     # ordinary evidence (audit round 2, r2-4).
     stale_ids = gate.stale_reading_ids(capture)
     if PRICE_ID in facts:
+        # Unit READ-B2: the price, the 200-day average and the gap between
+        # them, and both 52-week ranges, in the market form - the tape's
+        # own figures, with the close they are read at.
         low, high = facts.get(RANGE_LOW_ID), facts.get(RANGE_HIGH_ID)
-        where = ""
+        price = facts[PRICE_ID]
+        lines.append("- Price: %s, on %s%s."
+                     % (_shown(price), _safe(_format_date(price.get("as_of"))),
+                        _freshness_mark(pack, PRICE_ID)))
+        closing = [facts[fact_id] for fact_id in CLOSING_RANGE_IDS
+                   if fact_id in facts]
         if low is not None and high is not None:
-            where = (", against a 52-week range of %s to %s"
-                     % (_safe(low.get("value")),
-                        _safe(high.get("value"))))
-        lines.append("- Price: %s%s." % (_figure(pack, facts, PRICE_ID),
-                                         where))
+            lines.append("- The 52-week trading range: %s to %s%s."
+                         % (_shown(low), _shown(high),
+                            ("; the closing range: %s to %s"
+                             % (_shown(closing[0]), _shown(closing[1])))
+                            if len(closing) == len(CLOSING_RANGE_IDS)
+                            else ""))
+        carried = [fact_id for fact_id in AVERAGE_IDS if fact_id in facts]
+        if carried:
+            lines.append("- %s (at the close of %s)."
+                         % ("; ".join(_figure(pack, facts, fact_id)
+                                      for fact_id in carried),
+                            _safe(_format_date(
+                                facts[carried[0]].get("as_of")))))
         priced_stale = [fact_id for fact_id
                         in (PRICE_ID, RANGE_LOW_ID, RANGE_HIGH_ID)
                         if fact_id in stale_ids]
@@ -1149,9 +1827,11 @@ def _price_and_calendar_lines(pack, facts, capture):
     if not rows:
         lines.append("- The pack carries no dated events for this subject.")
     for when, fact_id, detail in rows:
-        lines.append("- %s: %s`%s`"
-                     % (_safe(when), (_safe(_trim(detail, SHORT_TRIM)) + " ")
-                        if detail else "", fact_id))
+        lines.append("- %s — %s%s"
+                     % (_safe(_format_date(when)),
+                        _fact_name(facts.get(fact_id) or {"id": fact_id}),
+                        (": " + _safe(_trim(detail, SHORT_TRIM)))
+                        if detail else ""))
         if fact_id in stale_ids:
             lines.append("  - READING STALE: corrected without a new source.")
     if note is not None:
@@ -1223,30 +1903,68 @@ def _cost_lines(usage):
     # shown as a bare counted figure. The host refuses the run for the bad
     # flag a moment later, exactly as it does a missing sidecar.
     flag = usage.get("estimated")
-    if flag is True:
-        estimated = " (estimated)"
-    elif flag is False:
-        estimated = ""
+    status = ("" if isinstance(flag, bool)
+              else " (estimate status not recorded)")
+    # Unit READ-B2 (owner ruling AC41(4)): the money follows the report's
+    # own rule and price list - the capture's figure in the estimated bin
+    # unless its flag says counted, the evidence check's counted - read
+    # through the report's one function, never summed across bins.
+    tokens = usage.get("tokens")
+    if _is_count(tokens):
+        shown, words = _priced("council", "the evidence gathering", tokens,
+                               flag is not False)
+        gathering = "%s (tokens: %s%s)" % (shown, words, status)
     else:
-        estimated = " (estimate status not recorded)"
-    lines.append("- The capture: %s minutes, %s tokens%s, on %s."
-                 % (_one_line(usage.get("minutes")) or "not recorded",
-                    _one_line(usage.get("tokens")) or "not recorded",
-                    estimated,
-                    _safe(capture_model(usage) or "a model not recorded")))
-    lines.append("- The outside auditor's call: %s."
-                 % ("%s tokens" % _one_line(challenge)
-                    if challenge is not None else "not recorded"))
+        gathering = ("tokens as recorded: %s%s, not a count, so not priced"
+                     % (_count_words(tokens), status))
+    lines.append("- Gathering the evidence (%s): %s minutes; %s."
+                 % (_safe(capture_model(usage) or "a model not recorded"),
+                    _count_words(usage.get("minutes")), gathering))
+    if challenge is None:
+        checked = "not recorded"
+    else:
+        checked = "%s (tokens: %s)" % _priced(
+            "outside", "the evidence check", challenge, False)
+    lines.append("- The %s by the outside model: %s." % (EVIDENCE_CHECK,
+                                                        checked))
+    lines.append("- %s" % _safe(_list_prices()["comment"]))
     lines.append("")
     return lines
 
 
+def _is_count(value):
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and value >= 0)
+
+
+def _priced(key, name, tokens, is_estimate):
+    """One cost row's money and token words, from the report's own function
+    and price list (loaded when first used, as the formatter is)."""
+    from council.report import render_report
+    return render_report.priced_tokens(key, [(name, [tokens], is_estimate)])
+
+
+def _list_prices():
+    from council.report import render_report
+    return render_report.LIST_PRICES
+
+
+def _count_words(value):
+    """A recorded count with thousands separators; anything that is not a
+    whole number prints as recorded, and nothing as 'not recorded'."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "{:,}".format(value)
+    return _safe(value) or "not recorded"
+
+
+WHAT_HAPPENS_NOW = ("Nothing runs until you approve this evidence. Tell the "
+                    "host 'approved', with any changes.")
+
+
 def _closing_lines():
     return ["## What happens now", "",
-            "In reviewed mode nothing is paid until a person writes "
-            "`approval.json` beside this page, naming what was checked or "
-            "changed. In auto-mode the council sits without that step, and "
-            "the report's front page says so.", ""]
+            WHAT_HAPPENS_NOW + " In auto-mode the council sits without that "
+            "step, and the report's front page says so.", ""]
 
 
 # Every section above is bounded on its own, and until audit round 1
@@ -1260,8 +1978,17 @@ def _closing_lines():
 # are the page's spine, and a bound that ate them would defeat the page
 # rather than fit it.
 CUTTABLE = ("business", "decisive", "auditor", "gaps", "calendar")
+# Architect ruling 11 of unit READ-B (READ-B2): the evidence check and the
+# numbers that decide are cut last, only once no other section can give.
+CUT_LAST = ("decisive", "auditor")
 CUT_NOTE = ("- The one-page bound cut %d further line(s) from this "
             "section; %s.")
+# Inside the full document the one page is a summary with the whole of
+# the evidence below it, so its cut notes point there (ruling 10 of READ-B).
+CUT_NOTE_IN_FULL = ("- %d further line(s) of this section follow in the "
+                    "full evidence below.")
+CUT_TOTAL_NOTE_IN_FULL = ("%d line(s) of this summary follow in the full "
+                          "evidence below.")
 # And what the bound took from the page as a whole, on the page's own
 # last line (register item P-U3-6). The per-section notes say where each
 # cut fell; a reader looking at one page has no way to add them up, and
@@ -1274,8 +2001,10 @@ INDENT = "  "
 # The lines that say what SHAPE of subject this is - the business's name,
 # its trace summary, its archetype, its capital and its cycle - which the
 # bound cuts only after every descriptive line (register item P-FIb-5).
-SHAPE_PREFIXES = ("**", "- Figures traced to the record:", "- Archetype: ",
-                  "- Capital beside its requirement: ", "- Cycle: ")
+SHAPE_PREFIXES = ("**", "- " + UNTRACED_LEAD, "- Archetype: ",
+                  "- Capital beside its requirement: ", "- Cycle: ",
+                  "- " + GROWER_MONTHS_LEAD, "- " + GROWER_UNDRAWN_LEAD,
+                  "- " + PRODUCER_LIFE_LEAD, "- " + INTEGRATED_BESIDE_LEAD)
 
 
 def _rows_to_cut(body, lines_wanted):
@@ -1303,7 +2032,7 @@ def _rows_to_cut(body, lines_wanted):
     return dropped, rows
 
 
-def _fit_to_one_page(blocks):
+def _fit_to_one_page(blocks, in_full=False):
     """The assembled page, cut to PAGE_LINES. Each block is
     (name, lines), where lines[0] is the section's heading, lines[1] the
     blank beneath it and lines[-1] the blank that separates it from the
@@ -1337,6 +2066,7 @@ def _fit_to_one_page(blocks):
         givers = [name for name in keep if keep[name] > 1]
         if not givers:
             break
+        givers = [name for name in givers if name not in CUT_LAST] or givers
         name = max(givers, key=lambda key: (keep[key],
                                             -CUTTABLE.index(key)))
         if cut[name] == 0:
@@ -1364,19 +2094,27 @@ def _fit_to_one_page(blocks):
             count = keep[name]
             while 0 < count < len(body) and body[count].startswith(INDENT):
                 count -= 1
+            # A table is one block: kept whole or dropped whole (ruling 11
+            # of READ-B), never cut between its rows.
+            if 0 < count < len(body) and body[count].startswith("|"):
+                while count > 0 and body[count - 1].startswith("|"):
+                    count -= 1
             kept = body[:count]
         omitted += len(body) - len(kept)
-        out.extend(lines[:2] + kept
-                   + [CUT_NOTE % (len(body) - len(kept), IN_THE_PACK)]
-                   + lines[-1:])
+        note = (CUT_NOTE_IN_FULL % (len(body) - len(kept)) if in_full
+                else CUT_NOTE % (len(body) - len(kept), IN_THE_PACK))
+        out.extend(lines[:2] + kept + [note] + lines[-1:])
     if omitted:
-        out.append(CUT_TOTAL_NOTE % (omitted, IN_THE_PACK))
+        out.append(CUT_TOTAL_NOTE_IN_FULL % omitted if in_full
+                   else CUT_TOTAL_NOTE % (omitted, IN_THE_PACK))
     return out
 
 
-def render(pack, pack_sha256, usage=None):
+def render(pack, pack_sha256, usage=None, in_full=False):
     """The whole brief, as one string. `usage` is the capture stage's own
-    cost sidecar, or None where none stands."""
+    cost sidecar, or None where none stands. `in_full` is set by
+    render_full, where this page is the summary at the top of the whole
+    evidence and its cut notes point below."""
     if "capture" not in pack:
         raise ValueError("not a frozen pack: the capture wrapper is "
                          "missing - render from the freeze's pack.json, "
@@ -1395,7 +2133,7 @@ def render(pack, pack_sha256, usage=None):
         ("cost", _cost_lines(usage)),
         ("closing", _closing_lines()),
     ]
-    return "\n".join(_fit_to_one_page(blocks)).rstrip("\n") + "\n"
+    return "\n".join(_fit_to_one_page(blocks, in_full)).rstrip("\n") + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -1409,23 +2147,1121 @@ def render(pack, pack_sha256, usage=None):
 # ---------------------------------------------------------------------------
 
 def _fact_heading(fact):
-    """The owner-facing name of a fact: its label where one exists, the
-    machine key where none does (owner ruling AC15, P5)."""
-    label = str(fact.get("label") or "").strip()
-    return _safe(label) if label else "`%s`" % _one_line(fact.get("id"))
+    """The owner-facing name of a fact (owner ruling AC15, P5): its plain
+    name, as every reference to it reads."""
+    return _fact_name(fact)
 
 
-def _fact_ref(facts, fact_id):
-    """A reference to a fact for the reader: its plain-English label with
-    the machine key beside it where a label exists, the key alone where
-    none does (owner ruling AC15, P5 - the full document uses the label
-    wherever one exists, not only in the fact's own heading; audit round 1
-    of sub-charge b, b-r1-8). The key always survives, so a reference stays
-    unambiguous - labels are optional and not checked for uniqueness."""
-    fact = (facts or {}).get(fact_id) or {}
-    label = str(fact.get("label") or "").strip()
-    key = "`%s`" % _one_line(fact_id)
-    return "%s (%s)" % (_safe(label), key) if label else key
+def _fact_ref(facts, fact_id, passages=None):
+    """A reference to a fact for the reader (unit READ-B2): its plain
+    label, never its key; the key stands only in the fact's own entry
+    below, in small print. A fact without a label is named by its key, its
+    only name; a passage by its title in words; an id the pack does not
+    carry is sent through _safe as data and said to be missing."""
+    fact = (facts or {}).get(fact_id)
+    if fact is not None:
+        return _fact_name(fact)
+    if fact_id in (passages or {}):
+        return "the passage %s" % _passage_title(fact_id)
+    return "%s (not in the pack)" % _safe(fact_id)
+
+
+# ------------------------------------------------ the business tables
+# Unit READ-B1 (owner rulings AC40(2c), AC16(4); the seed's design item 1):
+# the business sections are small tables of figures, built ONCE here as
+# data and printed twice - as HTML by the report, as Markdown by the full
+# document - through the one market formatter. A table is a dict: "head"
+# (the column names), "rows" (lists of cells) and "below" (lines under the
+# table, each a list of cells read with a space between them). A cell is a
+# dict whose "kind" says how it reads: "fact" (a recorded fact, in the
+# market form), "calc" (a figure struck here at display from recorded
+# ones, exact until it is shown to one decimal - reading precision belongs
+# to the page, the ruling closing PRECISION-REG-1), "reading" (one dated
+# point of a cycle series), "words" (the page's own words or a label) and
+# "prose" (the capture's own words, which each printer marks by owner
+# ruling AC19). Nothing here reads a
+# figure: the tables are evidence, never analysis (AC15 P4).
+
+NOT_CALCULABLE = "not calculable"
+NOT_REPORTED = "not reported yet"
+NO_FIGURE = "—"
+FIRM_TOTAL_NOT_OWN = "the firm total, not the line's own"
+PRIOR_YEAR_TAIL = "_prior_year_q"
+QUARTER_TAIL = "_q"
+HEADLINE_REVENUE = "revenue_q"
+EARNINGS_HEAD = ("Business", "Kind of earnings", "Revenue, latest quarter",
+                 "Share of the firm (calculated)",
+                 "Change on a year ago (calculated)")
+EARNINGS_SHARE_RECORDED = "Share of the firm (recorded, else calculated)"
+GUIDANCE_HEAD = ("Metric", "First guide")
+GUIDANCE_REVISED = "Revised %s"
+GUIDANCE_TAIL = ("Delivered", "Delivered minus first guide (calculated)")
+GUIDANCE_LEAD = ("Guidance for %s: the first guide, each revision, then "
+                 "what was delivered")
+GUIDANCE_OTHER = "Other: %s"
+CAPITAL_HEAD = ("Capital ratio", "Level", "Its requirement", "Required",
+                "Cushion (calculated)")
+STRESS_HEAD = ("Figure", "Value", "As of")
+RISK_HEAD = ("Figure", "Latest", "A year ago", "As of")
+CYCLE_HEAD = ("Series", "First reading", "Latest reading", "Change")
+
+
+def _words(text):
+    return {"kind": "words", "text": _one_line(text)}
+
+
+def _prose(text):
+    return {"kind": "prose", "text": _one_line(text)}
+
+
+def _fact_cell(pack, facts, fact_id):
+    """A fact the table shows, or where the pack does not carry it the id
+    said to be missing (as data, P-U3e-3)."""
+    fact = facts.get(fact_id) if isinstance(fact_id, str) else None
+    if fact is None:
+        return _words("%s (not in the pack)" % _one_line(fact_id))
+    return {"kind": "fact", "fact": fact,
+            "stale": _freshness_mark(pack, fact_id)}
+
+
+def _number(fact):
+    """A fact's recorded value as an exact decimal, or None."""
+    try:
+        value = decimal.Decimal(str((fact or {}).get("value")))
+    except (decimal.InvalidOperation, ValueError):
+        return None
+    return value if value.is_finite() else None
+
+
+def _calc(value, unit, how, signed=False):
+    """A figure struck at display, or "not calculable" where it cannot be."""
+    if value is None:
+        return _words(NOT_CALCULABLE)
+    return {"kind": "calc", "value": value, "unit": unit, "how": how,
+            "signed": signed}
+
+
+def _difference_unit(unit):
+    """The unit a difference of two figures reads in: points for two
+    percentages, else the figures' own unit."""
+    return "percentage_points" if unit in _PERCENT_UNITS else unit
+
+
+def _difference(later, earlier, signed=True):
+    """later minus earlier, where both are numbers in one unit."""
+    high, low = _number(later), _number(earlier)
+    if high is None or low is None or later.get("unit") != earlier.get(
+            "unit"):
+        return _words(NOT_CALCULABLE)
+    return _calc(high - low, _difference_unit(later.get("unit")),
+                 "%s - %s" % (later.get("value"), earlier.get("value")),
+                 signed)
+
+
+def _ratio(top, bottom, less_one=False):
+    """top over bottom as a percentage (less one hundred for a change),
+    where both are numbers in one unit and the bottom is not zero."""
+    high, low = _number(top), _number(bottom)
+    if (high is None or low is None or low == 0
+            or top.get("unit") != bottom.get("unit")):
+        return _words(NOT_CALCULABLE)
+    with decimal.localcontext() as context:
+        context.prec = 28
+        value = high / low * 100 - (100 if less_one else 0)
+    return _calc(value, "percent", "%s / %s" % (top.get("value"),
+                                                bottom.get("value")),
+                 signed=less_one)
+
+
+def _share_text(value):
+    """A share on the owner's pages (AC16(4)): a percentage to one
+    decimal; a share that is not zero but too small to show at one
+    decimal reads as less than a tenth of a percent."""
+    shown = value.quantize(decimal.Decimal("0.1"),
+                           rounding=decimal.ROUND_HALF_UP)
+    if value and not shown:
+        return "<0.1%" if value > 0 else ">-0.1%"
+    return _format_number(str(abs(shown) if shown == 0 else shown),
+                          "percent")
+
+
+def _fact_text(cell):
+    """A recorded fact in the market form; a recorded share as a share
+    reads (its value as a percentage, carried on the cell)."""
+    if "share" in cell:
+        return _share_text(cell["share"])
+    fact = cell["fact"]
+    return _format_number(fact.get("value"), fact.get("unit"))
+
+
+def cell_text(cell):
+    """The words a cell shows, before either printer escapes them - the
+    one reading both pages share."""
+    kind = cell["kind"]
+    if kind == "fact":
+        return _fact_text(cell) + cell["stale"]
+    if kind == "calc":
+        value = cell["value"]
+        if cell.get("share"):
+            return _share_text(value)
+        if cell["unit"] in _PERCENT_UNITS + ("percentage_points",):
+            value = value.quantize(decimal.Decimal("0.1"),
+                                   rounding=decimal.ROUND_HALF_UP)
+            value = abs(value) if value == 0 else value
+        text = _format_number(str(value), cell["unit"])
+        return "+" + text if cell["signed"] and value > 0 else text
+    if kind == "reading":
+        return "%s (%s)" % (_format_number(cell["value"], cell["unit"]),
+                            _format_date(cell["date"]))
+    return cell["text"]
+
+
+def _base_and_suffix(fact_id):
+    """An id without the member suffix it wears, and that suffix."""
+    suffix = gate._id_suffix(fact_id)
+    return (fact_id[:len(fact_id) - len(suffix)] if suffix else fact_id,
+            suffix)
+
+
+def _prior_year_partner(own, prior):
+    """True where `prior` is `own`'s prior-year pair: '<x>_q' beside
+    '<x>_prior_year_q', one member suffix on both."""
+    own_base, own_suffix = _base_and_suffix(own)
+    prior_base, prior_suffix = _base_and_suffix(prior)
+    return (own_base.endswith(QUARTER_TAIL) and own_suffix == prior_suffix
+            and prior_base == own_base[:-len(QUARTER_TAIL)]
+            + PRIOR_YEAR_TAIL)
+
+
+def _is_prior_year(fact_id):
+    return _base_and_suffix(fact_id)[0].endswith(PRIOR_YEAR_TAIL)
+
+
+def _headline_revenue(fact_id):
+    """True where an id is the headline revenue figure, the firm total a
+    line may cite when no one figure is shared by every line."""
+    return _base_and_suffix(fact_id)[0] == HEADLINE_REVENUE
+
+
+def earnings_facts(frame, line, facts):
+    """(own, prior year, firm total, firm named) for one revenue line,
+    told by the facts' names - the architect's design of the READ-B1
+    audit (round 3, rule 1 ruled again at rounds 4 and 6), stated whole:
+    - a fact `facts` records in a share's unit (a percent or a fraction,
+      the share carrier's own test) is never a revenue candidate, for
+      the firm total or the line's own;
+    - the firm total is the one current fact every line of the frame
+      cites (two lines or more), the shared denominator; failing that,
+      the headline revenue id where the line cites it;
+    - the line's own current revenue is the one current fact it cites
+      that is not the firm total (where it cites several, the one whose
+      year-ago partner it also cites); the firm total is the line's own
+      only where the frame has one revenue line, and in a frame of
+      several a line naming no current figure but the firm total says
+      so (firm named);
+    - the year-ago figure is the own id's '_prior_year_q' partner among
+      the facts the line cites - never another pair's."""
+    lines = frame.get("how_it_earns") or []
+    cited = [fid for fid in line.get("facts") or [] if isinstance(fid, str)]
+    current = [fid for fid in cited if not _is_prior_year(fid)
+               and not _share_unit(facts.get(fid))]
+    total = None
+    if len(lines) >= 2:
+        shared = [fid for fid in current
+                  if all(fid in (other.get("facts") or []) for other in lines)]
+        total = shared[0] if len(shared) == 1 else None
+    if total is None:
+        headline = [fid for fid in current if _headline_revenue(fid)]
+        total = headline[0] if len(headline) == 1 else None
+    own = [fid for fid in current if fid != total]
+    if len(own) > 1:
+        own = [fid for fid in own
+               if any(_prior_year_partner(fid, other) for other in cited)]
+    if not own and len(lines) == 1 and total is not None:
+        own = [total]
+    if len(own) != 1:
+        firm = len(lines) >= 2 and not own and total in current
+        return None, None, total, firm
+    prior = [fid for fid in cited if _prior_year_partner(own[0], fid)]
+    return own[0], (prior[0] if len(prior) == 1 else None), total, False
+
+
+def _fraction_units():
+    """The units the floors rule a plain fraction (owner ruling AC19's
+    prose_figure_marks: 'share of the segment total' among them)."""
+    return tuple((_floors().get("prose_figure_marks") or {}).get(
+        "fraction_units") or ())
+
+
+def _share_unit(fact):
+    """True where a fact is recorded in a share's unit: a percent, or a
+    unit the floors rule a plain fraction."""
+    return (isinstance(fact, dict)
+            and fact.get("unit") in _PERCENT_UNITS + _fraction_units())
+
+
+def share_carrier(facts, line):
+    """The fact carrying a line's share, found by id and unit: a fact the
+    line cites, or one struck only from facts it cites, recorded in a
+    percent or a fraction unit, whose recorded figure is the one the
+    line writes as its share. None where no such fact exists - a figure
+    in any other unit is never taken for a share, whatever its value."""
+    cited = set(line.get("facts") or [])
+    share = _one_line(line.get("share_of_period"))
+    for fact_id, fact in facts.items():
+        operands = [item.get("fact_id") for item in
+                    (fact.get("derived") or {}).get("operands") or []]
+        if ((fact_id in cited or (operands and set(operands) <= cited))
+                and _share_unit(fact)
+                and _number(fact) is not None
+                and _one_line(fact.get("value")) == share):
+            return fact
+    return None
+
+
+def _share_cell(pack, facts, carrier):
+    """A recorded share as a cell, its value read as a percentage."""
+    cell = _fact_cell(pack, facts, carrier.get("id"))
+    value = _number(carrier)
+    cell["share"] = (value if carrier.get("unit") in _PERCENT_UNITS
+                     else value * 100)
+    return cell
+
+
+def earnings_rows(pack, frame):
+    """How it earns, line by line (the seed's design item 2): the line's
+    short name (its words up to the first colon or semicolon, ruling 4),
+    its kind of earnings where the frame says, its revenue in the market
+    form, its share of the firm - read from its carrier where one exists,
+    else struck here as its own revenue over the firm total - and its
+    change on a year ago, struck here. The capture's whole sentence, and
+    the facts it names, stand under the table."""
+    facts = _facts_by_id(pack["capture"])
+    lines = frame.get("how_it_earns") or []
+    natured = any(line.get("nature") for line in lines)
+    head = [name for name in EARNINGS_HEAD
+            if natured or name != EARNINGS_HEAD[1]]
+    rows, below, recorded = [], [], False
+    for line in lines:
+        own, prior, total, firm = earnings_facts(frame, line, facts)
+        own_fact, prior_fact, total_fact = (facts.get(own), facts.get(prior),
+                                            facts.get(total))
+        carrier = None if firm else share_carrier(facts, line)
+        if firm:
+            revenue = _words(FIRM_TOTAL_NOT_OWN)
+        elif own_fact is not None:
+            revenue = _fact_cell(pack, facts, own)
+        else:
+            revenue = _words(NOT_CALCULABLE)
+        if carrier is not None:
+            share_cell = _share_cell(pack, facts, carrier)
+            recorded = True
+        elif own_fact is not None and total_fact is not None:
+            share_cell = _ratio(own_fact, total_fact)
+            if share_cell["kind"] == "calc":
+                share_cell["share"] = True
+        else:
+            share_cell = _words(NOT_CALCULABLE)
+        change = (_ratio(own_fact, prior_fact, less_one=True)
+                  if own_fact is not None and prior_fact is not None
+                  else _words(NOT_CALCULABLE))
+        name = re.split(r"[:;]", _one_line(line.get("line")), maxsplit=1)[0]
+        row = [_prose(name.strip())]
+        if natured:
+            nature = line.get("nature")
+            row.append(_words(FI_NATURE_WORDS.get(nature)
+                              or GROWER_NATURE_WORDS.get(nature)
+                              or PRODUCER_NATURE_WORDS.get(nature)
+                              or nature or "not stated"))
+        rows.append(row + [revenue, share_cell, change])
+        below.append([_prose(line.get("line")), _words(
+            "(from: %s)" % "; ".join(_plain_name(facts, fid)
+                                      for fid in line.get("facts") or []))])
+    if recorded:
+        head[head.index(EARNINGS_HEAD[3])] = EARNINGS_SHARE_RECORDED
+    return {"head": head, "rows": rows, "below": below}
+
+
+def _plain_name(facts, fact_id):
+    """A fact's name before any escaping: its label, else its id read as
+    words, as every reference in the document reads it (unit READ-B2)."""
+    fact = facts.get(fact_id) if isinstance(fact_id, str) else None
+    if fact is None:
+        return "%s (not in the pack)" % _one_line(fact_id)
+    return _one_line(fact.get("label")) or _id_words(fact_id)
+
+
+def _metric_name(facts, fact_id, metric):
+    """A guided metric's name: its first guide's label after the label's
+    first colon (a label "First guide for the year: adjusted expense"
+    reads "Adjusted expense"), else the metric in the id read as words."""
+    label = _one_line((facts.get(fact_id) or {}).get("label"))
+    name = (label.split(":", 1)[1].strip() if ":" in label
+            else metric.replace("_", " "))
+    return name[:1].upper() + name[1:]
+
+
+def guidance_rows(pack, frame):
+    """Guidance, one table per period row the frame carries (the seed's
+    design item 3; owner ruling AC30(6)): a row per guided metric in the
+    ruled 'guided_<metric>_<period>' shape; its first guide; each dated
+    revision in its column, placed by the ruled
+    'guidance_revised_<metric>_<period>[_rN]' shape; what was delivered,
+    found by the gate's own prefix swap wherever the pack carries it;
+    then delivered minus the first guide, signed, in the metric's unit
+    (ruling 5: no word says beat or miss). An id that fits no family is
+    printed in a trailing "Other" row, never dropped."""
+    facts = _facts_by_id(pack["capture"])
+    tables = []
+    for row in (frame.get("management") or {}).get(
+            "guidance_vs_delivery") or []:
+        period = _one_line(row.get("period"))
+        tail = "_" + gate.period_slug(period)
+        revisions = row.get("revisions")
+        dated = [item for item in revisions or [] if isinstance(item, dict)]
+        width = 1 + len(dated) + 1   # first guide, revisions, delivered
+        metrics, others, partners = [], [], []
+        for fid in row.get("guided") or []:
+            base, _suffix = _base_and_suffix(str(fid))
+            body = base[len(gate._GUIDED_PREFIX):]
+            if (base.startswith(gate._GUIDED_PREFIX) and tail != "_"
+                    and body.endswith(tail) and len(body) > len(tail)):
+                metrics.append([fid, body[:-len(tail)],
+                                [None] * width])
+                metrics[-1][2][0] = fid
+            else:
+                others.append((0, fid))
+        for column, revision in enumerate(dated, start=1):
+            for fid in revision.get("guided") or []:
+                bare, _ordinal = gate._revision_ordinal(
+                    _base_and_suffix(str(fid))[0])
+                body = bare[len(gate._REVISED_PREFIX):]
+                home = [entry for entry in metrics
+                        if bare.startswith(gate._REVISED_PREFIX)
+                        and body == entry[1] + tail
+                        and entry[2][column] is None]
+                if home:
+                    home[0][2][column] = fid
+                else:
+                    others.append((column, fid))
+        for entry in metrics:
+            partner = (gate._DELIVERED_PREFIX
+                       + str(entry[0])[len(gate._GUIDED_PREFIX):])
+            partners.append(partner)
+            entry[2][-1] = partner
+        declared = row.get("delivered")
+        if declared and declared not in partners:
+            others.append((width - 1, declared))
+        head = list(GUIDANCE_HEAD) + [
+            GUIDANCE_REVISED % _format_date(item.get("date"))
+            for item in dated] + list(GUIDANCE_TAIL)
+        rows = []
+        for fid, metric, cells in metrics:
+            first, delivered = facts.get(fid), facts.get(cells[-1])
+            shown = [_fact_cell(pack, facts, item) if item else
+                     _words(NO_FIGURE) for item in cells[:-1]]
+            if delivered is None:
+                shown += [_words(NOT_REPORTED), _words(NO_FIGURE)]
+            else:
+                shown += [_fact_cell(pack, facts, cells[-1]),
+                          _difference(delivered, first) if first
+                          else _words(NOT_CALCULABLE)]
+            rows.append([_words(_metric_name(facts, fid, metric))] + shown)
+        for column, fid in others:
+            cells = [_words(NO_FIGURE)] * (width + 1)
+            cells[column] = _fact_cell(pack, facts, fid)
+            rows.append([_words(GUIDANCE_OTHER % _plain_name(facts, fid))]
+                        + cells)
+        below = []
+        if isinstance(revisions, list) and not dated:
+            below.append([_words("The guidance for %s was %s."
+                                 % (period, FI_NEVER_REVISED))])
+        tables.append({"period": period, "head": head, "rows": rows,
+                       "below": below})
+    return tables
+
+
+def capital_rows(pack, frame):
+    """Capital beside its requirement (the seed's design item 4): one row
+    per ratio and the requirement for that ratio, the cushion between them
+    in points, struck here; two pairs with the same figures are two facts
+    and both stay (ruling 6). The capture's regime, binding constraint
+    and management's own target stand under the table. None where the
+    frame declares the gap instead."""
+    capital = frame.get("fi_capital") or {}
+    if capital.get("gap"):
+        return None
+    facts = _facts_by_id(pack["capture"])
+    rows = []
+    for ratio, requirement in fi_capital_pairs(capital):
+        cushion = (_difference(facts.get(ratio), facts.get(requirement),
+                               signed=False)
+                   if ratio in facts and requirement in facts
+                   and facts[ratio].get("unit") in _PERCENT_UNITS
+                   else _words(NOT_CALCULABLE))
+        rows.append([
+            _words(_plain_name(facts, ratio)) if ratio
+            else _words("no ratio named"),
+            _fact_cell(pack, facts, ratio) if ratio else _words(NO_FIGURE),
+            _words(_plain_name(facts, requirement)) if requirement
+            else _words("no requirement named"),
+            _fact_cell(pack, facts, requirement) if requirement
+            else _words(NO_FIGURE),
+            cushion if ratio and requirement else _words(NO_FIGURE)])
+    below = [[_words("%s:" % label), _prose(capital[key])]
+             for label, key in (("The regime", "regime"),
+                                ("The binding constraint",
+                                 "binding_constraint"))
+             if capital.get(key)]
+    if capital.get("target_fact"):
+        below.append([_words("Management's own target: %s:"
+                             % _plain_name(facts, capital["target_fact"])),
+                      _fact_cell(pack, facts, capital["target_fact"])])
+    return {"head": list(CAPITAL_HEAD), "rows": rows, "below": below}
+
+
+def _dated_row(pack, facts, fact_id):
+    return [_words(_plain_name(facts, fact_id)),
+            _fact_cell(pack, facts, fact_id),
+            _words(_format_date((facts.get(fact_id) or {}).get("as_of"))
+                   or NO_FIGURE)]
+
+
+def stress_rows(pack, ticker):
+    """The regulator's own bad year (the seed's design item 5; owner ruling
+    AC30(5)): this frame's own stress facts in capture order, each by its
+    label, value and date, and each declared stress gap by its reason.
+    None where there is neither."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    stress, gaps = fi_stress_evidence(capture, ticker)
+    if not stress and not gaps:
+        return None
+    order = [fact.get("id") for fact in capture.get("tier1") or []
+             if fact.get("id") in stress]
+    rows = [_dated_row(pack, facts, fid) for fid in order]
+    rows += [[_words("Declared gap (%s)" % _one_line(gap.get("fact_class"))),
+              _words(gap.get("reason")), _words(NO_FIGURE)] for gap in gaps]
+    return {"head": list(STRESS_HEAD), "rows": rows, "below": []}
+
+
+def risk_rows(pack, frame):
+    """The risk-cost line (the seed's design item 5): each fact the line
+    names by its label, value and date, a '_prior_year_q' fact beside its
+    partner in one row, and one whose partner the line does not name in
+    the year-ago column with no latest figure. The capture's reason is
+    printed with the line's heading. None where the line names no
+    fact."""
+    facts = _facts_by_id(pack["capture"])
+    named = [fid for fid in (frame.get("fi_risk_cost") or {}).get("facts")
+             or [] if isinstance(fid, str)]
+    if not named:
+        return None
+    paired = {prior: own for own in named for prior in named
+              if _prior_year_partner(own, prior)}
+    rows = []
+    for fid in named:
+        if fid in paired:
+            continue
+        row = _dated_row(pack, facts, fid)
+        if _is_prior_year(fid):
+            row.insert(1, _words(NO_FIGURE))
+        else:
+            prior = [item for item, own in paired.items() if own == fid]
+            row.insert(2, _fact_cell(pack, facts, prior[0]) if prior
+                       else _words(NO_FIGURE))
+        rows.append(row)
+    return {"head": list(RISK_HEAD), "rows": rows, "below": []}
+
+
+def _grower_numerator(frame):
+    """The id the growth yardstick's numerator carries, as the floors'
+    row for the frame's sub-type names it."""
+    row = ((((_floors().get("archetype_measures") or {}).get("table") or {})
+            .get(GROWER_ARCHETYPE) or {}).get("subtypes") or {}).get(
+                frame.get("grower_subtype")) or {}
+    return row.get("subject_numerator") or "enterprise_value"
+
+
+def _grower_gross_profit(capture):
+    """The gross-profit denominator the rating row divides by (the
+    continuing business's on a model transition), else the floors' id."""
+    for fact_id in _rating_subject_denominators(capture):
+        if isinstance(fact_id, str) and fact_id.startswith("gross_profit_"):
+            return fact_id
+    return "gross_profit_ttm"
+
+
+def _multiple(top, bottom):
+    """top over bottom as a multiple, where both are numbers in one unit
+    and the bottom is not zero."""
+    high, low = _number(top), _number(bottom)
+    if (high is None or low is None or low == 0
+            or top.get("unit") != bottom.get("unit")):
+        return _words(NOT_CALCULABLE)
+    with decimal.localcontext() as context:
+        context.prec = 28
+        value = high / low
+    return _calc(value, "x", "%s / %s" % (top.get("value"),
+                                          bottom.get("value")))
+
+
+def _labelled(label, cell, how):
+    return [_words(label), cell, _words(how)]
+
+
+def _id_cell(pack, facts, fact_id):
+    """A fact the grower's tables show, carrying the id it was asked for,
+    so the seats' case file can name it only where it is a tier-1 id of
+    this pack (P-U3e-3); the pages ignore the id."""
+    cell = _fact_cell(pack, facts, fact_id)
+    cell["id"] = fact_id
+    return cell
+
+
+GROWER_MONTHS_ROW = "Months of cash left"
+
+
+def grower_yardstick_rows(pack, frame):
+    """The growth yardstick and what stands beside it (owner rulings
+    AC50 (5), (6) and (9)): enterprise value over the last four quarters'
+    gross profit beside the latest quarter's sales growth, stock-based pay
+    as a share of sales and the growth in the diluted share count - each
+    struck here from the recorded figures and marked calculated - then
+    annual recurring revenue where the pack carries it, and whatever the
+    company guides, shown beside and never rated on. Evidence only."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    numerator, gross = _grower_numerator(frame), _grower_gross_profit(capture)
+    revenue, prior = (facts.get(fid) for fid in GROWER_REVENUE_PAIR)
+    shares, shares_prior = (facts.get(fid) for fid in GROWER_SHARES_PAIR)
+    stock_pay = facts.get(GROWER_STOCK_PAY)
+    growth = (_ratio(revenue, prior, less_one=True)
+              if revenue is not None and prior is not None
+              else _words(NOT_CALCULABLE))
+    pay = (_ratio(stock_pay, revenue)
+           if stock_pay is not None and revenue is not None
+           else _words(NOT_CALCULABLE))
+    if pay["kind"] == "calc":
+        pay["share"] = True
+    dilution = (_ratio(shares, shares_prior, less_one=True)
+                if shares is not None and shares_prior is not None
+                else _words(NOT_CALCULABLE))
+    rows = [
+        _labelled(_plain_name(facts, numerator),
+                  _id_cell(pack, facts, numerator), RECORDED),
+        _labelled(_plain_name(facts, gross), _id_cell(pack, facts, gross),
+                  RECORDED),
+        _labelled("Enterprise value against gross profit, the last four "
+                  "quarters", _multiple(facts.get(numerator), facts.get(gross))
+                  if numerator in facts and gross in facts
+                  else _words(NOT_CALCULABLE), CALCULATED),
+        _labelled("Sales growth, the latest quarter against the same "
+                  "quarter a year ago", growth, CALCULATED),
+        _labelled("Stock-based pay as a share of sales, the latest quarter",
+                  pay, CALCULATED),
+        _labelled("Growth in the diluted share count against a year ago",
+                  dilution, CALCULATED)]
+    order = [fact.get("id") for fact in capture.get("tier1") or []
+             if isinstance(fact.get("id"), str)]
+    for fact_id in order:
+        if fact_id.startswith(GROWER_ARR_PREFIX) and not _is_prior_year(
+                fact_id):
+            rows.append(_labelled(_plain_name(facts, fact_id),
+                                  _id_cell(pack, facts, fact_id), RECORDED))
+            partner = [other for other in order
+                       if _prior_year_partner(fact_id, other)]
+            if partner:
+                rows.append(_labelled(
+                    "Annual recurring revenue growth against a year ago",
+                    _ratio(facts[fact_id], facts[partner[0]], less_one=True),
+                    CALCULATED))
+    for fact_id in order:
+        if fact_id.startswith(GROWER_GUIDED_PREFIX):
+            rows.append(_labelled(_plain_name(facts, fact_id),
+                                  _id_cell(pack, facts, fact_id),
+                                  GROWER_GUIDED))
+    return {"head": list(YARDSTICK_HEAD), "rows": rows, "below": []}
+
+
+def grower_quarters(capture, prefixes=GROWER_QUARTER_PREFIXES, suffix=None):
+    """The period endings of the latest quarters the pack carries under
+    the grower's quarterly prefixes (or `prefixes`), oldest first, as many
+    as the floors' rule reads (owner ruling AC50(1)); a half-year
+    reporter's halves stand in their place. Placed by the sufficiency
+    gate's own reading of a period; an ending it cannot place is not
+    shown. On a model transition the continuing business's quarters (the
+    id ending in the rule's own continuing suffix, unless `suffix` names
+    one) stand as rows of their own, each after the whole business's row
+    for the same period (audit finding r1-2)."""
+    floors = _floors()
+    count = ((floors.get("archetype_measures") or {}).get(
+        "profitability_rule") or {}).get("quarters")
+    if suffix is None:
+        suffix = sufficiency._continuing_profit_suffix(
+            floors, sufficiency._declared_archetype(floors, capture), capture)
+    places = {}
+    for fact in capture.get("tier1") or []:
+        fact_id = fact.get("id")
+        for prefix in prefixes:
+            if isinstance(fact_id, str) and fact_id.startswith(prefix):
+                slug = fact_id[len(prefix):]
+                period = (slug[:-len(suffix)] if suffix
+                          and slug.endswith(suffix) else slug)
+                place = sufficiency._period_place(period)
+                if place is not None:
+                    places[slug] = (place, period != slug)
+    latest = sorted({place for place, _ in places.values()})
+    latest = set(latest[-count:] if count else latest)
+    return sorted((slug for slug in places if places[slug][0] in latest),
+                  key=lambda slug: places[slug])
+
+
+def grower_quarter_rows(pack, frame):
+    """Sales, gross profit and operating profit for each of the latest
+    quarters, one row each, oldest to newest - the recorded figures, as
+    the pack carries them."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    rows = [[_words(" ".join(slug.split("_")).upper())]
+            + [_id_cell(pack, facts, prefix + slug)
+               for prefix in GROWER_QUARTER_PREFIXES]
+            for slug in grower_quarters(capture)]
+    return {"head": list(QUARTERS_HEAD), "rows": rows, "below": []}
+
+
+def grower_runway_rows(pack, frame, runway):
+    """What the months of cash left are counted from (owner ruling
+    AC50(7)): each cash fact, the last four quarters' operating cash flow
+    and capital spending, the burn and the months as the one helper works
+    them out, the ruled line, and each undrawn credit line, shown and not
+    counted; the capture's own funding reason under the table."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    block = frame.get("growth_runway")
+    block = block if isinstance(block, dict) else {}
+    rows = [_labelled(_plain_name(facts, fid), _id_cell(pack, facts, fid),
+                      "counted")
+            for fid in block.get("cash_facts") or []]
+    flows = [block.get(key) for key in ("operating_cash_flow_fact",
+                                        "capital_expenditure_fact")]
+    rows += [_labelled(_plain_name(facts, fid), _id_cell(pack, facts, fid),
+                       "counted in the burn") for fid in flows]
+    if runway is None:
+        burn = _words(NOT_CALCULABLE)
+    elif runway.get("burn") is None:
+        burn = _words(GROWER_NOT_BURNING)
+    else:
+        burn = _calc(runway["burn"], (facts.get(flows[0]) or {}).get("unit"),
+                     "capital spending less operating cash flow")
+    months = (_words(NOT_CALCULABLE) if runway is None
+              else _words(GROWER_NOT_BURNING) if runway.get("burn") is None
+              else _words("%s months" % runway["months"]))
+    rows.append(_labelled("The cash burn, the last four quarters", burn,
+                          CALCULATED))
+    rows.append(_labelled(GROWER_MONTHS_ROW, months, CALCULATED))
+    threshold = ((_floors().get("archetype_measures") or {}).get(
+        "growth_runway") or {}).get("threshold_months")
+    rows.append(_labelled("The line the owner ruled",
+                          _words("%s months" % threshold),
+                          "owner ruling AC50(7)"))
+    rows += [_labelled(_plain_name(facts, fid), _id_cell(pack, facts, fid),
+                       GROWER_NOT_COUNTED)
+             for fid in block.get("undrawn_facility_facts") or []]
+    below = ([[_words("How it funds itself, in the capture's words:"),
+               _prose(block["funding_because"])]]
+             if block.get("funding_because") else [])
+    return {"head": list(RUNWAY_HEAD), "rows": rows, "below": below}
+
+
+def grower_facts_read(capture, frame):
+    """Every fact id a growth company's lines read: the ids its three
+    tables show and the recorded figures its calculated rows are struck
+    from - so a corrected one brings the frame into a delta re-audit
+    (audit finding r1-3)."""
+    pack = {"capture": capture}
+    ids = set(GROWER_REVENUE_PAIR + GROWER_SHARES_PAIR + (GROWER_STOCK_PAY,))
+    ids.update(fact.get("id") for fact in capture.get("tier1") or []
+               if isinstance(fact.get("id"), str)
+               and fact["id"].startswith(GROWER_ARR_PREFIX))
+    for table in (grower_yardstick_rows(pack, frame),
+                  grower_quarter_rows(pack, frame),
+                  grower_runway_rows(pack, frame, grower_runway(pack))):
+        for row in table["rows"]:
+            ids.update(cell["id"] for cell in row
+                       if isinstance(cell, dict) and "id" in cell)
+    return ids
+
+
+# ------------------------------------------------ the producer's tables
+# Owner rulings AC51-AC56 (RESOURCE-ARCHETYPE (c)); the architect's lesson of
+# sub-charge (b): every table below is a CLASS over the facts the producer
+# rule reads - the families the floors name for each resource-block field,
+# every reported reserve by the rule's own reading of the reserve prefix - and
+# the one helper's worked-out figures (resource_readings). No list of ids.
+
+# The reserve categories a reserve id names, read after the reserve prefix.
+RESERVE_CATEGORY_WORDS = {
+    "proved": "Proved reserves",
+    "probable": "Probable reserves",
+    "pp": "Proven and probable reserves",
+}
+
+
+def _name_cell(facts, fact_id, name=None):
+    """A row's first cell naming a fact: its plain name (or `name`), carrying
+    the id so the seats' case file prints the fact rather than the words."""
+    cell = _words(name or _plain_name(facts, fact_id))
+    cell["name_of"] = fact_id
+    return cell
+
+
+def _named(pack, facts, fact_id, how):
+    return [_name_cell(facts, fact_id), _id_cell(pack, facts, fact_id),
+            _words(how)]
+
+
+def _ids_cell(pack, facts, fact_ids):
+    """One cell showing every fact in `fact_ids`, carrying their ids."""
+    if len(fact_ids) == 1:
+        return _id_cell(pack, facts, fact_ids[0])
+    if not fact_ids:
+        return _words("not in the pack")
+    cell = _words("; ".join(cell_text(_fact_cell(pack, facts, fid))
+                            for fid in fact_ids))
+    cell["ids"] = list(fact_ids)
+    return cell
+
+
+def _commodities(frame):
+    """Every commodity a fact id may name: the floors' product list and the
+    frame's own by-products."""
+    products = set((_floors().get("archetype_measures") or {}).get(
+        "resource_products") or {})
+    return sorted(products | {extra for extra in _resource_block(frame).get(
+        "by_products") or () if isinstance(extra, str)})
+
+
+def _naming(fact_id, names):
+    return [name for name in names if "_%s_" % name in "_%s_" % fact_id]
+
+
+def _reserve_name(facts, fact_id, names, extras):
+    """A reserve row's name: the fact's own label, else the category and
+    the commodity its id names, else its id in words - and, for a
+    by-product, that it is shown apart and not rated on (owner rulings
+    AC52(R6) and AC56(1))."""
+    tokens = fact_id[len(_resource_rule().get("reserve_prefix") or ""):]
+    category = next((words for token, words in RESERVE_CATEGORY_WORDS.items()
+                     if "_%s_" % token in "_%s_" % tokens), None)
+    named = _naming(fact_id, names)
+    if _one_line((facts.get(fact_id) or {}).get("label")) or not category:
+        name = _plain_name(facts, fact_id)
+    else:
+        name = "%s%s" % (category, (", %s" % (
+            PRODUCT_WORDS.get(named[0]) or named[0].replace("_", " ")))
+            if named else "")
+    return name + (BY_PRODUCT_WORDS if set(named) & set(extras) else "")
+
+
+def producer_reserve_rows(pack, frame):
+    """The reserves (owner rulings AC52(R6)-(R7), AC53(R9), AC56(1)): one row
+    per reported reserve the pack carries - every tier-1 fact the producer
+    rule reads as a reserve, the rated figure, each other category, oil and
+    gas apart and every by-product - never summed; each with the standard,
+    the report date, the price it was counted at and today's price beside.
+    A row naming another commodity reads that commodity's own prices; a row
+    naming none, or the main product, reads the prices the resource block
+    cites - the ones the producer rule reads (audit round 1, r1-1: an
+    uncited price is never shown as the main product's). Where today's
+    price is in another unit than the price the reserves were counted at,
+    the two are not compared."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    block = _resource_block(frame)
+    order = _tier1_ids(capture)
+    names = _commodities(frame)
+    standard = block.get("reserves_standard")
+    standard = (_words(RESERVES_STANDARD_WORDS[standard])
+                if standard in RESERVES_STANDARD_WORDS
+                else _prose(standard or "not stated"))
+
+    def own(field, fact_id):
+        named = _naming(fact_id, names)
+        cited = block.get(field)
+        cited = [cited] if isinstance(cited, str) else list(cited or ())
+        if not named or named == [block.get("product")]:
+            return [fid for fid in cited if isinstance(fid, str)]
+        prefixes = _family(field)
+        return [fid for fid in order if prefixes and fid.startswith(prefixes)
+                and _naming(fid, names) == named]
+
+    rows = []
+    for fact_id in sufficiency._reserve_ids(_resource_rule(), order):
+        counted = own("reserve_price_facts", fact_id)
+        today = own("reference_price_fact", fact_id)
+        units = {(facts.get(fid) or {}).get("unit") for fid in counted}
+        if today and counted and units != {(facts.get(fid) or {}).get(
+                "unit") for fid in today}:
+            today_cell = _words(NOT_COMPARABLE)
+        else:
+            today_cell = _ids_cell(pack, facts, today)
+        rows.append([_name_cell(facts, fact_id, _reserve_name(
+            facts, fact_id, names, block.get("by_products") or ())),
+                     _id_cell(pack, facts, fact_id), standard,
+                     _ids_cell(pack, facts, [
+                         fid for fid in [block.get("reserve_report_date_fact")]
+                         if isinstance(fid, str)]),
+                     _ids_cell(pack, facts, counted), today_cell])
+    # The architect's ruling on P-RESOURCEc-4 (AC56(1)): each by-product's
+    # output on a row of its own beside its reserves, in its own unit; every
+    # by-product row carries its marking for the seats' case file too.
+    extras = {extra for extra in block.get("by_products") or ()
+              if isinstance(extra, str)}
+    rows += [[_name_cell(facts, fid, _plain_name(facts, fid)
+                         + BY_PRODUCT_WORDS), _id_cell(pack, facts, fid)]
+             + [_words("")] * (len(RESERVES_HEAD) - 2) for fid in order
+             if fid.startswith(sufficiency._PRODUCER_OUTPUT_PREFIX)
+             and set(_naming(fid, names)) & extras]
+    for row in rows:
+        if set(_naming(row[0]["name_of"], names)) & extras:
+            row[0]["note"] = BY_PRODUCT_WORDS[3:]
+    return {"head": list(RESERVES_HEAD), "rows": rows, "below": []}
+
+
+def _producer_roles(capture, frame):
+    """The yardstick's numerator id and its denominators by role, as the
+    floors' row for the frame's sub-type and the rating row name them."""
+    row = ((((_floors().get("archetype_measures") or {}).get("table") or {})
+            .get(PRODUCER_ARCHETYPE) or {}).get("subtypes") or {}).get(
+                frame.get("producer_subtype")) or {}
+    return (row.get("subject_numerator") or "enterprise_value",
+            dict(zip(row.get("denominator_roles") or (),
+                     _rating_subject_denominators(capture))))
+
+
+def _per_unit_money(per_unit, unit):
+    """The value per unit of reserves through the AC16 money formatter, in
+    whole currency where the enterprise value's unit is a scaled currency
+    (the architect's ruling on P-RESOURCEc-1): $14.1M over a million
+    barrels and $14,100 over a thousand print the same money as the one
+    figure recorded in plain dollars."""
+    from council.report import render_report
+    money = render_report._money_parse(unit) if isinstance(unit, str) else None
+    if money and not money[2]:
+        whole = (per_unit * money[1]).normalize()
+        return _format_number(format(whole, "f"), unit.split("_")[0])
+    return _format_number(format(per_unit, "f"), unit)
+
+
+def producer_yardstick_rows(pack, frame, readings):
+    """The producer's yardstick (owner rulings AC52(R5), AC53(R10), AC54(R13)):
+    enterprise value, the reserves it is divided by and the value per unit
+    of reserves as the one helper works it out, in the enterprise value's
+    unit per unit of the commodity; the last four quarters' operating cash
+    flow and what the market pays for it - "negative, not a multiple" where
+    the cash is negative; today's price; and, where carried, the SEC's
+    standardized measure, shown beside and never the denominator. Evidence
+    only."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    numerator, roles = _producer_roles(capture, frame)
+    cash = roles.get("cash_flow")
+    per_unit = (readings or {}).get("value_per_unit")
+    unit = (readings or {}).get("unit")
+    unit_words = PER_UNIT_WORDS.get(unit) or _unit_words(unit or "unit")
+    value = (_words(_per_unit_money(per_unit, (facts.get(numerator) or {})
+                                    .get("unit")))
+             if per_unit is not None else _words(NOT_CALCULABLE))
+    negative = (readings or {}).get("cash_flow_negative")
+    if negative is None and cash in facts:
+        negative = (_number(facts[cash]) or 0) < 0
+    multiple = (_words(NEGATIVE_CASH) if negative
+                else _multiple(facts.get(numerator), facts.get(cash))
+                if numerator in facts and cash in facts
+                else _words(NOT_CALCULABLE))
+    rows = [_named(pack, facts, numerator, RECORDED)]
+    if roles.get("reserves"):
+        rows.append(_named(pack, facts, roles["reserves"], RECORDED))
+    rows.append(_labelled("Enterprise value per %s of reserves" % unit_words,
+                          value, CALCULATED))
+    if cash:
+        rows.append(_named(pack, facts, cash, RECORDED))
+    rows.append(_labelled("Enterprise value against the last four quarters' "
+                          "operating cash flow", multiple, CALCULATED))
+    rows += [_named(pack, facts, fid, RECORDED)
+             for fid in _family_ids(pack, frame, "reference_price_fact")]
+    if PRODUCER_STANDARDIZED in facts:
+        rows.append(_named(pack, facts, PRODUCER_STANDARDIZED,
+                           PRODUCER_BESIDE))
+    return {"head": list(YARDSTICK_HEAD), "rows": rows, "below": []}
+
+
+def _family_ids(pack, frame, field):
+    """Every tier-1 fact of the family the producer rule reads `field` by,
+    in the pack's order - the block's own cited facts among them - or, for
+    today's price, the block's one fact."""
+    block = _resource_block(frame)
+    if field == "reference_price_fact":
+        cited = block.get(field)
+        return [cited] if isinstance(cited, str) else []
+    prefixes = _family(field, frame.get("producer_subtype"))
+    return [fid for fid in _tier1_ids(pack["capture"])
+            if prefixes and fid.startswith(prefixes)]
+
+
+def producer_quarter_rows(pack, frame):
+    """Output and the price received for each of the latest quarters,
+    oldest to newest, then the latest quarter beside the same quarter a
+    year ago and the change between them (owner rulings AC53(R10) and
+    AC54(R16)). The members are the whole business's, as the producer rule
+    reads them."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    rows = [[_words(" ".join(slug.split("_")).upper())]
+            + [_id_cell(pack, facts, prefix + slug)
+               for prefix in PRODUCER_QUARTER_PREFIXES]
+            for slug in grower_quarters(capture, PRODUCER_QUARTER_PREFIXES,
+                                        "")]
+    pairs = PRODUCER_LATEST_PAIRS
+    rows.append([_words("The latest quarter")]
+                + [_id_cell(pack, facts, now) for now, _ in pairs])
+    rows.append([_words("The same quarter a year ago")]
+                + [_id_cell(pack, facts, then) for _, then in pairs])
+    rows.append([_words("Change on a year ago (%s)" % CALCULATED)] + [
+        _ratio(facts[now], facts[then], less_one=True)
+        if now in facts and then in facts else _words(NOT_CALCULABLE)
+        for now, then in pairs])
+    return {"head": list(PRODUCER_QUARTERS_HEAD), "rows": rows, "below": []}
+
+
+def producer_cost_rows(pack, frame):
+    """What each unit costs, in the words each fact carries - for a royalty
+    or streaming company every stream payment it cites (owner rulings
+    AC54(R14), AC56(2)); each hedge, shown and never netted, beside today's
+    price, or none where the company does not hedge (AC53(R11)); and the
+    debt, the cash and the clean-up obligations (AC54(R16))."""
+    capture = pack["capture"]
+    facts = _facts_by_id(capture)
+    rows = [_named(pack, facts, fid, RECORDED)
+            for fid in _family_ids(pack, frame, "unit_cost_facts")]
+    if _resource_block(frame).get("hedge_none_by_design"):
+        rows.append(_labelled("Hedges", _words(PRODUCER_NO_HEDGE), RECORDED))
+    rows += [_named(pack, facts, fid, PRODUCER_NOT_NETTED)
+             for fid in _family_ids(pack, frame, "hedge_facts")]
+    rows += [_named(pack, facts, fid, RECORDED)
+             for fid in _family_ids(pack, frame, "reference_price_fact")]
+    rows += [_named(pack, facts, fid, RECORDED)
+             for fid in PRODUCER_BALANCE_IDS if fid in facts]
+    return {"head": list(RUNWAY_HEAD), "rows": rows, "below": []}
+
+
+PRODUCER_LEADS = (
+    "The reserves, each beside the price the reserves were counted at and "
+    "today's price",
+    "The yardstick, and what stands beside it",
+    "Output and the price received, the latest quarters oldest first",
+    "What each unit costs, the hedges, the debt and the clean-up "
+    "obligations")
+
+
+def producer_tables(pack, frame, readings):
+    """The producer's four tables with their leads, in page order - built
+    once here, printed by the full document, the report and the case
+    file."""
+    return list(zip(PRODUCER_LEADS, (
+        producer_reserve_rows(pack, frame),
+        producer_yardstick_rows(pack, frame, readings),
+        producer_quarter_rows(pack, frame),
+        producer_cost_rows(pack, frame))))
+
+
+def producer_facts_read(capture, frame):
+    """Every fact id a producer's lines read: every fact the resource block
+    cites, every fact its tables show and every figure a calculated row is
+    struck from - so a corrected price or hedge brings the frame into a
+    delta re-audit."""
+    pack = {"capture": capture}
+    ids = {fid for pair in PRODUCER_LATEST_PAIRS for fid in pair}
+    for field, named in _resource_block(frame).items():
+        named = [named] if isinstance(named, str) else named
+        if field.endswith(("_fact", "_facts")) and isinstance(named, list):
+            ids.update(fid for fid in named if isinstance(fid, str))
+    for _, table in producer_tables(pack, frame, producer_readings(pack)):
+        for row in table["rows"]:
+            for cell in row:
+                ids.update(cell.get("ids") or ())
+                ids.update(cell[key] for key in ("id", "name_of")
+                           if key in cell)
+    ids.update(_producer_roles(capture, frame)[1].values())
+    return ids
+
+
+def _series_names():
+    """The plain names of the cycle series on record, as data (ruling 7:
+    the report's glossary map, loaded when first used)."""
+    from council.report import render_report
+    return render_report.GLOSSARY.get("series") or {}
+
+
+def cycle_rows(capture):
+    """The cycle (the seed's design item 6; owner ruling AC15 P4): each
+    series by its plain name (its id where the map has none), its first
+    and latest point with their dates, and the change between them, in
+    points for a percentage. None where the series are a declared gap or
+    absent. No reading of the series."""
+    cycle = capture.get("cycle") or {}
+    series = cycle.get("series") or []
+    if cycle.get("gap") or not series:
+        return None
+    names = _series_names()
+    rows = []
+    for item in series:
+        points = item.get("points") or []
+        name = _words(names.get(item.get("id")) or _one_line(item.get("id")))
+        if not points:
+            rows.append([name, _words("no points"), _words(NO_FIGURE),
+                         _words(NO_FIGURE)])
+            continue
+        unit = item.get("unit")
+        first, last = ({"value": point.get("value"), "unit": unit}
+                       for point in (points[0], points[-1]))
+        rows.append([name] + [
+            {"kind": "reading", "value": point.get("value"), "unit": unit,
+             "date": point.get("date")} for point in (points[0], points[-1])
+        ] + [_difference(last, first)])
+    return {"head": list(CYCLE_HEAD), "rows": rows, "below": []}
+
+
+def _md_cell(cell, bases):
+    """One cell for the Markdown document: the capture's words marked
+    (AC19), everything else neutralised as data; a STALE mark raw, as the
+    document prints it everywhere."""
+    if cell["kind"] == "prose":
+        return _marked(cell["text"], bases)
+    if cell["kind"] == "fact":
+        return _safe(_fact_text(cell)) + cell["stale"]
+    return _safe(cell_text(cell))
+
+
+def table_lines(table, bases):
+    """A business table as Markdown: the pipe table, then each line under
+    it as a list item."""
+    lines = ["| %s |" % " | ".join(_safe(name) for name in table["head"]),
+             "| %s |" % " | ".join("---" for _ in table["head"])]
+    lines += ["| %s |" % " | ".join(_md_cell(cell, bases) for cell in row)
+              for row in table["rows"]]
+    if table["below"]:
+        lines.append("")
+        lines += ["- %s" % " ".join(_md_cell(cell, bases) for cell in line)
+                  for line in table["below"]]
+    return lines
+
+
+CYCLE_DEPENDENCE_WORDS = {
+    "identified": "a cycle is identified",
+    "none": "no cycle this name depends on",
+}
 
 
 def _full_frame_lines(pack, capture):
@@ -1440,11 +3276,13 @@ def _full_frame_lines(pack, capture):
         bases = _frame_bases(capture, ticker)
         lines.append("### %s" % _safe(ticker))
         lines.append("")
-        # Owner ruling AC19: the one summary line per frame, and every
-        # number below marked where the reader who approves this sees it.
-        lines.append(trace.summary_sentence(
-            trace.frame_counts(capture, ticker, frame, _marks_config())))
-        lines.append("")
+        # Owner ruling AC19: every number below is marked where the reader
+        # who approves this sees it; the count stands only where a figure is
+        # not traced (unit READ-B2).
+        untraced = _untraced_sentence(capture, ticker, frame)
+        if untraced:
+            lines.append(untraced)
+            lines.append("")
         archetype = frame.get("archetype")
         if archetype:
             measure = _rating_measure(capture)
@@ -1452,10 +3290,17 @@ def _full_frame_lines(pack, capture):
                       % _MEASURE_WORDS.get(measure, _safe(measure)))
                      if measure else "")
             kind = (fi_kind_words(frame, _safe) if archetype == FI_ARCHETYPE
+                    else grower_kind_words(frame, _safe)
+                    if grower_subject_frame(capture) is frame
+                    else producer_kind_words(frame, _safe)
+                    if producer_subject_frame(capture) is frame
                     else _ARCHETYPE_WORDS.get(archetype, _safe(archetype)))
             lines.append("**Archetype.** %s.%s %s"
                          % (kind, rated,
                             _marked(frame.get("archetype_because"), bases)))
+            if integrated_major_frame(capture) is frame:
+                lines += ["", "%s%s" % (INTEGRATED_BESIDE_LEAD, _safe(
+                    integrated_major_words(pack)))]
             denoms = _rating_subject_denominators(capture)
             if denoms:
                 lines.append("")
@@ -1466,40 +3311,39 @@ def _full_frame_lines(pack, capture):
                 # back-ticked key) ONLY when it is one of the pack's own
                 # tier-1 fact ids; send anything else through _safe, as data.
                 lines.append("**The rating divides by** %s."
-                             % ", ".join(_fact_ref(facts, fid)
-                                         if fid in facts else _safe(fid)
+                             % "; ".join(_fact_ref(facts, fid)
                                          for fid in denoms))
             lines.append("")
         lines.append("**What it does.** %s"
                      % _marked(frame.get("what_it_does"), bases))
         lines.append("")
         lines.append("**How it earns.**")
-        for row in frame.get("how_it_earns") or []:
-            # Owner rulings AC28 and AC30: the kind of earnings a line is
-            # stands beside its share of the period, where the line says.
-            nature = row.get("nature")
-            nature_words = (("%s, " % (FI_NATURE_WORDS.get(nature)
-                                       or _safe(nature)))
-                            if nature else "")
-            lines.append("- %s - %s%s of the latest reported period (%s)"
-                         % (_marked(row.get("line"), bases), nature_words,
-                            _one_line(row.get("share_of_period")),
-                            ", ".join(_fact_ref(facts, fid)
-                                      for fid in row.get("facts") or [])))
+        if frame.get("how_it_earns"):
+            # Unit READ-B1: one row per revenue line - its revenue, the
+            # share of the firm and the change on a year ago struck here
+            # from the recorded figures - and the capture's own sentence
+            # under the table, with the facts it names.
+            lines.append("")
+            lines.extend(table_lines(earnings_rows(pack, frame), bases))
         if archetype == FI_ARCHETYPE:
             lines.extend(_full_fi_lines(pack, capture, ticker, frame,
                                         facts, bases))
+        elif grower_subject_frame(capture) is frame:
+            lines.extend(_full_grower_lines(pack, frame, bases))
+        elif producer_subject_frame(capture) is frame:
+            lines.extend(_full_producer_lines(pack, frame, bases))
         changing = frame.get("what_is_changing") or {}
         lines.append("")
-        lines.append("**What is changing (%s).** %s"
-                     % (_one_line(changing.get("kind")),
+        lines.append("**What is changing.** %s%s"
+                     % (_changing_opening(changing),
                         _marked(changing.get("statement"), bases)))
         reading = frame.get("headline_decline_read")
         if reading:
             lines.append("")
-            lines.append("**A fallen headline figure, read as:** %s (%s)"
-                         % (_safe(reading.get("reading")),
-                            ", ".join(_fact_ref(facts, fid)
+            lines.append("**A fallen headline figure:** %s (%s)"
+                         % (_DECLINE_WORDS.get(reading.get("reading"))
+                            or _safe(reading.get("reading")),
+                            "; ".join(_fact_ref(facts, fid)
                                       for fid in reading.get("facts") or [])
                             or "no facts named"))
         lines.append("")
@@ -1511,19 +3355,35 @@ def _full_frame_lines(pack, capture):
                           % (_marked(gap.get("reason"), bases),
                              _marked(gap.get("weakened_test"), bases)))
             else:
-                answer = "answered by " + ", ".join(
-                    _fact_ref(facts, fid)
+                answer = "answered by " + "; ".join(
+                    _figure(pack, facts, fid, passages)
                     for fid in row.get("answered_by") or [])
             lines.append("- %s: %s - %s"
                          % (_marked(row.get("name"), bases),
                             _marked(row.get("why_it_decides"), bases), answer))
         lines.extend(_full_peer_lines(frame, facts, bases))
         lines.append("")
-        lines.append("**Management.** %s"
-                     % _management_words(pack, facts, frame))
+        guidance = guidance_rows(pack, frame)
+        said = _management_words(pack, facts, frame, guidance=False)
+        if guidance and said == MANAGEMENT_NOTHING:
+            said = MANAGEMENT_GUIDANCE_ONLY
+        lines.append("**Management.** %s" % said)
         lines.append("")
-        lines.append("**Competitive standing:** passage `%s`."
-                     % _one_line(frame.get("competitive_position")))
+        for table in guidance:
+            lines.append("**%s.**" % _safe(GUIDANCE_LEAD % table["period"]))
+            lines.append("")
+            lines.extend(table_lines(table, bases))
+            lines.append("")
+        standing = frame.get("competitive_position")
+        passage = passages.get(standing)
+        if passage is not None:
+            lines.append("**Competitive standing.** %s From the passage "
+                         "%s, in full below."
+                         % (_safe(_first_sentence(passage.get("text"))),
+                            _passage_title(standing)))
+        else:
+            lines.append("**Competitive standing.** %s is named, but the "
+                         "passage is not in the pack." % _safe(standing))
         lines.append("")
         # cycle_dependence and its reason are required of a single name by
         # the gate; the full document a person approves prints them, for an
@@ -1534,7 +3394,8 @@ def _full_frame_lines(pack, capture):
         if cycle_dep:
             because = frame.get("cycle_dependence_because")
             lines.append("**Cycle dependence:** %s.%s"
-                         % (_one_line(cycle_dep),
+                         % (CYCLE_DEPENDENCE_WORDS.get(cycle_dep)
+                            or _safe(cycle_dep),
                             (" %s" % _marked(because, bases)) if because
                             else ""))
             lines.append("")
@@ -1560,40 +3421,32 @@ def _full_fi_lines(pack, capture, ticker, frame, facts, bases):
         lines.append("**Capital beside its requirement.** %s."
                      % _fi_capital_words(pack, facts, capital, bases))
     else:
+        # Unit READ-B1: one row per ratio and its requirement, the cushion
+        # in points; the capture's regime and constraint under the table.
         lines.append("**Capital beside its requirement.**")
-        for ratio, requirement in fi_capital_pairs(capital):
-            lines.append("- %s" % _fi_pair_words(pack, facts, ratio,
-                                                  requirement))
-        for label, key in (("The regime", "regime"),
-                           ("The binding constraint", "binding_constraint")):
-            if capital.get(key):
-                lines.append("- %s: %s" % (label, _marked(capital[key],
-                                                           bases)))
-        if capital.get("target_fact"):
-            lines.append("- Management's own target: %s"
-                         % _fi_value(pack, facts, capital["target_fact"]))
-    stress, stress_gaps = fi_stress_evidence(capture, ticker)
-    if stress or stress_gaps:
+        lines.append("")
+        lines.extend(table_lines(capital_rows(pack, frame), bases))
+    stress = stress_rows(pack, ticker)
+    if stress:
         # Owner ruling AC30(5): the supervisor's own stress figures, as
         # dated evidence - never a reading of them.
         lines.append("")
         lines.append("**%s.** Evidence only: the pack carries these and "
                      "nothing here reads them." % FI_STRESS_HEADING)
-        for fid in stress:
-            lines.append("- %s" % _fi_value(pack, facts, fid))
-        for gap in stress_gaps:
-            lines.append("- declared gap (%s): %s"
-                         % (_safe(gap.get("fact_class")),
-                            _safe(gap.get("reason"))))
+        lines.append("")
+        lines.extend(table_lines(stress, bases))
     risk = frame.get("fi_risk_cost") or {}
     if risk:
         kind = risk.get("kind")
+        table = risk_rows(pack, frame)
         lines.append("")
-        lines.append("**The risk-cost line: %s.** %s. Why this line: %s"
+        lines.append("**The risk-cost line: %s.** %sWhy this line: %s"
                      % (FI_RISK_KIND_WORDS.get(kind) or _safe(kind),
-                        _fi_values(pack, facts, risk.get("facts"))
-                        or "no fact, by design",
+                        "" if table else "no fact, by design. ",
                         _marked(risk.get("because"), bases)))
+        if table:
+            lines.append("")
+            lines.extend(table_lines(table, bases))
     bridge = frame.get("nav_bridge")
     if isinstance(bridge, dict):
         lines.append("")
@@ -1622,6 +3475,41 @@ def _full_fi_lines(pack, capture, ticker, frame, facts, bases):
     return lines
 
 
+def _full_grower_lines(pack, frame, bases):
+    """What the full document shows of a growth company (owner rulings
+    AC49(1) and AC50): the yardstick and what stands beside it, the
+    latest quarters, and the months of cash left with, below the line,
+    the ruled sentence. Evidence only: nothing here reads the figures."""
+    runway = grower_runway(pack)
+    lines = ["", "**The yardstick, and what stands beside it.** Evidence: "
+             "the figures the pack carries, and those worked out from them "
+             "marked calculated; nothing here reads them.", ""]
+    lines.extend(table_lines(grower_yardstick_rows(pack, frame), bases))
+    lines += ["", "**The latest quarters, oldest first.**", ""]
+    lines.extend(table_lines(grower_quarter_rows(pack, frame), bases))
+    lines += ["", "**The cash, and how long it lasts.** %s" % _safe(
+        grower_months_line(runway)), ""]
+    lines.extend(table_lines(grower_runway_rows(pack, frame, runway), bases))
+    return lines
+
+
+def _full_producer_lines(pack, frame, bases):
+    """What the full document shows of a producer (owner rulings
+    AC51-AC56): the reserves, the yardstick, output and the price received
+    by quarter, and what each unit costs with the hedges, the debt and the
+    clean-up obligations; the reserve life with, where today's price is
+    below the reserves', the ruled sentence. Evidence only."""
+    readings = producer_readings(pack)
+    lines = ["", "**The producer's figures.** Evidence: the figures the pack "
+             "carries, and those worked out from them marked calculated; "
+             "nothing here reads them.", "",
+             "**%s**" % _safe(producer_life_line(readings))]
+    for lead, table in producer_tables(pack, frame, readings):
+        lines += ["", "**%s.**" % _safe(lead), ""]
+        lines.extend(table_lines(table, bases))
+    return lines
+
+
 def _full_cycle_lines(capture):
     """The cycle a single name depends on (owner ruling AC15, P4): the
     dated series carried as EVIDENCE, or the declared gap. Nothing here is
@@ -1630,7 +3518,7 @@ def _full_cycle_lines(capture):
     if not cycle:
         return []
     lines = ["## The cycle this name depends on", "",
-             "**%s.** %s" % (_safe(cycle.get("name")),
+             "**%s.** %s" % (_safe(cycle.get("name")).rstrip("."),
                              _safe(cycle.get("why_it_matters"))), ""]
     gap = cycle.get("gap")
     if gap:
@@ -1638,6 +3526,13 @@ def _full_cycle_lines(capture):
                      % _safe(gap.get("reason")))
         lines.append("")
         return lines
+    # Unit READ-B1: the series first and latest, in plain names, as one
+    # table; every dated point of each follows under it.
+    table = cycle_rows(capture)
+    if table:
+        lines.extend(table_lines(table, {}))
+        lines.append("")
+    names = _series_names()
     for series in cycle.get("series") or []:
         points = series.get("points") or []
         span = ("%s to %s" % (points[0]["date"], points[-1]["date"])
@@ -1645,9 +3540,12 @@ def _full_cycle_lines(capture):
         # Render-only (FI-ARCHETYPE (b)): the date the series was read
         # beside the date of its LAST point, so a reader sees how old the
         # latest reading is.
-        lines.append("- **`%s`** (%s, read %s; latest point %s): %d dated "
-                     "points, %s. Source: %s. Re-fetch: %s"
-                     % (_one_line(series.get("id")),
+        lines.append("- **%s** (`%s`, %s, read %s; latest point %s): %d "
+                     "dated points, %s. Source: %s. Re-fetch: %s"
+                     % (_safe(names[series.get("id")])
+                        if series.get("id") in names
+                        else _words_of_id(series.get("id")),
+                        _one_line(series.get("id")),
                         _safe(series.get("unit")),
                         _safe(series.get("as_of")),
                         _safe(points[-1].get("date")) if points
@@ -1683,7 +3581,7 @@ def _full_peer_lines(frame, facts, bases):
         lines.append("- %s (%s): %s"
                      % (_safe(peer.get("name")),
                         _safe(peer.get("ticker")),
-                        ", ".join(_fact_ref(facts, m)
+                        "; ".join(_fact_ref(facts, m)
                                   for m in peer.get("metrics") or [])))
         if peer.get("comparable_because"):
             lines.append("  - comparable because: %s"
@@ -1694,17 +3592,200 @@ def _full_peer_lines(frame, facts, bases):
     return lines
 
 
+# Unit READ-B2: a dealing an insider made is carried as three facts - its
+# direction, its date and its size, sharing one suffix (owner ruling
+# AC35(2)) - and the full document prints them as ONE table row, with the
+# shares sold and bought summed beneath. A dealing whose three facts carry
+# anything a row would not show (a bound, a period basis, a note of
+# arithmetic, or an as-of date other than the dealing's own) keeps its
+# three entries instead: a table never drops what an entry carried.
+INSIDER_HEADING = "Insider dealings"
+INSIDER_PARTS = (("direction", "insider_flow_direction_"),
+                 ("date", "insider_flow_date_"),
+                 ("size", "insider_flow_size_"))
+INSIDER_TABLE_HEAD = ("| Entry | Date | The dealing | Direction | Shares "
+                      "| Source |",
+                      "| --- | --- | --- | --- | --- | --- |")
+DIRECTION_WORDS = {"sell": "sale", "buy": "purchase"}
+# The share-count units the insider floor permits (floors.json,
+# insider_flow_size_), each as shares (audit round 1 of UPGRADE2-READ-B2).
+SHARES_PER_UNIT = {"shares": 1, "thousand_shares": 1000,
+                   "thousands_of_shares": 1000, "million_shares": 1000000}
+INSIDER_KEY_NOTE = ("%s`insider_flow_direction_<n>`, `insider_flow_date_<n>`, "
+                    "`insider_flow_size_<n>` - <n> as in the first column")
+
+
+def _insider_dealings(capture, notes):
+    """{suffix: {"direction": fact, "date": fact, "size": fact}} for every
+    whole dealing the table can print without dropping anything."""
+    parts = {}
+    for fact in capture.get("tier1") or []:
+        fact_id = str(fact.get("id") or "")
+        for role, prefix in INSIDER_PARTS:
+            if fact_id.startswith(prefix) and len(fact_id) > len(prefix):
+                parts.setdefault(fact_id[len(prefix):], {})[role] = fact
+    dealings = {}
+    for suffix, trio in parts.items():
+        if len(trio) != len(INSIDER_PARTS):
+            continue
+        day = _one_line(trio["date"].get("value"))
+        if any(fact.get("bound") or fact.get("period_basis")
+               or notes.get(fact.get("id"))
+               or _one_line(fact.get("as_of")) != day
+               for fact in trio.values()):
+            continue
+        dealings[suffix] = trio
+    return dealings
+
+
+def _distinct(values):
+    seen = []
+    for value in values:
+        if value and value not in seen:
+            seen.append(value)
+    return seen
+
+
+# Unit INSIDER-DEPTH (owner ruling AC41(1), as amended of record): where
+# officers and directors together own under the floors' threshold, the
+# section opens with the twelve-month summary in one plain line, and the
+# table below lists only the dealings the pack carries.
+SUMMARY_NET_WORDS = {"sell": "net sellers", "buy": "net buyers",
+                     "even": "neither net buyers nor net sellers"}
+OFFICERS_ONLY = ("Below, only the chief executive's, the finance chief's "
+                 "and the chair's own dealings, because officers and "
+                 "directors together own under %s%% of the company: %s.")
+NO_OFFICER_DEALT = "None of the three dealt in the window."
+
+
+def _insider_lead(pack, capture, insider, order):
+    """The light depth's opening lines where the pack carries the whole
+    twelve-month summary, else None - and None at every other depth, so
+    the section is exactly as before."""
+    if (insider or {}).get("depth") != "light":
+        return None
+    facts = _facts_by_id(capture)
+    count, direction, value = (facts.get(fact_id)
+                               for fact_id in insider["summary"])
+    if count is None or direction is None or value is None:
+        return None
+    net = _one_line(direction.get("value"))
+    lead = ["Over the twelve months to %s, officers and directors made %s "
+            "dealings; by shares they were %s; the dealings' total value, "
+            "bought plus sold, was %s (the summary's own figures, from the "
+            "filings its sources name)."
+            % (_safe(_format_date(count.get("as_of"))),
+               _safe(count.get("value")),
+               SUMMARY_NET_WORDS.get(net) or _safe(net),
+               _value_words(value))]
+    roles = tuple(role + "_" for role in insider["officer_roles"])
+    if order and all(str(suffix).startswith(roles) for suffix in order):
+        lead.append(OFFICERS_ONLY % (_safe(insider["threshold"]),
+                                     _safe(insider["holding"])))
+    elif not any(str(fact_id).startswith(prefix) for fact_id in facts
+                 for _role, prefix in INSIDER_PARTS):
+        lead.append(NO_OFFICER_DEALT)
+    return lead
+
+
+def _insider_lines(pack, dealings, order, lead=None):
+    """The insider dealings as one table, then the shares sold and bought
+    across them, summed at display. At the light depth the summary's lead
+    line comes first, and the closing sum speaks of the dealings listed,
+    so the officers' sums are never read as the whole."""
+    lines = ["### %s" % INSIDER_HEADING, ""]
+    if lead:
+        for sentence in lead:
+            lines.extend([sentence, ""])
+        if not order:
+            return lines
+    lines.extend(INSIDER_TABLE_HEAD)
+    totals = {"sell": decimal.Decimal(0), "buy": decimal.Decimal(0)}
+    summable = True
+    for suffix in order:
+        trio = dealings[suffix]
+        facts = [trio[role] for role, _prefix in INSIDER_PARTS]
+        names = " / ".join(_distinct(_fact_name(fact) for fact in facts))
+        stale = "".join(_freshness_mark(pack, fact.get("id"))
+                        for fact in facts)
+        direction = _one_line(trio["direction"].get("value"))
+        sources = " / ".join(_distinct(_safe(fact.get("source"))
+                                       for fact in facts))
+        # The recorded direction and date stand beside their words, and
+        # the entry's own key ending in the first column: the table keeps
+        # what the three entries carried (audit round 1 of UPGRADE2-READ-B2).
+        said = DIRECTION_WORDS.get(direction)
+        lines.append("| %s | %s | %s%s | %s | %s | %s |"
+                     % (_safe(suffix), _value_words(trio["date"]),
+                        names, stale,
+                        ("%s — recorded %s" % (said, _safe(direction)))
+                        if said else _safe(direction),
+                        _value_words(trio["size"]), sources))
+        if direction in totals:
+            try:
+                size = decimal.Decimal(str(trio["size"].get("value")))
+            except (decimal.InvalidOperation, ValueError):
+                size = None
+            per = SHARES_PER_UNIT.get(trio["size"].get("unit"))
+            if size is None or not size.is_finite() or per is None:
+                summable = False
+            else:
+                totals[direction] += size * per
+    lines.append("")
+    lines.append(INSIDER_KEY_NOTE % RECORD_KEY_LINE)
+    lines.append("")
+    # Number agreement for one dealing and for many (architect ruling,
+    # round 2 of UPGRADE2-READ-B2).
+    across = "Across %s%d %s%s" % ("the " if lead else "", len(order),
+                                   "dealing" if len(order) == 1
+                                   else "dealings",
+                                   " listed" if lead else "")
+    if summable:
+        lines.append("%s, insiders sold %s and bought %s (calculated)."
+                     % (across,
+                        _safe(_format_number(str(totals["sell"]), "shares")),
+                        _safe(_format_number(str(totals["buy"]), "shares"))))
+    else:
+        lines.append("%s, the shares sold and bought are not calculable: a "
+                     "size is not a number of shares." % across)
+    lines.append("")
+    return lines
+
+
 def _full_fact_lines(pack, capture):
     lines = ["## Every fact, in full", ""]
+    # Owner ruling AC47(3): where the ownership cannot be established the
+    # insider evidence is not considered, and the document says so once.
+    insider = sufficiency.insider_depth(pack, _floors())
+    if (insider or {}).get("not_considered"):
+        lines.extend(["### %s" % INSIDER_HEADING, "",
+                      sufficiency.INSIDER_NOT_CONSIDERED, ""])
     notes = pack.get("generated_notes") or {}
+    dealings = _insider_dealings(capture, notes)
+    in_table = {}
+    for suffix, trio in dealings.items():
+        for fact in trio.values():
+            in_table[fact.get("id")] = suffix
+    order = []
+    for fact in capture.get("tier1") or []:
+        suffix = in_table.get(fact.get("id"))
+        if suffix is not None and suffix not in order:
+            order.append(suffix)
+    lead = _insider_lead(pack, capture, insider, order)
+    opens = set(insider["summary"]) if lead else set()
+    printed_table = False
     for fact in capture.get("tier1") or []:
         fact_id = fact.get("id")
+        if fact_id in in_table or fact_id in opens:
+            if not printed_table:
+                lines.extend(_insider_lines(pack, dealings, order, lead))
+                printed_table = True
+            if fact_id in in_table:
+                continue
         lines.append("### %s" % _fact_heading(fact))
-        unit = _safe(fact.get("unit"))
-        lines.append("- Value: %s%s (as of %s)%s"
-                     % (_safe(fact.get("value")),
-                        (" " + unit) if unit else "",
-                        _one_line(fact.get("as_of")),
+        lines.append("- Value: %s (as of %s)%s"
+                     % (_value_words(fact),
+                        _safe(_format_date(fact.get("as_of"))),
                         _freshness_mark(pack, fact_id)))
         # A bound is not a measurement: a ceiling can only be too high, a
         # floor too low, and a ceiling names the published line it was
@@ -1727,6 +3808,7 @@ def _full_fact_lines(pack, capture):
         period_basis = fact.get("period_basis")
         if period_basis:
             lines.append("- Period basis: %s" % _safe(period_basis))
+        lines.append("%s`%s`" % (RECORD_KEY_LINE, _one_line(fact_id)))
         lines.append("")
     return lines
 
@@ -1739,9 +3821,9 @@ def _full_passage_lines(capture):
         lines.append("")
         return lines
     for passage in passages:
-        lines.append("### `%s` (as of %s)"
-                     % (_one_line(passage.get("id")),
-                        _one_line(passage.get("as_of"))))
+        lines.append("### %s (as of %s)"
+                     % (_words_of_id(passage.get("id")),
+                        _safe(_format_date(passage.get("as_of")))))
         lines.append("- Source: %s" % _safe(passage.get("source")))
         figures = passage.get("figures") or []
         if figures:
@@ -1749,6 +3831,9 @@ def _full_passage_lines(capture):
                          % ", ".join(_safe(f) for f in figures))
         lines.append("")
         lines.append(_safe(passage.get("text")))
+        lines.append("")
+        lines.append("%s`%s`" % (RECORD_KEY_LINE,
+                                 _one_line(passage.get("id"))))
         lines.append("")
     return lines
 
@@ -1761,9 +3846,9 @@ def _full_gap_lines(capture):
         lines.append("")
         return lines
     for gap in gaps:
-        lines.append("- %s: %s (weakens %s)"
-                     % (_safe(gap.get("fact_class")),
-                        _safe(gap.get("reason")),
+        lines.append("- %s (%s; weakens %s)"
+                     % (_safe(gap.get("reason")),
+                        _safe(gap.get("fact_class")),
                         _safe(gap.get("weakened_test"))))
     lines.append("")
     return lines
@@ -1779,7 +3864,8 @@ def _audit_pass_lines(block, facts, current):
     scope = _one_line(block.get("scope")) or "full"
     pass_no = _one_line(block.get("current_pass") if current
                         else block.get("pass")) or "1"
-    lines = ["**A %s audit (pass %s).**" % (scope, pass_no), ""]
+    lines = ["**Pass %s: %s.**" % (pass_no, AUDIT_SCOPE_WORDS.get(scope)
+                                   or "a %s check" % _safe(scope)), ""]
     if block.get("status") != "success":
         lines.append("This pass did not complete: %s (%s). No outside model "
                      "checked this evidence."
@@ -1798,13 +3884,11 @@ def _audit_pass_lines(block, facts, current):
         lines.append("")
     for finding in findings:
         finding_id = finding.get("id")
-        lines.append("#### %s - %s (%s)"
-                     % (_safe(finding_id), _one_line(finding.get("kind")),
-                        _one_line(finding.get("severity"))))
+        lines.append("#### %s" % _finding_title(finding))
         lines.append("- It said: %s" % _safe(finding.get("detail")))
         if finding.get("fact_ids"):
             lines.append("- The figures it is about: %s"
-                         % ", ".join(_fact_ref(facts, f)
+                         % "; ".join(_fact_ref(facts, f)
                                      for f in finding["fact_ids"]))
         if finding.get("where_it_likely_lives"):
             lines.append("- Where it would be found: %s"
@@ -1825,10 +3909,12 @@ def _audit_pass_lines(block, facts, current):
             lines.append("- The figure it read at the source: %s"
                          % _safe(figure))
         resolution = resolutions.get(finding_id) or {}
-        disposition = _one_line(resolution.get("disposition")) or "unanswered"
-        answer = "- The record answered: %s" % disposition
+        disposition = resolution.get("disposition")
+        answer = "- The answer: %s" % (
+            _DISPOSITION_WORDS.get(disposition) or _safe(disposition)
+            or "not answered")
         if resolution.get("fact_ids"):
-            answer += " (%s)" % ", ".join(_fact_ref(facts, f)
+            answer += " (%s)" % "; ".join(_fact_ref(facts, f)
                                           for f in resolution["fact_ids"])
         if resolution.get("reason"):
             answer += " - %s" % _safe(resolution.get("reason"))
@@ -1840,18 +3926,25 @@ def _audit_pass_lines(block, facts, current):
     return lines
 
 
+AUDIT_SCOPE_WORDS = {
+    "full": "the whole evidence read",
+    "delta": "a re-check of a correction",
+}
+
+
 def _full_auditor_lines(capture):
-    lines = ["## What the outside auditor said, and what was done about it",
-             ""]
+    lines = ["## The %s in full: what the outside model said, and what was "
+             "done about it" % EVIDENCE_CHECK, ""]
     block = capture.get("evidence_challenge")
     if not block:
-        lines.append("No outside audit is on this record.")
+        lines.append("No %s is on this record." % EVIDENCE_CHECK)
         lines.append("")
         return lines
     facts = _facts_by_id(capture)
     lines.extend(_audit_pass_lines(block, facts, current=True))
     for prior in block.get("prior_passes") or []:
-        lines.append("### An earlier audit pass, kept whole")
+        lines.append("### An earlier pass of the %s, kept whole"
+                     % EVIDENCE_CHECK)
         lines.append("")
         lines.extend(_audit_pass_lines(prior, facts, current=False))
     return lines
@@ -1868,33 +3961,66 @@ def checklist_description(capture, req, escape):
     words after it; every other row, and every other subject, prints the
     capture's words alone, through the renderer's own `escape`."""
     words = escape(req.get("description"))
+    producer = producer_subject_frame(capture) is not None
+    if grower_subject_frame(capture) is not None or producer:
+        # Owner ruling AC50(9) as amended: a growth company's three
+        # standard tests, each named in the floors' own words; a producer's
+        # two in the floors' words and its third, the yardstick, in the
+        # measure's (owner ruling AC54(R14)).
+        term = sufficiency._canonical_test_terms(
+            _floors(), sufficiency._declared_archetype(_floors(), capture)
+        ).get(req.get("id")) or {}
+        ruled = (term.get("words") or [None])[0]
+        if (producer and not ruled and req.get("id") == PRODUCER_THIRD_TEST[0]
+                and _rating_measure(capture) in _MEASURE_WORDS):
+            ruled = PRODUCER_THIRD_TEST[1] % _MEASURE_WORDS[
+                _rating_measure(capture)]
+        if ruled:
+            return "%s %s%s" % (escape("%s (the capture's words:" % ruled),
+                                words, escape(")"))
+        return words
     frame = fi_subject_frame(capture)
     if (req.get("id") == FREE_CASH_ROW and frame is not None
             and frame.get("fi_subtype") in fi_lifted_subtypes()):
-        return "%s%s%s" % (escape("%s (the capture's words: "
-                                  % FI_FREE_CASH_WORDS), words, escape(")"))
+        # The space after the colon is added outside `escape`: the page's
+        # neutralization collapses a trailing space away (unit READ-B2).
+        return "%s %s%s" % (escape("%s (the capture's words:"
+                                   % FI_FREE_CASH_WORDS), words, escape(")"))
     return words
 
 
+REQUIREMENT_KIND_WORDS = {
+    "canonical_test": "standard test",
+    "thesis_specific": "your thesis test",
+    "floor": "a floor the rules require",
+    "constituent_essential": "essential for a member",
+}
+
+
 def _full_checklist_lines(capture):
+    """The checklist in words (unit READ-B2): each question, whether it is
+    answered, what kind of test it is, and the facts that answer it by
+    name - no keys (audit round 1 of UPGRADE2-READ-B2: which fact answers
+    which test is a record the approved document keeps)."""
     lines = ["## The sufficiency checklist", ""]
     facts = _facts_by_id(capture)
+    passages = _passages_by_id(capture)
     for req in (capture.get("sufficiency") or {}).get("requirements") or []:
+        kind = req.get("kind")
+        kind_words = REQUIREMENT_KIND_WORDS.get(kind) or _safe(kind)
         if req.get("status") == "answered":
-            lines.append("- [answered] `%s` (%s): %s - by %s"
-                         % (_one_line(req.get("id")),
-                            _one_line(req.get("kind")),
+            by = "; ".join(_fact_ref(facts, fact_id, passages)
+                           for fact_id in req.get("answered_by") or [])
+            lines.append("- Answered - %s: %s%s"
+                         % (kind_words,
                             checklist_description(capture, req, _safe),
-                            ", ".join(_fact_ref(facts, f)
-                                      for f in req.get("answered_by") or [])
-                            or "none"))
+                            (" - answered by: %s" % by) if by else ""))
         else:
             # The weakened test is what a declared gap COSTS; the approved
             # document must state it, not only the reason (audit round 1 of
             # sub-charge b, b-r1-7).
-            lines.append("- [declared gap] `%s` (%s): %s - %s (weakens %s)"
-                         % (_one_line(req.get("id")),
-                            _one_line(req.get("kind")),
+            lines.append("- Declared gap - %s: %s - %s (weakens %s)"
+                         % (kind_words,
                             checklist_description(capture, req, _safe),
                             _safe(req.get("gap_reason") or "no reason"),
                             _safe(req.get("weakened_test") or "not stated")))
@@ -1914,15 +4040,15 @@ def render_full(pack, pack_sha256, usage=None):
                          "missing - render from the freeze's pack.json, "
                          "never from a raw capture")
     capture = pack["capture"]
-    summary = render(pack, pack_sha256, usage).rstrip("\n")
+    summary = render(pack, pack_sha256, usage, in_full=True).rstrip("\n")
     lines = [summary, "",
              "---", "",
              "# The full evidence - the document approved in reviewed mode",
              "",
              "Everything above is the one-page summary; everything below is "
              "the whole of the evidence the council will sit on, in full and "
-             "nothing trimmed. This is the document a reviewer approves "
-             "(owner ruling AC15).", ""]
+             "nothing trimmed. This is the document a reviewer approves.",
+             ""]
     lines.extend(_full_frame_lines(pack, capture))
     lines.extend(_full_cycle_lines(capture))
     lines.extend(_full_fact_lines(pack, capture))
@@ -1951,6 +4077,14 @@ def _take_option(args, name):
 
 
 def main(argv=None):
+    """The brief command. With `--full` it writes the full evidence document
+    AND, beside it, the page the owner reads it on (owner ruling AC40(2b)):
+    `<name>.md` gets `<name>.html`, rendered by
+    council.report.evidence_page from the exact Markdown bytes written here,
+    so the page is provably that document. An existing file at the page's
+    path is replaced only when it is a page that renderer wrote; anything
+    else is refused and NEITHER file is written. Without `--full` no page is
+    written. Exit 0 written, 1 usage error, refusal or crash."""
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         full = "--full" in args
@@ -1970,10 +4104,28 @@ def main(argv=None):
             usage = canonical.read_json(usage_path)
         renderer = render_full if full else render
         text = renderer(pack, canonical.sha256_file(pack_path), usage)
-        canonical.write_bytes_atomic(out_path, text.encode("utf-8"))
+        data = text.encode("utf-8")
+        page_path = page = None
+        if full:
+            # Imported here, never at the top: the report renderer the page
+            # module reads its shell from imports this module at its own top.
+            from council.report import evidence_page
+            page_path = evidence_page.page_path(out_path)
+            if (os.path.exists(page_path)
+                    and not evidence_page.is_own_page(page_path)):
+                print("brief: REFUSED - %s already exists and is not a page "
+                      "the brief command wrote. Writing the page would "
+                      "overwrite it; nothing was written." % page_path)
+                return 1
+            page = evidence_page.render_page(data.decode("utf-8"))
+        canonical.write_bytes_atomic(out_path, data)
         print("brief: %s written to %s (%d lines)"
               % ("full document" if full else "one page", out_path,
                  len(text.splitlines())))
+        if full:
+            canonical.write_bytes_atomic(page_path, page.encode("utf-8"))
+            print("  the page to read it on: %s - open it in a browser"
+                  % page_path)
         if usage is None:
             print("  the capture's cost sidecar is not at %s - the page "
                   "says so, and the host refuses a run without it"

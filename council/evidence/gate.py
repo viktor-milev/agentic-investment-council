@@ -13,11 +13,15 @@ CLI:
 Exit codes: 0 accepted, 3 refused, 1 crash.
 """
 
+import math
 import os
 import re
+import struct
 import sys
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, Inexact, InvalidOperation, localcontext
+from fractions import Fraction
 
 # Far above any honest financial figure's digits; the Inexact trap is
 # what enforces exactness, the precision only gives honest arithmetic
@@ -81,6 +85,19 @@ _WHY_IT_DECIDES_WORDS = 40
 # sentence; a label as long as the source it replaces buys nothing.
 _LABEL_WORDS = 8
 
+# SITTING-FIXES item 8 (architect ruling on bracket 8): a single-precision
+# number needs at most this many significant digits to be written back
+# exactly, so a figure longer than that which is exactly the full binary
+# expansion of a single-precision number is a broker's float noise.
+_SINGLE_PRECISION_DIGITS = 9
+
+# Owner ruling AC41(2): a calculated share or yield whose division does not
+# come out even may be recorded rounded ONCE, half-up, at the value's own
+# decimal places, carrying at least this many significant digits. Every
+# other derived figure stays exact.
+_ROUNDED_SIGNIFICANT_DIGITS = 4
+_PLAIN_DECIMAL = re.compile(r"-?[0-9]+\.[0-9]+")
+
 # Owner ruling AC15 (P1): a peer's comparability statement names, in at
 # most 40 words, the contract structure and duration or the revenue model
 # it shares; the caveat naming where it is NOT comparable is at most 25.
@@ -96,6 +113,24 @@ _NOT_COMPARABLE_ON_WORDS = 25
 # limits the schema cannot state.
 _ARCHETYPE_BECAUSE_WORDS = 40
 _CYCLE_DEPENDENCE_BECAUSE_WORDS = 25
+# Owner rulings AC49(1) and AC50 (unit GROWTH-ARCHETYPE): a single name
+# whose frame declares the growth archetype says which of the two kinds it
+# is and what its months of cash are counted from, and why it can fund
+# itself in at most twenty-five words; its two fields belong to it alone.
+_GROWER_ARCHETYPE = "reinvesting_grower"
+_FUNDING_BECAUSE_WORDS = 25
+_GROWER_FIELDS = ("grower_subtype", "growth_runway")
+# Owner rulings AC51-AC54 (unit RESOURCE-ARCHETYPE): a single name whose
+# frame declares the producer archetype says which of the three kinds it is
+# and points at the facts its reserves, output, prices, costs and hedges are
+# read from; its two fields belong to it alone. The integrated oil major's
+# block (owner ruling AC52(1)) belongs to the ordinary profit-maker alone -
+# the one archetype a reserve-reporting company may declare beside it.
+_PRODUCER_ARCHETYPE = "resource_producer"
+_PRODUCER_FIELDS = ("producer_subtype", "resource_base")
+_PRODUCER_HEDGE_FIELDS = ("hedge_facts", "hedge_none_by_design")
+_INTEGRATED_MAJOR_ARCHETYPE = "profitable_operator"
+_INTEGRATED_MAJOR_FIELDS = ("integrated_major",)
 _CYCLE_NAME_WORDS = 25
 _CYCLE_WHY_WORDS = 40
 
@@ -138,6 +173,13 @@ _REVISION_ORDINAL = re.compile(r"_r([2-9]|[1-9][0-9]+)$")
 # Owner ruling AC32: the owner's question on one line of its own. A masthead
 # safety bound, not a meaning - the ruling says one line and sets no count.
 _QUESTION_LINE_WORDS = 60
+# The AC37 amendment: the line is checked against his full question for
+# contradiction, not vocabulary - only its figures (a token with a digit),
+# its tickers (an all-capital alphabetic token of these letter counts, the
+# ruled ticker shape) and its decision words (the floors' families, as
+# data) are read; ordinary words are free.
+_TICKER_MIN_LETTERS = 2
+_TICKER_MAX_LETTERS = 6
 
 # The three headline figures whose fall obliges a reading (AC1). Each
 # is read against its own prior-year pair; a member of an expression
@@ -193,6 +235,18 @@ _GROUPED_THOUSANDS = re.compile(
 # a single underscore, so 'Q1 FY2026', 'Q1  FY-2026' and 'q1 fy2026' all
 # name the same quarter and bind to the same fact ids.
 _NOT_ALPHANUMERIC = re.compile(r"[^a-z0-9]+")
+
+# Owner ruling AC45(9), amending AC12(1): a guidance row for a period the
+# pack has not yet reported may leave what was delivered open. Which
+# period that is, the pack says itself - its latest periodic report, the
+# period its value leads with - read by the canonical slug above and
+# never by the clock (the READ-C bracket ruling 4). A period slug is one
+# year, with or without its fiscal prefix, and at most one quarter; a
+# year alone is the whole year, which ends with its last quarter.
+_LATEST_REPORT_ID = "latest_required_report_period"
+_SLUG_YEAR = re.compile(r"(?:fy)?([0-9]{4})\Z")
+_SLUG_QUARTER = re.compile(r"q([1-4])\Z")
+_LAST_QUARTER = 4
 
 # What a frame must say. Used in the sufficiency gate's refusal, so the
 # words that name a missing part are written once.
@@ -250,6 +304,72 @@ def period_slug(label):
     and its ids must end '_q1_fy2026', or the case file labels one
     quarter's figures with another quarter's name."""
     return _NOT_ALPHANUMERIC.sub("_", str(label).casefold()).strip("_")
+
+
+def period_order(label):
+    """Where a period label falls in time, as (year, quarter), read from
+    its canonical slug (owner ruling AC12.1): a quarter of a year, or the
+    whole year as its last quarter. None where the slug is not exactly one
+    year and at most one quarter - a half, a date, or words the slug
+    cannot place - so nothing is read into it."""
+    tokens = []
+    for token in period_slug(label if label is not None else "").split("_"):
+        if tokens and tokens[-1] == "fy" and token.isdigit():
+            tokens[-1] += token
+        else:
+            tokens.append(token)
+    years = [found.group(1) for found in map(_SLUG_YEAR.match, tokens)
+             if found]
+    quarters = [found.group(1) for found in map(_SLUG_QUARTER.match, tokens)
+                if found]
+    if len(years) != 1 or len(quarters) > 1 \
+            or len(years) + len(quarters) != len(tokens):
+        return None
+    return (int(years[0]), int(quarters[0]) if quarters else _LAST_QUARTER)
+
+
+def latest_reported_period(capture, suffix=""):
+    """The latest period the pack reports, as period_order places it: the
+    period its latest periodic report's value leads with, up to the first
+    comma (the member's own fact inside an expression). None where the
+    pack carries no such fact or its value leads with no period."""
+    for fact in capture.get("tier1") or []:
+        if isinstance(fact, dict) and fact.get("id") == _LATEST_REPORT_ID \
+                + suffix:
+            return period_order(str(fact.get("value")).split(",", 1)[0])
+    return None
+
+
+def not_yet_reported(capture, label, suffix=""):
+    """Whether a guidance row's period falls after the latest period the
+    pack reports (owner ruling AC45(9)) - the one kind of row that may
+    wait for its outcome. False wherever either period cannot be placed:
+    AC12(1) then binds the row."""
+    latest = latest_reported_period(capture, suffix)
+    period = period_order(label)
+    return latest is not None and period is not None and period > latest
+
+
+def open_guidance_ids(capture):
+    """The guided ids of every row that leaves what was delivered open for
+    a period the pack has not yet reported (owner ruling AC45(9)). The
+    sufficiency gate's guided/delivered floor asks its pair only of a
+    period that has since been reported, so these stand outside it."""
+    subject = capture.get("subject") or {}
+    found = set()
+    for ticker, frame in sorted((capture.get("business_frame")
+                                 or {}).items()):
+        management = (frame or {}).get("management") \
+            if isinstance(frame, dict) else None
+        rows = (management or {}).get("guidance_vs_delivery") \
+            if isinstance(management, dict) else None
+        for row in rows or []:
+            if (isinstance(row, dict) and row.get("delivered") is None
+                    and not_yet_reported(capture, row.get("period"),
+                                         frame_suffix(subject, ticker))):
+                found.update(fact_id for fact_id in row.get("guided") or []
+                             if isinstance(fact_id, str))
+    return found
 
 
 def _moment(text):
@@ -566,6 +686,16 @@ def frame_suffix(subject, ticker):
     if ticker in subjects.expression_tickers(subject):
         return "__%s" % subjects.slug(ticker)
     return ""
+
+
+def delivered_partner(guided_id):
+    """The delivered figure that scores one guided figure, derived exactly
+    as the ruled guided_/delivered_ floor derives it: the same metric and
+    period under the delivered prefix. None for an id outside the guided
+    family (the gate refuses such an id in a guidance row)."""
+    if not str(guided_id).startswith(_GUIDED_PREFIX):
+        return None
+    return _DELIVERED_PREFIX + guided_id[len(_GUIDED_PREFIX):]
 
 
 def _words(text):
@@ -1047,6 +1177,51 @@ def _check_business_frame(capture):
                         "and on any other business the seats would read "
                         "them as ground the rating does not stand on"
                         % (where, ", ".join(stray), _FI_ARCHETYPE))
+            # The growth archetype's own declarations (owner rulings AC49(1)
+            # and AC50), on the financial institution's pattern.
+            if frame.get("archetype") == _GROWER_ARCHETYPE:
+                _check_grower_frame(frame, where, reasons, missing_fact,
+                                    figures_bind)
+            else:
+                stray = [field for field in _GROWER_FIELDS if field in frame]
+                if stray:
+                    reasons.append(
+                        "%s carries %s and does not declare the archetype "
+                        "'%s' - these fields describe a growth company's "
+                        "kind and the cash it has left, and on any other "
+                        "business the seats would read them as ground the "
+                        "rating does not stand on"
+                        % (where, ", ".join(stray), _GROWER_ARCHETYPE))
+            # The producer's own declarations (owner rulings AC51-AC54), on
+            # the same pattern.
+            if frame.get("archetype") == _PRODUCER_ARCHETYPE:
+                _check_producer_frame(frame, where, reasons, missing_fact)
+            else:
+                stray = [field for field in _PRODUCER_FIELDS
+                         if field in frame]
+                if stray:
+                    reasons.append(
+                        "%s carries %s and does not declare the archetype "
+                        "'%s' - these fields describe a producer's kind and "
+                        "the reserves, output and prices its rating rests "
+                        "on, and on any other business the seats would read "
+                        "them as ground the rating does not stand on"
+                        % (where, ", ".join(stray), _PRODUCER_ARCHETYPE))
+            # The integrated oil major's three arms (owner ruling AC52(1)):
+            # the ordinary profit-maker's block, never another archetype's.
+            if frame.get("archetype") == _INTEGRATED_MAJOR_ARCHETYPE:
+                _check_integrated_major(frame, missing_fact)
+            else:
+                stray = [field for field in _INTEGRATED_MAJOR_FIELDS
+                         if field in frame]
+                if stray:
+                    reasons.append(
+                        "%s carries %s and does not declare the archetype "
+                        "'%s' - owner ruling AC52(1) rates an integrated oil "
+                        "major as an ordinary profit-maker, so its three arms "
+                        "are declared only beside that archetype"
+                        % (where, ", ".join(stray),
+                           _INTEGRATED_MAJOR_ARCHETYPE))
 
         # ---- how it earns ----
         for line in frame["how_it_earns"]:
@@ -1400,11 +1575,12 @@ def _check_business_frame(capture):
             if row_key in seen_quarters:
                 reasons.append(
                     "%s carries the same quarter of guidance twice - %s "
-                    "beside '%s' - so one quarter's record of whether "
+                    "beside %s - so one quarter's record of whether "
                     "management hit its own number would be read as two"
                     % (where, ", ".join("'%s'" % item
                                         for item in quarter["guided"]),
-                       quarter["delivered"]))
+                       "nothing delivered yet" if quarter["delivered"] is None
+                       else "'%s'" % quarter["delivered"]))
             seen_quarters.add(row_key)
         def without_suffix(fact_id):
             return (fact_id[:-len(suffix)]
@@ -1414,8 +1590,27 @@ def _check_business_frame(capture):
             for fact_id in quarter["guided"]:
                 missing_fact("the guided figure for %s" % quarter["period"],
                              fact_id)
-            missing_fact("the delivered figure for %s" % quarter["period"],
-                         quarter["delivered"])
+            # Owner ruling AC45(9), amending AC12(1): a row may leave what
+            # was delivered open only for a period after the latest one
+            # the pack reports - this year so far. Every other row names
+            # its outcome, and every rule below binds an open row's first
+            # guides and revisions exactly as a reported row's.
+            left_open = quarter["delivered"] is None
+            waiting = left_open and not_yet_reported(
+                capture, quarter["period"], suffix)
+            if left_open and not waiting:
+                reasons.append(
+                    "%s leaves what was delivered for '%s' open, and the "
+                    "pack does not show that period as still unreported - "
+                    "only a period after the one its latest periodic "
+                    "report ('%s') leads with may wait for its outcome "
+                    "(owner ruling AC45(9)); a reported period's promise "
+                    "stands beside what was delivered"
+                    % (where, quarter["period"],
+                       _LATEST_REPORT_ID + suffix))
+            if not left_open:
+                missing_fact("the delivered figure for %s"
+                             % quarter["period"], quarter["delivered"])
             # Existence was the only test, so one quarter's guidance
             # could stand beside ANOTHER quarter's delivery - or two
             # figures that are neither - and the case file published the
@@ -1424,7 +1619,7 @@ def _check_business_frame(capture):
             # ruled guided_/delivered_ floor derives it, so the frame
             # and the floor read one rule.
             delivered_id = quarter["delivered"]
-            partners = [_DELIVERED_PREFIX + fact_id[len(_GUIDED_PREFIX):]
+            partners = [delivered_partner(fact_id)
                         for fact_id in quarter["guided"]
                         if fact_id.startswith(_GUIDED_PREFIX)]
             for fact_id in quarter["guided"]:
@@ -1436,7 +1631,9 @@ def _check_business_frame(capture):
                         "and the seats would read it as a promise"
                         % (where, fact_id, quarter["period"],
                            _GUIDED_PREFIX))
-            if not delivered_id.startswith(_DELIVERED_PREFIX):
+            if left_open:
+                pass  # nothing named, so nothing to bind to a family
+            elif not delivered_id.startswith(_DELIVERED_PREFIX):
                 reasons.append(
                     "%s offers '%s' as what management delivered for %s, "
                     "and a delivered figure is named "
@@ -1470,7 +1667,8 @@ def _check_business_frame(capture):
                     % (where, quarter["period"]))
             else:
                 tail = "_" + slug
-                for fact_id in list(quarter["guided"]) + [delivered_id]:
+                for fact_id in list(quarter["guided"]) + (
+                        [] if left_open else [delivered_id]):
                     if suffix and not fact_id.endswith(suffix):
                         continue
                     if not without_suffix(fact_id).endswith(tail):
@@ -1498,7 +1696,8 @@ def _check_business_frame(capture):
                     if other_index != row_index
                     for fact_id in list(other["guided"]) + [
                         other["delivered"]]
-                    if without_suffix(fact_id).endswith(tail))
+                    if fact_id is not None
+                    and without_suffix(fact_id).endswith(tail))
                 if shared:
                     reasons.append(
                         "%s heads a quarter of guidance '%s', and %s "
@@ -1525,7 +1724,7 @@ def _check_business_frame(capture):
             for fact_id in quarter["guided"]:
                 if not fact_id.startswith(_GUIDED_PREFIX):
                     continue
-                partner = _DELIVERED_PREFIX + fact_id[len(_GUIDED_PREFIX):]
+                partner = delivered_partner(fact_id)
                 # The partner is DISCOVERED, so it never passed the
                 # member bound the declared delivered id passes: it
                 # could be struck entirely from the neighbour's figures
@@ -1536,7 +1735,15 @@ def _check_business_frame(capture):
                     not_this_member(
                         "the delivered figure that scores '%s'" % fact_id,
                         partner)
-                if partner not in tier1_ids:
+                if waiting and partner in tier1_ids:
+                    reasons.append(
+                        "%s leaves what was delivered for '%s' open while "
+                        "the pack carries '%s', the outcome of '%s' - an "
+                        "outcome in the record is named beside its promise, "
+                        "or the seats read a promise as still pending that "
+                        "has already been scored"
+                        % (where, quarter["period"], partner, fact_id))
+                if partner not in tier1_ids and not waiting:
                     reasons.append(
                         "%s carries '%s' as what management guided for "
                         "%s, and the pack has no '%s' to score it "
@@ -1884,6 +2091,130 @@ def _check_fi_frame(frame, where, reasons, missing_fact, figures_bind):
                 "revised" % (where, quarter["period"]))
 
 
+def _check_grower_frame(frame, where, reasons, missing_fact, figures_bind):
+    """A growth company's frame declarations (owner rulings AC49(1) and
+    AC50, unit GROWTH-ARCHETYPE), for a single name whose frame declares
+    the archetype. Shape only, like the rest of this gate: it never asks
+    whether the company IS short of four profitable quarters or how many
+    months its cash lasts - that is the sufficiency gate's, which reads
+    the values against the floors - only that the frame names its kind,
+    points at the facts its runway is counted from, words its funding
+    reason within the limit and writes only figures those facts carry.
+    `missing_fact` and `figures_bind` are the frame check's own."""
+    for field, what in (
+            ("grower_subtype", "which of the two kinds of growth company "
+                               "it is"),
+            ("growth_runway", "what its months of cash left are counted "
+                              "from")):
+        if not frame.get(field):
+            reasons.append(
+                "%s declares the archetype '%s' and carries no %s - owner "
+                "rulings AC49(1) and AC50: a growth company states %s "
+                "before the seats read its rating"
+                % (where, _GROWER_ARCHETYPE, field, what))
+    runway = frame.get("growth_runway")
+    if runway:
+        counted = _words(runway["funding_because"])
+        if counted > _FUNDING_BECAUSE_WORDS:
+            reasons.append(
+                "%s writes %d words for growth_runway.funding_because; the "
+                "ruled limit is %d"
+                % (where, counted, _FUNDING_BECAUSE_WORDS))
+        cited = (list(runway["cash_facts"])
+                 + [runway["operating_cash_flow_fact"],
+                    runway["capital_expenditure_fact"]]
+                 + list(runway.get("undrawn_facility_facts") or []))
+        for fact_id in cited:
+            missing_fact("a fact behind the growth runway", fact_id)
+        figures_bind("the growth_runway prose, whose figures bind to the "
+                     "facts the block itself cites",
+                     runway["funding_because_figures"],
+                     runway["funding_because"], cited)
+    for line in frame["how_it_earns"]:
+        if not line.get("nature"):
+            reasons.append(
+                "%s carries the revenue line '%s' with no nature - a growth "
+                "company is read by what kind of sales each line is "
+                "(subscription, usage, transaction or product), so every "
+                "line says which it is" % (where, line["line"]))
+
+
+def _check_producer_frame(frame, where, reasons, missing_fact):
+    """A producer's frame declarations (owner rulings AC51-AC54, unit
+    RESOURCE-ARCHETYPE), for a single name whose frame declares the
+    archetype. Shape only, like the rest of this gate: it never asks
+    whether the product is on the floors' list, how old the reserves are
+    or what the prices say - that is the sufficiency gate's, which reads
+    the values against the floors - only that the frame names its kind,
+    points at facts the record carries, states its hedges exactly once,
+    says what kind of sales each revenue line is, and names its cycle.
+    `missing_fact` is the frame check's own."""
+    for field, what in (
+            ("producer_subtype", "which of the three kinds of producer it "
+                                 "is"),
+            ("resource_base", "what its reserves, output, prices, costs "
+                              "and hedges are read from")):
+        if not frame.get(field):
+            reasons.append(
+                "%s declares the archetype '%s' and carries no %s - owner "
+                "rulings AC51-AC54: a producer states %s before the seats "
+                "read its rating"
+                % (where, _PRODUCER_ARCHETYPE, field, what))
+    base = frame.get("resource_base")
+    if base:
+        stated = [field for field in _PRODUCER_HEDGE_FIELDS if field in base]
+        if len(stated) != 1:
+            reasons.append(
+                "%s carries %s in its resource_base - owner ruling "
+                "AC53(R11): a producer's hedges are shown, never netted, so "
+                "the block names the facts carrying them or says the "
+                "company does not hedge (hedge_none_by_design), exactly one "
+                "of the two"
+                % (where, "both hedge_facts and hedge_none_by_design"
+                   if stated else
+                   "neither hedge_facts nor hedge_none_by_design"))
+        for field in ("reserve_report_date_fact", "reference_price_fact"):
+            missing_fact("the resource_base's %s" % field, base[field])
+        for field in ("reserve_facts", "reserve_price_facts",
+                      "production_facts", "realized_price_facts",
+                      "unit_cost_facts", "hedge_facts"):
+            for fact_id in base.get(field) or []:
+                missing_fact("the resource_base's %s" % field, fact_id)
+    for line in frame["how_it_earns"]:
+        if not line.get("nature"):
+            reasons.append(
+                "%s carries the revenue line '%s' with no nature - a "
+                "producer is read by what kind of sales each line is "
+                "(commodity sales, royalty or stream), so every line says "
+                "which it is" % (where, line["line"]))
+    if frame.get("cycle_dependence") and \
+            frame["cycle_dependence"] != "identified":
+        reasons.append(
+            "%s declares the archetype '%s' with cycle_dependence '%s' - a "
+            "producer's thesis always rests on its commodity's price cycle "
+            "(owner ruling AC15, P4, read for the producer by architect "
+            "ruling B17), so the frame names it as identified and carries "
+            "the cycle" % (where, _PRODUCER_ARCHETYPE,
+                           frame["cycle_dependence"]))
+
+
+def _check_integrated_major(frame, missing_fact):
+    """The integrated oil major's three arms (owner ruling AC52(1) on
+    AC51(R2)), where a profit-maker's frame carries the block: every fact
+    it names is in the record. Whether each arm is significant is the
+    sufficiency gate's, which reads the shares against the floors."""
+    block = frame.get("integrated_major")
+    if not block:
+        return
+    for field in ("upstream_share_fact", "downstream_share_fact",
+                  "midstream_share_fact"):
+        if block.get(field):
+            missing_fact("the integrated_major's %s" % field, block[field])
+    for fact_id in block["midstream_evidence_facts"]:
+        missing_fact("the integrated_major's midstream_evidence_facts",
+                     fact_id)
+
+
 def _check_revisions(quarter, where, reasons, missing_fact, without_suffix,
                      suffix, captured_on):
     """One guidance row's revisions, wherever the list is carried (owner
@@ -1999,11 +2330,196 @@ def _revision_unbound(revision, without_suffix, metrics, slug,
                "the future" % captured_on.isoformat())
 
 
-def _check_question_line(capture):
+_FIGURE_CLOSING_MARKS = ".,;:!?"
+_FIGURE_BRACKETS_AND_QUOTES = "()[]\"'\u201c\u201d\u2018\u2019"
+_SIGN_MARKS = "<>+-~=\u2248\u2264\u2265"
+
+
+def _question_tokens(text):
+    """Whitespace-split tokens of two kinds (architect ruling closing
+    P-U4e-3). A token carrying a digit is a FIGURE, kept whole with its
+    signs - only closing sentence punctuation comes off its end and
+    brackets and quotes off either end ("$50.5", "1,000", "<$50", "+5%",
+    "~$50", "200dma" stay whole and distinct). Any other token is a WORD,
+    kept only from its first to its last letter or digit ("+buy", "$buy",
+    "(JPM)" are "buy", "buy", "JPM"; "today's", "sell-off" stay whole).
+    Empty tokens dropped. A token made only of signs joins the token after
+    it first, so "< $50" is the figure "<$50" (architect ruling closing
+    P-U4e-4); one with nothing after it is dropped."""
+    tokens, signs = [], ""
+    for raw in str(text or "").split():
+        if all(char in _SIGN_MARKS or unicodedata.category(char) == "Sc"
+               for char in raw):
+            signs += raw
+            continue
+        raw, signs = signs + raw, ""
+        if any(char.isdigit() for char in raw):
+            ends = _FIGURE_CLOSING_MARKS + _FIGURE_BRACKETS_AND_QUOTES
+            token = raw.rstrip(ends).lstrip(_FIGURE_BRACKETS_AND_QUOTES)
+        else:
+            start, end = 0, len(raw)
+            while end > start and not raw[end - 1].isalnum():
+                end -= 1
+            while start < end and not raw[start].isalnum():
+                start += 1
+            token = raw[start:end]
+        if token:
+            tokens.append(token)
+    return tokens
+
+
+def _decision_family(token, families):
+    """The head of the decision-word family the token is an inflection of,
+    or None (the AC37 amendment, the families as data in the floors). The
+    token is compared casefolded, a typographic apostrophe read as the
+    plain one. A word ending in "n't" belongs to the negation family
+    whatever precedes it - don't, ain't, any spelling anyone writes - by
+    rule, not by list (architect ruling of round nine of U4(f)): it
+    returns the head the floors carry for the word "not". A word ending
+    in "nt" with no apostrophe ("want") is not read so. Every other
+    family is data."""
+    word = token.casefold().replace("\u2019", "'")
+    if word.endswith("n't"):
+        return families.get("not")
+    return families.get(word)
+
+
+_WORD_PART = re.compile("[^\\W_]+(?:['\u2019][^\\W_]+)*")
+
+
+def _word_parts(token):
+    """The digit-free words inside one token, split at any mark but an
+    apostrophe (audit round one of U4(f)): "buy/sell" is "buy" and "sell",
+    "EXMP/MS" is "EXMP" and "MS", "don't" stays whole. A figure is still
+    matched whole; these are the words beside it."""
+    return [part for part in _WORD_PART.findall(token)
+            if not any(char.isdigit() for char in part)]
+
+
+_PERCENT_MARKS = "%\u2030"
+
+
+def _touches_the_name(char):
+    """True where a character beside the subject's name would join it to
+    a word or a figure (architect ruling of round seven of U4(f)): a
+    letter, a digit, a currency sign, a sign in _SIGN_MARKS or a percent
+    sign. Whitespace, the edge of the text and every other mark do not."""
+    return (char.isalnum() or char in _SIGN_MARKS or char in _PERCENT_MARKS
+            or unicodedata.category(char) == "Sc")
+
+
+def _without_the_name(text, name):
+    """The text as typed with every run of the subject's NAME, and its
+    possessive, replaced by one space (architect ruling of round seven of
+    U4(f), replacing the lists of marks allowed around the name). Each
+    word of the name, matched literally and in any case, stands whole and
+    in order with nothing but whitespace between them. The run may not
+    touch a letter, a digit or a figure sign on either side (see
+    _touches_the_name): the character before its first word, and the one
+    after its last word or after an optional possessive apostrophe-s
+    (plain or typographic), is absent, whitespace or any other mark. Only
+    the name and its possessive come out; every mark beside it stays in
+    the text for the ordinary tokeniser, so a digit after such a mark is
+    a figure of its own, checked whole."""
+    words = str(name or "").split()
+    if not words:
+        return text
+    pattern = re.compile("(%s)(?:['\u2019]s)?"
+                         % "\\s+".join(re.escape(word) for word in words),
+                         re.IGNORECASE)
+    pieces, kept, at = [], 0, 0
+    while True:
+        found = pattern.search(text, at)
+        if found is None:
+            break
+        at = found.start() + 1
+        if found.start() and _touches_the_name(text[found.start() - 1]):
+            continue
+        for end in dict.fromkeys((found.end(), found.end(1))):
+            if end == len(text) or not _touches_the_name(text[end]):
+                pieces.extend((text[kept:found.start()], " "))
+                kept = at = end
+                break
+    pieces.append(text[kept:])
+    return "".join(pieces)
+
+
+def _tokens_without_the_subject(text, subject):
+    """The tokens of the text with the subject taken out, never from
+    inside a token (architect rulings closing P-U4f-4 and P-U4f-5, and of
+    round seven of U4(f)). The NAME is taken out of the text as typed,
+    before it is read as tokens - see _without_the_name. The TICKER then goes as a
+    whole token equal to it exactly as the subject writes it, case and
+    all. Every other token stays whole, so a figure joined to the ticker
+    is still that figure."""
+    tokens = _question_tokens(_without_the_name(str(text or ""),
+                                                subject.get("name")))
+    ticker = str(subject.get("ticker") or "").strip()
+    return [token for token in tokens if not (ticker and token == ticker)]
+
+
+def _question_line_off_the_question(capture, floors):
+    """The first token of the one-line question that says what the owner's
+    full question never does, as written in the line; None where there is
+    none (the AC37 amendment). The subject is taken out of both texts
+    first: the name, with an optional possessive, from the text as typed -
+    its words whole and in order, in any case, with only whitespace
+    between them, touching no letter, digit or figure sign on either side;
+    every other mark beside it stays in the text and is read as usual;
+    then, once read as tokens, the ticker as a whole token exactly as
+    written, case and all. So the name stands in the line and allows
+    nothing else, and nothing is ever cut from inside a word or a figure.
+    A FIGURE must be a whole
+    token of his question; a TICKER one of its tokens; a DECISION WORD
+    must belong to a family his question uses in some inflection. Every
+    other token is an ordinary word and is not checked. Words joined by a
+    mark are read apart for the decision words and tickers, and a part
+    written exactly as the subject's ticker is passed over in both
+    texts."""
+    subject = capture.get("subject") or {}
+    ticker = str(subject.get("ticker") or "").strip()
+    asked = set()
+    for token in _tokens_without_the_subject(
+            capture.get("question_verbatim") or "", subject):
+        asked.add(token.casefold())
+        asked.update(part.casefold() for part in _word_parts(token)
+                     if part != ticker)
+    families = {}
+    for head, inflections in floors["question_line_decision_words"].items():
+        for word in inflections:
+            families[word.casefold()] = head
+    used = set(_decision_family(word, families) for word in asked)
+    for token in _tokens_without_the_subject(capture["question_line"],
+                                             subject):
+        if (any(char.isdigit() for char in token)
+                and token.casefold() not in asked):
+            return token
+        for part in _word_parts(token):
+            if part == ticker:
+                continue
+            if _decision_family(part, families) is not None:
+                if _decision_family(part, families) not in used:
+                    return part
+            elif (part.isalpha() and part.isupper()
+                  and _TICKER_MIN_LETTERS <= len(part) <= _TICKER_MAX_LETTERS
+                  and part.casefold() not in asked):
+                return part
+    return None
+
+
+def _check_question_line(capture, floors):
     """Owner ruling AC32: the owner's question to the council stands on one
     line of its own - present, not blank, no line break, within the
-    masthead's safety bound. The gate never asks whether the line IS his
-    question as he asked it; the evidence auditor and the owner see it."""
+    masthead's safety bound. The AC37 amendment: every figure, ticker and
+    decision word of the line is in his full question - so it cannot add
+    a figure, a ticker or an action he never stated; a paraphrase in other
+    ordinary words passes. Before that check the subject's name is taken
+    out of both texts as typed with an optional possessive (its words
+    whole, in order, any case, only whitespace between them, touching no
+    letter, digit or figure sign on either side; every other mark beside
+    it stays in the text) and its ticker
+    as a whole token exactly as written - never cut from inside a word or
+    a figure."""
     line = capture.get("question_line")
     if line is None:
         return ["the capture carries no question_line - owner ruling AC32: "
@@ -2025,6 +2541,16 @@ def _check_question_line(capture):
             "masthead's bound is %d - the line is the owner's question as "
             "he asked it, uncut, and one that long is not one line"
             % (counted, _QUESTION_LINE_WORDS))
+    offending = _question_line_off_the_question(capture, floors)
+    if offending is not None:
+        reasons.append(
+            "the capture's question_line says '%s', which the owner's full "
+            "question never states - owner ruling AC37 as amended: the line "
+            "may paraphrase him, but every figure, ticker and decision word "
+            "in it (%s, in any form) must be his, so it cannot add a figure, "
+            "a ticker or an action he did not ask"
+            % (offending,
+               ", ".join(floors["question_line_decision_words"])))
     return reasons
 
 
@@ -2573,6 +3099,30 @@ def _check_unit_tokens(capture):
     return reasons
 
 
+def _check_unit_list(capture, floors):
+    """Owner ruling AC37(1): every tier-1 fact's unit and every cycle
+    series' unit is on the closed list the floors carry (`allowed_units`),
+    matched exactly. The short-token bound above stays beneath the list;
+    a unit is quoted only to that bound's length."""
+    allowed = set(floors["allowed_units"])
+    named = [("fact '%s'" % fact.get("id"), fact.get("unit"))
+             for fact in capture["tier1"]]
+    named.extend(("the cycle series '%s'" % entry.get("id"), entry.get("unit"))
+                 for entry in (capture.get("cycle") or {}).get("series")
+                 or [])
+    reasons = []
+    for where, unit in named:
+        unit = str(unit or "")
+        if unit not in allowed:
+            reasons.append(
+                "%s has the unit '%s', which is not on the floors' list of "
+                "allowed units (allowed_units, owner ruling AC37) - a unit "
+                "is a plain measure named on that list, and a new one is "
+                "added to the list before a capture may use it"
+                % (where, unit[:_UNIT_MAX_CHARS]))
+    return reasons
+
+
 def _check_labels(capture):
     """The optional plain-English fact label (owner ruling AC15, P5).
 
@@ -2611,6 +3161,100 @@ def _check_labels(capture):
                 "fact '%s' has a %d-word label; the ruled limit is %d - a "
                 "label is a short name, not a sentence"
                 % (fact_id, counted, _LABEL_WORDS))
+    return reasons
+
+
+def _single_precision(number):
+    return struct.unpack("<f", struct.pack("<f", number))[0]
+
+
+def single_precision_short_figure(value):
+    """The short figure a broker's single-precision number stands for, or
+    None when `value` is not one. A value is one when it is written as a
+    plain decimal with more significant digits than a single-precision
+    number ever needs, and those digits are exactly the full expansion of
+    a single-precision number. The short figure is the shortest decimal
+    that reads back as the same single-precision number. A double that is
+    not a single-precision number (a computed volatility) is never one,
+    and trailing zeros are not counted as digits."""
+    text = str(value)
+    if not _PLAIN_DECIMAL.fullmatch(text):
+        return None
+    exact = Decimal(text)
+    if len(exact.normalize().as_tuple().digits) <= _SINGLE_PRECISION_DIGITS:
+        return None
+    number = float(text)
+    if _single_precision(number) != number or Decimal(number) != exact:
+        return None
+    for digits in range(1, _SINGLE_PRECISION_DIGITS + 1):
+        short = Decimal("%.*g" % (digits, number))
+        if _single_precision(float(short)) == number:
+            return format(short, "f")
+    return None
+
+
+def _single_precision_reason(where, value):
+    short = single_precision_short_figure(value)
+    if short is None:
+        return None
+    return ("%s has the value %s, which is a broker's single-precision "
+            "number written out in full, not a figure anyone observed - "
+            "write %s (the shortest figure that reads back as the same "
+            "number) and quote the broker's digits in the source"
+            % (where, value, short))
+
+
+def _check_single_precision(capture):
+    """A figure is the exact string observed, and the gate reads it without
+    rewriting it. A broker that hands back a single-precision number
+    written out in full (the JPM sitting's low of the year) has not observed
+    those extra digits: they are the machine's binary expansion. Such a
+    figure refuses, naming the short figure; the broker's own digits
+    belong in the source.
+
+    The rule reads every OBSERVED figure and nothing else (architect
+    ruling closing audit findings r1-2 and r2-1): a plain fact's value,
+    and every operand of a derived fact that carries no fact id - an
+    inline figure, observed where it is written. A derived fact's own
+    value is nobody's observation: its arithmetic checks it, and an exact
+    quotient may spell such a number digit for digit. An operand that
+    names a fact is that fact's copy, read where the fact itself is."""
+    reasons = []
+    for fact in capture["tier1"]:
+        derived = fact["derived"]
+        if not derived:
+            reason = _single_precision_reason(
+                "fact '%s'" % fact["id"], fact["value"])
+            if reason is not None:
+                reasons.append(reason)
+            continue
+        for operand in derived.get("operands") or []:
+            if operand.get("fact_id") is not None:
+                continue
+            reason = _single_precision_reason(
+                "the inline operand '%s' of derived fact '%s'"
+                % (operand.get("label"), fact["id"]), operand.get("value"))
+            if reason is not None:
+                reasons.append(reason)
+    return reasons
+
+
+def _check_freshness_ceiling(capture, floors):
+    """No fact may claim to stay current beyond the floors' ceiling, the
+    five-year currency of a dated record of a finished period (owner
+    ruling AC41(3), unit SITTING-FIXES item 6). The number is data."""
+    ceiling = floors["freshness_ceiling"]["closed_period_record_rule_days"]
+    reasons = []
+    for fact in capture["tier1"]:
+        if fact["freshness_rule_days"] > ceiling:
+            reasons.append(
+                "fact '%s' is ruled current for %d days, and nothing in the "
+                "evidence stays current beyond %d (five years, owner ruling "
+                "AC41(3)) - a dated record of a finished period takes %d, "
+                "and a figure that moves takes a rule matching how often "
+                "it is republished"
+                % (fact["id"], fact["freshness_rule_days"], ceiling,
+                   ceiling))
     return reasons
 
 
@@ -2757,7 +3401,139 @@ def _compute(operation, values):
         return result
 
 
-def _check_arithmetic(capture):
+def decimal_places(text):
+    """The decimal places a figure is written to."""
+    exponent = Decimal(text).as_tuple().exponent
+    return -exponent if exponent < 0 else 0
+
+
+def significant_digits(text):
+    """The significant digits a figure is written to, trailing zeros
+    included: they are written, so they are claimed."""
+    number = Decimal(text)
+    return 0 if number == 0 else len(number.as_tuple().digits)
+
+
+def rounded_quotient(values, places):
+    """The exact quotient of two figures rounded ONCE, half-up (a tie
+    away from zero), at `places` decimal places, as a plain string (owner
+    ruling AC41(2)). The one rule the gate checks a rounded division by
+    and the correction loop re-strikes one with."""
+    exact = Fraction(values[0]) / Fraction(values[1])
+    whole = math.floor(abs(exact) * 10 ** places + Fraction(1, 2))
+    if exact < 0:
+        whole = -whole
+    with localcontext() as context:
+        context.prec = _EXACT_PRECISION
+        return format(Decimal(whole).scaleb(-places), "f")
+
+
+def rounded_division_places(derived, value):
+    """The decimal places a divide declares it was rounded at, when
+    `value` is not its exact quotient; None for an undeclared rounding,
+    an exact division, any other operation, and figures that cannot be
+    read. The freeze's note says a figure is rounded only when this
+    names places - an accepted, declared rounding."""
+    if not derived or derived.get("operation") != "divide":
+        return None
+    places = derived.get("rounded_places")
+    if places is None:
+        return None
+    operands = derived.get("operands") or []
+    try:
+        if len(operands) != 2:
+            return None
+        exact = (Fraction(Decimal(operands[0]["value"]))
+                 / Fraction(Decimal(operands[1]["value"])))
+        if exact == Fraction(Decimal(value)):
+            return None
+        return places
+    except (ArithmeticError, TypeError, ValueError, KeyError):
+        return None
+
+
+def rounded_quotient_family(fact_id, floors):
+    """Whether a fact's id is in a family the floors name as one whose
+    division may be recorded rounded - a share or a yield (owner ruling
+    AC41(2); architect ruling on audit finding r1-1)."""
+    families = floors["rounded_quotient_families"]
+    return (any(fact_id.startswith(prefix)
+                for prefix in families["prefixes"])
+            or any(part in fact_id for part in families["contains"]))
+
+
+def _declared_places_reason(fact, values, places):
+    """The declared rounded_places of a share or yield must equal the
+    places its value is written to, on every path - a quotient that comes
+    out even included (architect ruling closing audit finding r2-2), so
+    a declaration never contradicts its figure. None when they agree, or
+    when the division cannot be computed (refused where it is)."""
+    written = decimal_places(fact["value"])
+    if written == places:
+        return None
+    try:
+        expected = rounded_quotient(values, places)
+    except ArithmeticError:
+        return None
+    equation = " / ".join(operand["value"]
+                          for operand in fact["derived"]["operands"])
+    return ("derived fact '%s' declares rounded_places %d, but its value "
+            "%s is written to %d decimal place%s - %s rounds half-up at "
+            "%d places to %s"
+            % (fact["id"], places, fact["value"], written,
+               "" if written == 1 else "s", equation, places, expected))
+
+
+def _rounded_division_reasons(fact, values, places):
+    """A share or yield that does not come out even, checked against its
+    declared rounding (its places already checked): its value is the
+    quotient rounded half-up there, with at least the ruled significant
+    digits. Each refusal names the figure the gate expects."""
+    equation = " / ".join(operand["value"]
+                          for operand in fact["derived"]["operands"])
+    expected = rounded_quotient(values, places)
+    if Decimal(expected) != Decimal(fact["value"]):
+        return ["derived fact '%s' is a division that does not come out "
+                "even: %s rounds half-up at the value's own %d decimal "
+                "places to %s, but the fact's value says %s"
+                % (fact["id"], equation, places, expected, fact["value"])]
+    if significant_digits(fact["value"]) >= _ROUNDED_SIGNIFICANT_DIGITS:
+        return []
+    wider = places
+    while (significant_digits(expected) < _ROUNDED_SIGNIFICANT_DIGITS
+           and wider < _EXACT_PRECISION):
+        wider += 1
+        expected = rounded_quotient(values, wider)
+    return ["derived fact '%s' is a division that does not come out even, "
+            "recorded rounded to %d significant digits; a rounded share or "
+            "yield carries at least %d - write %s with rounded_places %d "
+            "(%s rounded half-up)"
+            % (fact["id"], significant_digits(fact["value"]),
+               _ROUNDED_SIGNIFICANT_DIGITS, expected, wider, equation)]
+
+
+def _inexact_division_reason(fact, operation, operands, family,
+                             declared):
+    """Why a quotient that does not come out even is refused: a share or
+    yield that does not declare its rounding is told how to, and any other
+    quotient stays exact (AB10), named by its own arithmetic."""
+    equation = _OPERATOR_TEXT[operation].join(
+        operand["value"] for operand in operands)
+    if operation == "divide" and family and declared is None:
+        return ("derived fact '%s' is a division that does not come out "
+                "even (%s); a share or yield may be recorded rounded only "
+                "where its arithmetic declares it - add rounded_places %d "
+                "to its derived block and the gate checks the rounding "
+                "(owner ruling AC41(2))"
+                % (fact["id"], equation, decimal_places(fact["value"])))
+    return ("the declared arithmetic of derived fact '%s' has no exact "
+            "decimal result (%s does not come out even) - it may not be "
+            "frozen as an exact figure, and only a share or a yield the "
+            "floors name (rounded_quotient_families) may be recorded "
+            "rounded" % (fact["id"], equation))
+
+
+def _check_arithmetic(capture, floors):
     reasons = []
     for fact in capture["tier1"]:
         derived = fact["derived"]
@@ -2765,6 +3541,18 @@ def _check_arithmetic(capture):
             continue
         operation = derived["operation"]
         operands = derived["operands"]
+        declared_places = derived.get("rounded_places")
+        family = rounded_quotient_family(fact["id"], floors)
+        if declared_places is not None and operation != "divide":
+            # Owner ruling AC41(2), architect ruling on audit finding
+            # r1-1: only a share or a yield by division is ever rounded.
+            reasons.append(
+                "derived fact '%s' declares rounded_places on '%s', but "
+                "only a division struck as a share or a yield (a family "
+                "the floors name in rounded_quotient_families) may be "
+                "recorded rounded; every other derived figure is exact"
+                % (fact["id"], operation))
+            continue
         if operation == tape.OPERATION:
             continue  # a tape figure: recomputed by _check_tape
         if len(operands) < 2:
@@ -2813,19 +3601,38 @@ def _check_arithmetic(capture):
                 unusable = True
         if unusable:
             continue
+        if (operation == "divide" and family
+                and declared_places is not None):
+            reason = _declared_places_reason(fact, values, declared_places)
+            if reason is not None:
+                reasons.append(reason)
+                continue
         try:
             computed = _compute(operation, values)
         except Inexact:
-            reasons.append(
-                "the declared arithmetic of derived fact '%s' has no "
-                "exact decimal result - it may not be frozen as an "
-                "exact figure" % fact["id"])
+            if (operation == "divide" and family
+                    and declared_places is not None):
+                reasons.extend(_rounded_division_reasons(
+                    fact, values, declared_places))
+                continue
+            reasons.append(_inexact_division_reason(
+                fact, operation, operands, family, declared_places))
             continue
         except ArithmeticError:
             reasons.append(
                 "the declared arithmetic of derived fact '%s' cannot be "
                 "computed at all (for example a division by zero)"
                 % fact["id"])
+            continue
+        if declared_places is not None and not family:
+            equation = _OPERATOR_TEXT[operation].join(
+                operand["value"] for operand in operands)
+            reasons.append(
+                "derived fact '%s' declares rounded_places, but only a "
+                "share or a yield (a family the floors name in "
+                "rounded_quotient_families) may be recorded rounded: "
+                "%s = %s exactly - write that, with no rounding declared"
+                % (fact["id"], equation, computed))
             continue
         if computed != declared:
             equation = _OPERATOR_TEXT[operation].join(
@@ -3172,8 +3979,7 @@ def _check_dates(capture):
 def validate_capture(capture, schema, floors=None):
     """Run every provenance check over a capture document.
 
-    `floors` is the ruled floors data; read from disk when not given, and
-    only for a capture that carries a price or benchmark series.
+    `floors` is the ruled floors data; read from disk when not given.
 
     Returns {"result": "accepted"|"refused", "reasons": [...]}. The
     ruled constituent bound is pre-checked so its refusal reads plainly
@@ -3191,14 +3997,14 @@ def validate_capture(capture, schema, floors=None):
                 "reasons": ["the capture does not match the capture "
                             "contract: " + error
                             for error in shape_errors]}
+    floors = floors or canonical.read_json(_FLOORS_PATH)
     reasons = []
-    reasons.extend(_check_question_line(capture))
+    reasons.extend(_check_question_line(capture, floors))
     reasons.extend(_check_subject_kind(capture))
     reasons.extend(_check_business_frame(capture))
     reasons.extend(_check_cycle(capture))
     series_reasons = []
     if capture.get("price_series") or capture.get("benchmark_series"):
-        floors = floors or canonical.read_json(_FLOORS_PATH)
         series_reasons = _check_price_series(capture, floors)
         reasons.extend(series_reasons)
     if not series_reasons:
@@ -3207,9 +4013,12 @@ def validate_capture(capture, schema, floors=None):
     reasons.extend(_check_evidence_challenge(capture))
     reasons.extend(_check_id_uniqueness(capture))
     reasons.extend(_check_labels(capture))
+    reasons.extend(_check_single_precision(capture))
+    reasons.extend(_check_freshness_ceiling(capture, floors))
     reasons.extend(_check_unit_tokens(capture))
+    reasons.extend(_check_unit_list(capture, floors))
     reasons.extend(_check_period_basis(capture))
-    reasons.extend(_check_arithmetic(capture))
+    reasons.extend(_check_arithmetic(capture, floors))
     reasons.extend(_check_operand_references(capture))
     reasons.extend(_check_figures_literal(capture))
     reasons.extend(_check_vocabulary(capture))

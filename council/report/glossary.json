@@ -1,0 +1,168 @@
+{
+  "note": "The report page's glossary, as DATA (unit READ-A; owner ruling AC41(5), the owner's finding 2 of 2026-09-25; architect ruling 5 on the READ-A bracket). Each note is one plain sentence, with the calculation where there is one. 'tape' holds the note for each row of the market-data table, keyed by the first figure the row shows. 'terms' holds the words a key-number label or a metric name in the chairman's tables may carry; the page marks the first place each term appears in such a label and shows the note when the mouse rests on it, or on a tap on a phone. 'series' names the rate and credit series of the cycle in plain words, keyed by the series' own code. 'models' gives a model's plain name for the stamp under the rating (an id not listed prints as recorded); 'benchmarks' names a benchmark fund for the chart's caption.",
+  "tape": {
+    "tape_close_vs_sma50": "How far the last close sits above or below the average of the last 50 daily closes: last close divided by that average, less one, as a percentage.",
+    "tape_close_vs_sma100": "How far the last close sits above or below the average of the last 100 daily closes: last close divided by that average, less one, as a percentage.",
+    "tape_close_vs_sma200": "How far the last close sits above or below the average of the last 200 daily closes: last close divided by that average, less one, as a percentage.",
+    "tape_sma200_slope_60": "Whether the long-run trend is rising or falling: today's 200-day average divided by the 200-day average of 60 trading days ago, less one, as a percentage.",
+    "tape_range_place_252": "Where the last close sits between the lowest and highest close of the last year: last close less the lowest, divided by the highest less the lowest (0% is the low, 100% the high).",
+    "tape_drawdown_from_high_252": "How far the last close is below the highest close of the last year: last close divided by that high, less one, as a percentage.",
+    "tape_return_21": "The price change over the last 21 trading days, about a month; the second figure is that change less the benchmark's change over the same days, in percentage points.",
+    "tape_return_63": "The price change over the last 63 trading days, about three months; the second figure is that change less the benchmark's change over the same days, in percentage points.",
+    "tape_return_126": "The price change over the last 126 trading days, about six months; the second figure is that change less the benchmark's change over the same days, in percentage points.",
+    "tape_return_252": "The price change over the last 252 trading days, about a year; the second figure is that change less the benchmark's change over the same days, in percentage points.",
+    "tape_realized_vol_21": "How much the price has swung day to day, scaled to a year: the standard deviation of the daily returns over each window, times the square root of 252.",
+    "tape_volume_20_vs_250": "Whether trading is busier or quieter than usual: the average daily volume of the last 20 days divided by that of the last 250 days.",
+    "tape_largest_fall_252": "The worst single day of the last year: the largest fall from one close to the next, as a percentage.",
+    "tape_high_close_252": "The highest and the lowest daily close of the last 252 trading days, with the day each was set.",
+    "tape_closes_above_sma200_252": "How often the stock closed above its 200-day average over the last year: the number of the last 252 closes above the average of the 200 closes ending that day."
+  },
+  "terms": [
+    {
+      "term": "ROTCE",
+      "note": "Return on tangible common equity: a year's profit to common shareholders divided by their equity less goodwill and other intangible assets, the main measure of a bank's profitability."
+    },
+    {
+      "term": "Return on tangible equity",
+      "note": "A year's profit to common shareholders divided by their equity less goodwill and other intangible assets, the main measure of a bank's profitability."
+    },
+    {
+      "term": "CET1",
+      "note": "Common equity tier 1: a bank's core capital, shareholders' equity less intangibles and deductions, measured against its risk-weighted assets."
+    },
+    {
+      "term": "Core capital",
+      "note": "A bank's common equity tier 1 capital, shareholders' equity less intangibles and deductions, divided by its risk-weighted assets."
+    },
+    {
+      "term": "Capital above its requirement",
+      "note": "The bank's core capital ratio against the minimum its regulator requires of it; the gap is the cushion that pays for losses, dividends and buybacks."
+    },
+    {
+      "term": "Tangible book",
+      "note": "Shareholders' equity less goodwill and other intangible assets, what the shareholders would own if the bank were wound up at book values."
+    },
+    {
+      "term": "Price to tangible book",
+      "note": "The share price divided by tangible book value per share: what the market pays for each dollar of the bank's tangible equity."
+    },
+    {
+      "term": "200-day average",
+      "note": "The average of the last 200 daily closes, a common read of the long-run trend."
+    },
+    {
+      "term": "Buy level",
+      "note": "The price at which the chairman says the case reopens as a buy, provided the conditions he names still hold."
+    },
+    {
+      "term": "Level to add more",
+      "note": "The lower price at which the chairman says more could be bought, provided the conditions he names still hold."
+    },
+    {
+      "term": "Last price",
+      "note": "The latest traded price the evidence recorded, the price this ruling is made against."
+    },
+    {
+      "term": "Net charge-off rate",
+      "note": "Loans written off in the quarter, less what was recovered, as a yearly percentage of the average loans outstanding."
+    },
+    {
+      "term": "Credit cost",
+      "note": "What bad loans cost the bank: loans written off and the provisions set aside for future losses."
+    },
+    {
+      "term": "Net interest income",
+      "note": "The interest a bank earns on loans and securities less the interest it pays on deposits and borrowing."
+    },
+    {
+      "term": "Treasury bill yield",
+      "note": "The yearly return on a short US government bill, the cash rate a buyer could earn with no credit risk."
+    },
+    {
+      "term": "Next results date",
+      "note": "The day the company next reports its quarterly results, the next scheduled test of this rating."
+    },
+    {
+      "term": "Enterprise value against gross profit",
+      "note": "The growth yardstick: what the whole business costs - the market value of its shares plus its debt, less its cash - divided by the last four quarters' gross profit, which is sales less the direct cost of making them."
+    },
+    {
+      "term": "Months of cash left",
+      "note": "Cash and short-term investments divided by the last four quarters' cash burn, counted in months; undrawn credit lines are shown but not counted."
+    },
+    {
+      "term": "Cash burn",
+      "note": "The cash a company spends beyond what its operations bring in: capital spending less operating cash flow, over the last four quarters."
+    },
+    {
+      "term": "Stock-based pay",
+      "note": "Pay to staff in shares or options instead of cash: a real cost that dilutes the shareholders, shown here as a share of sales."
+    },
+    {
+      "term": "Diluted share count",
+      "note": "The number of shares counting those that options, share awards and convertible debt would add, as the company counts them for its earnings per share."
+    },
+    {
+      "term": "Annual recurring revenue",
+      "note": "The yearly value of the subscriptions a company has in force, by its own definition, not a figure of standard accounting."
+    },
+    {
+      "term": "Sales growth",
+      "note": "The latest quarter's sales against the same quarter a year earlier, as a percentage change."
+    },
+    {
+      "term": "Proved reserves",
+      "note": "Oil and gas the company is reasonably certain to produce from known fields at the prices and costs of its reserve report, under the reporting standard it names; only its own share."
+    },
+    {
+      "term": "Proven and probable reserves",
+      "note": "Metal a miner has shown, by drilling and a mine plan, it can extract at a profit at the price of its reserve report - the proven part more certain than the probable; only its own share."
+    },
+    {
+      "term": "Barrel of oil equivalent",
+      "note": "One unit for oil and gas together: six thousand cubic feet of gas counted as one barrel of oil, the convention the filings use."
+    },
+    {
+      "term": "All-in sustaining cost",
+      "note": "A miner's cost per ounce by the World Gold Council's definition: the cost of mining plus the spending needed to keep the mine producing, before growth projects."
+    },
+    {
+      "term": "Reserve life",
+      "note": "The reserves divided by the last four quarters' output, counted in years - worked out by the council from the recorded figures."
+    },
+    {
+      "term": "Price the reserves were counted at",
+      "note": "The commodity price the reserve report assumed when it counted the reserves, as its reporting standard sets it; today's price is shown beside it."
+    },
+    {
+      "term": "Standardized measure",
+      "note": "The US SEC's own figure for an oil and gas producer: the future cash from its proved reserves at the reserve report's prices, discounted at ten percent a year - shown beside the yardstick, never part of it."
+    },
+    {
+      "term": "Stream payment",
+      "note": "The fixed price a streaming company pays for each ounce or barrel it receives under a stream agreement - its cost in place of a mining cost."
+    },
+    {
+      "term": "Asset retirement obligation",
+      "note": "What the company owes to close its wells or mines and restore the land when they stop producing, as carried on its balance sheet."
+    }
+  ],
+  "series": {
+    "t10y2y": "Yield-curve slope, 10-year less 2-year Treasury",
+    "effr": "Fed funds rate",
+    "bamlh0a0hym2": "Junk-bond spread over Treasuries",
+    "unrate": "US unemployment rate",
+    "dpsacbw027sbog": "US bank deposits"
+  },
+  "models": {
+    "claude-opus-5-5": "Claude Opus 5.5",
+    "claude-opus-5": "Claude Opus 5",
+    "claude-opus-5[1m]": "Claude Opus 5",
+    "claude-opus-4-6": "Claude Opus 4.6",
+    "gpt-6-sol": "OpenAI GPT-6 Sol",
+    "gpt-5.6-sol": "OpenAI GPT-5.6 Sol"
+  },
+  "benchmarks": {
+    "SPY": "the S&P 500 fund"
+  }
+}

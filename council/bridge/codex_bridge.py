@@ -504,6 +504,10 @@ def _new_result():
         # Every tool call the event stream shows, by name (BRIDGE-POSTURE).
         # Null until the launcher returns.
         "tool_calls": None,
+        # The codex version that ran this call (owner ruling AC25(4)): the
+        # first line `codex --version` printed, or null where it said
+        # nothing usable.
+        "codex_version": None,
     }
 
 
@@ -621,10 +625,11 @@ def _run_call_inner(request, payload_bytes, out_dir, launcher, result,
 
 
 def _run_call(request, payload_bytes, out_dir, launcher, echo_fields,
-              schema_copy_name, web_reader=False):
+              schema_copy_name, web_reader=False, codex_version=None):
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     result = _new_result()
+    result["codex_version"] = codex_version
     try:
         _run_call_inner(request, payload_bytes, out_dir, launcher, result,
                         echo_fields, schema_copy_name, web_reader)
@@ -634,12 +639,15 @@ def _run_call(request, payload_bytes, out_dir, launcher, echo_fields,
     return result
 
 
-def run_challenge(request, casefile_bytes, out_dir, launcher=None):
+def run_challenge(request, casefile_bytes, out_dir, launcher=None,
+                  codex_version=None):
     """One challenge cycle. Writes <out_dir>/result.json (canonical JSON)
     and returns the same dict. Never raises for a failed call: every failure
-    is a typed status the engine reads from the result."""
+    is a typed status the engine reads from the result. `codex_version` is
+    recorded on the result as given."""
     return _run_call(request, casefile_bytes, out_dir, launcher,
-                     _ECHO_FIELDS, SCHEMA_COPY_NAME)
+                     _ECHO_FIELDS, SCHEMA_COPY_NAME,
+                     codex_version=codex_version)
 
 
 def run_evidence(request, brief_bytes, out_dir, launcher=None):
@@ -649,6 +657,43 @@ def run_evidence(request, brief_bytes, out_dir, launcher=None):
     return _run_call(request, brief_bytes, out_dir, launcher,
                      _EVIDENCE_ECHO_FIELDS, EVIDENCE_SCHEMA_NAME,
                      load_posture()["evidence_audit_reads_the_web"])
+
+
+# ---------------------------------------------------------------------------
+# The codex version (owner ruling AC25(4)): one unpaid `codex --version`
+# per bridge invocation, beside the smoke test, recorded on every result.
+# ---------------------------------------------------------------------------
+
+VERSION_TIMEOUT_S = 30
+VERSION_MAX_CHARS = 80
+
+
+def build_version_argv():
+    return ["codex", "--version"]
+
+
+def codex_version(launcher=None):
+    """The first line `codex --version` prints, trimmed, at most
+    VERSION_MAX_CHARS characters - or None on any failure. Never raises and
+    never stops a sitting: a version nobody could read is recorded as none."""
+    if launcher is None:
+        launcher = default_launcher
+    workdir = tempfile.mkdtemp(prefix="council-version-")
+    try:
+        stdout_path = os.path.join(workdir, "stdout.txt")
+        returncode, timed_out, _sent = launcher(
+            build_version_argv(), None, stdout_path,
+            os.path.join(workdir, "stderr.txt"), VERSION_TIMEOUT_S)
+        if timed_out or returncode != 0 or not os.path.isfile(stdout_path):
+            return None
+        with open(stdout_path, "rb") as handle:
+            lines = handle.read().decode("utf-8", errors="replace").splitlines()
+        first = lines[0].strip() if lines else ""
+        return first[:VERSION_MAX_CHARS] or None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -791,12 +836,14 @@ def _cli_challenge(run_dir, no_smoke):
     with open(os.path.join(challenge_dir, "casefile.md"), "rb") as handle:
         casefile_bytes = handle.read()
 
+    version = codex_version()
     if not no_smoke:
         ok, detail = smoke(model=request.get("model"),
                            record_path=os.path.join(challenge_dir,
                                                     PROBE_NAME))
         if not ok:
             result = _new_result()
+            result["codex_version"] = version
             _fail(result, "launch_failure", "smoke test failed: " + detail)
             canonical.write_canonical_json(
                 os.path.join(challenge_dir, RESULT_NAME), result)
@@ -804,7 +851,8 @@ def _cli_challenge(run_dir, no_smoke):
                   "the paid call was refused (%s)" % detail)
             return 3
 
-    result = run_challenge(request, casefile_bytes, challenge_dir)
+    result = run_challenge(request, casefile_bytes, challenge_dir,
+                           codex_version=version)
     if result["status"] == "success":
         count = len(result["findings"]["findings"])
         print("challenge: success - %d finding(s), result.json written" % count)
@@ -1107,6 +1155,7 @@ def _cli_evidence(capture_path, out_dir, no_smoke, delta=False):
         result["pass"] = pass_number
         result["scope"] = scope
         result["model"] = request["model"]
+        result["codex_version"] = version
         canonical.append_jsonl(
             os.path.join(out_dir, ATTEMPTS_NAME),
             {"nonce": nonce, "status": result.get("status"),
@@ -1125,6 +1174,7 @@ def _cli_evidence(capture_path, out_dir, no_smoke, delta=False):
         canonical.write_canonical_json(standing_path, result)
         return result
 
+    version = codex_version()
     if not no_smoke:
         ok, detail = smoke(model=request["model"],
                            record_path=os.path.join(out_dir, PROBE_NAME))

@@ -61,7 +61,11 @@ DATE_TICKS = 5
 RANGE_PAD = Decimal("0.05")
 NICE_STEPS = (1, 2, 5, 10)
 
-LEVEL_WORDS = "— reopen the case"
+# A price level is labelled with the chairman's own name for it - the name of the key number he
+# gave that price ("Buy level", "Level to add more"), up to its first comma - and with these words
+# where he named none (owner ruling AC41(4), unit READ-A).
+LEVEL_WORDS = "re-examine at this price"
+LEVEL_LEGEND = "A price level the chairman named"
 REBASED_WORDS = "rebased to the first close"
 GAP_WORDS = "no figure — declared gap"
 MISSING_WORDS = "the pack carries neither this figure nor a declared gap for it"
@@ -79,22 +83,22 @@ TAPE_DISPLAY_ROWS = (
     (None, (("tape_sma200_slope_60", None),)),
     (None, (("tape_range_place_252", None),)),
     (None, (("tape_drawdown_from_high_252", None),)),
-    ("Return over 21 trading days", (("tape_return_21", "the price"),
-                                     ("tape_return_vs_benchmark_21", "against the benchmark"))),
-    ("Return over 63 trading days", (("tape_return_63", "the price"),
-                                     ("tape_return_vs_benchmark_63", "against the benchmark"))),
-    ("Return over 126 trading days", (("tape_return_126", "the price"),
-                                      ("tape_return_vs_benchmark_126", "against the benchmark"))),
-    ("Return over 252 trading days", (("tape_return_252", "the price"),
-                                      ("tape_return_vs_benchmark_252", "against the benchmark"))),
-    ("Realized volatility, annualized", (("tape_realized_vol_21", "21 trading days"),
-                                         ("tape_realized_vol_63", "63 trading days"),
-                                         ("tape_realized_vol_252", "252 trading days"))),
+    ("Return over 1 month", (("tape_return_21", "the price"),
+                             ("tape_return_vs_benchmark_21", "against the benchmark"))),
+    ("Return over 3 months", (("tape_return_63", "the price"),
+                              ("tape_return_vs_benchmark_63", "against the benchmark"))),
+    ("Return over 6 months", (("tape_return_126", "the price"),
+                              ("tape_return_vs_benchmark_126", "against the benchmark"))),
+    ("Return over 1 year", (("tape_return_252", "the price"),
+                            ("tape_return_vs_benchmark_252", "against the benchmark"))),
+    ("Realized volatility, annualized", (("tape_realized_vol_21", "1 month"),
+                                         ("tape_realized_vol_63", "3 months"),
+                                         ("tape_realized_vol_252", "1 year"))),
     (None, (("tape_volume_20_vs_250", None),)),
     (None, (("tape_largest_fall_252", None),)),
     ("Highest and lowest close in 52 weeks", (("tape_high_close_252", "highest"),
                                               ("tape_low_close_252", "lowest"))),
-    (None, (("tape_closes_above_sma200_252", None),)),
+    ("Closes above the 200-day average", (("tape_closes_above_sma200_252", None),)),
 )
 
 # A value "reads as a number" exactly as the page's own formatter reads one.
@@ -200,6 +204,21 @@ def _drawn_levels(verdict, ticker, unit, single):
     return drawn
 
 
+def _level_name(verdict, value, unit):
+    """The chairman's own name for a price level: the key number he gave at that price in that
+    unit, its name up to the first comma ("Buy level, 2.65x June tangible book" gives "Buy
+    level"), or None where he named none - or where two key numbers of different names stand at
+    that price (the last price and a buy level both at $100), since the page cannot tell which
+    one the level is (audit round 1 of READ-A)."""
+    names = set()
+    for number in (verdict.get("atlas_envelope") or {}).get("key_numbers") or []:
+        if number.get("unit") == unit and _number(number.get("value")) == value:
+            name = str(number.get("name") or "").split(",")[0].strip()
+            if name:
+                names.add(name)
+    return names.pop() if len(names) == 1 else None
+
+
 def _ruling_mark(verdict, price_id, unit, single):
     """The rating box's leading key number, for a single subject, where it cites the pack's own
     price fact (`price_id`) and is a number in the price's own unit: (value, key number) or None.
@@ -280,10 +299,12 @@ def _line_swatch(css_class):
     return _swatch('<line class="%s" x1="0" y1="5" x2="24" y2="5"/>' % css_class)
 
 
-def figure(capture, verdict, single, format_number, format_date):
+def figure(capture, verdict, single, format_number, format_date, benchmarks=None):
     """The chart as one <figure> of inline SVG. `single` is False for a basket or theme;
-    `format_number` and `format_date` are the page's own display rules. Raises ChartRefused where
-    a drawn average would disagree with the tape."""
+    `format_number` and `format_date` are the page's own display rules; `benchmarks` names a
+    benchmark fund by its ticker for the caption. Raises ChartRefused where a drawn average would
+    disagree with the tape."""
+    benchmarks = benchmarks or {}
     series = capture["price_series"]
     bars = series["bars"]
     ticker = str(series.get("ticker") or "")
@@ -372,10 +393,11 @@ def figure(capture, verdict, single, format_number, format_date):
             y = frame.y(value)
             parts.append('<g class="ch-levelmark"><title>%s</title>'
                          '<line class="ch-level" x1="%d" y1="%s" x2="%d" y2="%s"/>'
-                         '<text class="ch-leveltxt" x="%d" y="%s">%s %s</text></g>'
+                         '<text class="ch-leveltxt" x="%d" y="%s">%s — %s</text></g>'
                          % (_esc(trigger.get("detail", "")), frame.left, y, PLOT_RIGHT, y,
                             frame.left + TICK_LABEL_GAP, _q(Decimal(y) - LABEL_LIFT),
-                            _esc(format_number(trigger["level"], unit)), _esc(LEVEL_WORDS)))
+                            _esc(format_number(trigger["level"], unit)),
+                            _esc(_level_name(verdict, value, unit) or LEVEL_WORDS)))
         if mark:
             y = frame.y(mark[0])
             shown = "%s %s" % (mark[1].get("name", ""),
@@ -405,7 +427,7 @@ def figure(capture, verdict, single, format_number, format_date):
                        "The 52-week range of closes"))
         drawn.append("the 52-week range")
     if levels:
-        legend.append((_line_swatch("ch-level"), "A price that would reopen the case"))
+        legend.append((_line_swatch("ch-level"), LEVEL_LEGEND))
         drawn.append("%d price level%s that would reopen the case"
                      % (len(levels), "" if len(levels) == 1 else "s"))
     if mark:
@@ -413,15 +435,14 @@ def figure(capture, verdict, single, format_number, format_date):
                        "The price the ruling is made against"))
         drawn.append("the price the ruling is made against")
     desc = "The chart shows %s." % _joined(drawn)
-    caption = ["Daily closes from %s, as of %s." % (series.get("source", ""),
-                                                   format_date(series.get("as_of", "")))]
+    # One short line under the chart (owner's finding 1); the capture's full
+    # provenance sentences are in the fold `provenance` builds, directly under it.
+    owner = _SOURCE_OWNER.match(str(series.get("source") or ""))
+    caption = "Daily closes of %s%s to %s" % (ticker, (" from %s" % owner.group(1)) if owner else "",
+                                              format_date(bars[-1]["date"]))
     if bench:
-        caption.append("The benchmark's closes from %s, as of %s."
-                       % (capture["benchmark_series"].get("source", ""),
-                          format_date(capture["benchmark_series"].get("as_of", ""))))
-    if windows:
-        caption.append("Each average is drawn from these closes and agrees with the tape's "
-                       "figure for it.")
+        name = capture["benchmark_series"].get("ticker") or "the benchmark"
+        caption += "; %s is %s, rebased" % (name, benchmarks.get(name, "the benchmark"))
     return "".join([
         '<figure class="tapechart"><svg viewBox="0 0 %d %d" width="100%%" role="img" '
         'aria-labelledby="tapechart-title tapechart-desc">' % (VIEW_WIDTH, VIEW_HEIGHT),
@@ -430,8 +451,28 @@ def figure(capture, verdict, single, format_number, format_date):
         "".join(parts), "</svg>",
         '<ul class="ch-legend">%s</ul>' % "".join(
             "<li>%s%s</li>" % (swatch, _esc(words)) for swatch, words in legend),
-        "<figcaption>%s</figcaption></figure>" % _esc(" ".join(caption)),
+        "<figcaption>%s.</figcaption></figure>" % _esc(caption),
     ])
+
+
+# Who a series' provenance sentence says it came from, where it opens by naming one ("the
+# broker's get_price_history call ..." gives "the broker").
+_SOURCE_OWNER = re.compile(r"^((?:the )?[A-Za-z][\w&.-]*(?: [A-Za-z][\w&.-]*){0,3})'s\s")
+
+
+def provenance(capture, format_date):
+    """The capture's own provenance sentences for the price and the benchmark series, as the
+    caption under the chart printed them before unit READ-A, for the fold under the chart."""
+    series = capture["price_series"]
+    lines = ["Daily closes from %s, as of %s." % (series.get("source", ""),
+                                                 format_date(series.get("as_of", "")))]
+    bench = capture.get("benchmark_series")
+    if bench and bench.get("bars"):
+        lines.append("The benchmark's closes from %s, as of %s."
+                     % (bench.get("source", ""), format_date(bench.get("as_of", ""))))
+    lines.append("Each average is drawn from these closes and agrees with the tape's figure "
+                 "for it.")
+    return lines
 
 
 # --- the tape's one-page display ---------------------------------------------------------------
@@ -445,26 +486,36 @@ def _figure_line(fact_id, name, facts, gaps, format_number, format_date):
         return ('<div>%s%s<div class="muted small">%s</div></div>'
                 % (_esc(lead), _esc(GAP_WORDS), _esc(reason)))
     shown = format_number(fact.get("value"), fact.get("unit"))
+    if fact.get("unit") == "bars":
+        # A count of closes, read against the year it is counted in (unit READ-A).
+        shown = "%s of the last %d trading days" % (format_number(fact.get("value")),
+                                                    tape.YEAR_BARS)
     dated = (fact.get("derived") or {}).get("date")
     if dated:
         shown += " on %s" % format_date(dated)
     return "<div>%s%s</div>" % (_esc(lead), _esc(shown))
 
 
-def tape_table(capture, format_number, format_date):
+def tape_table(capture, format_number, format_date, term=None):
     """The fifteen display rows as one table, or None where every row is a declared gap (the
-    caller prints the brief's own all-gaps line instead)."""
+    caller prints the brief's own all-gaps line instead). The figure column is headed by the
+    close the tape is read at. `term(title, fact_id)` gives a row title's HTML (the page's hover
+    note); without it the title is escaped text."""
     facts, gaps = tape_entries(capture)
     if not facts and all(fact_id in gaps for fact_id in tape.ROW_IDS):
         return None
+    term = term or (lambda title, _fact_id: _esc(title))
     rows = []
     for title, figures in TAPE_DISPLAY_ROWS:
+        fact_id = figures[0][0]
         if title is None:
-            fact_id = figures[0][0]
             title = (facts.get(fact_id) or {}).get("label") or tape.LABELS[fact_id]
         rows.append('<tr class="taperow"><td>%s</td><td>%s</td></tr>'
-                    % (_esc(title), "".join(
+                    % (term(title, fact_id), "".join(
                         _figure_line(fact_id, name, facts, gaps, format_number, format_date)
                         for fact_id, name in figures)))
-    return ('<table class="tapetable"><tr><th>what the tape shows</th><th>the figure</th></tr>'
-            "%s</table>" % "".join(rows))
+    bars = (capture.get("price_series") or {}).get("bars") or []
+    close = (" ".join(format_date(bars[-1]["date"]).split()[:2]) if bars else "")
+    heading = "at the %s close" % close if close else "the figure"
+    return ('<table class="tapetable"><tr><th>what the tape shows</th><th>%s</th></tr>'
+            "%s</table>" % (_esc(heading), "".join(rows)))

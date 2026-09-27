@@ -58,9 +58,12 @@ CLI:
 Exit codes: 0 pass, 3 refuse, 1 crash.
 """
 
+import decimal
 import os
 import sys
-from datetime import datetime
+import math
+import re
+from datetime import date, datetime
 
 from council.evidence import gate
 from council.lib import canonical, subjects
@@ -124,6 +127,18 @@ _FI_CAPITAL_GAP_SUBTYPES = ("traditional_asset_manager",
                             "alternative_asset_manager")
 _FI_HOLDING = "financial_holding"
 _FI_HOLDING_CAPITAL_GAP_CLASS = "subsidiary_capital_ratio_"
+# The financial institution's own rules (capital, cost of risk, families,
+# the bridge, its exited-business ban) are its alone: they run only where
+# the declared archetype is this one, whatever other archetype the table
+# splits into sub-types (unit GROWTH-ARCHETYPE, D1; the gate's spelling).
+_FI_ARCHETYPE = "financial_institution"
+# The growth company (owner rulings AC49(1) and AC50; the gate's spelling):
+# its months of cash left, its standard tests and its rule are its alone.
+_GROWER_ARCHETYPE = "reinvesting_grower"
+# Architect ruling A10 under owner ruling AC50(5): the latest quarter's
+# revenue and the same quarter a year earlier - the growth the yardstick is
+# read beside - always decide a growth company's case.
+_GROWER_GROWTH_PAIR = ("revenue_q", "revenue_prior_year_q")
 
 # The plain words a rating-measure component fails on, keyed by the fault
 # measure_component_fault returns. Owner ruling AC15 (P2); architect
@@ -561,18 +576,235 @@ def _as_of_moment(text):
     return datetime.fromisoformat(text)
 
 
+def _shape_fault(part, fact, captured_at, window_days, zero_ok=False):
+    """Why a floor's part does not have the shape and unit the floors
+    data names for it, or None (unit U4(d): round 2 Step 0, P-U4d-3 and
+    P-U4d-4, the parts of an examination must be real parts; round 3
+    Step 0, P-U4d-5, the unit is part of the shape). Truth is not
+    checked here - only that the part could be what it claims to be.
+    zero_ok admits a positive_number of exactly zero. The value is read
+    exactly as stored, nothing stripped (round 5 Step 0, P-U4d-8).
+
+    Unit INSIDER-DEPTH adds the insider summary's two shapes - a whole
+    number above zero, and buy, sell or even - each dated not after the
+    capture like a positive number, and the financial-year end's shape,
+    a month and day written MM-DD (owner ruling AC46(2))."""
+    name, shape = part["part"], part["shape"]
+    value = str(fact.get("value"))
+    captured = _as_of_moment(captured_at)
+    if shape in ("positive_whole_number", "buy_sell_or_even"):
+        if shape == "positive_whole_number" and not re.fullmatch(
+                r"[1-9][0-9]*", value):
+            return "%s must be a whole number above zero, not '%s'" % (
+                name, value)
+        if shape == "buy_sell_or_even" and value not in ("buy", "sell",
+                                                         "even"):
+            return "%s must be buy, sell or even, not '%s'" % (name, value)
+        if _as_of_moment(str(fact.get("as_of"))) > captured:
+            return "%s is dated %s, after the capture" % (name,
+                                                         fact.get("as_of"))
+    elif shape == "month_day":
+        try:
+            if not re.fullmatch(r"[0-9]{2}-[0-9]{2}", value):
+                raise ValueError(value)
+            # A leap year, so the last day of February is a month and day.
+            date.fromisoformat("2000-" + value)
+        except ValueError:
+            return "%s must be a month and day written MM-DD, not '%s'" % (
+                name, value)
+    elif shape == "buy_or_sell":
+        if value not in ("buy", "sell"):
+            return "%s must be buy or sell, not '%s'" % (name, value)
+    elif shape == "trade_date":
+        try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+                raise ValueError(value)
+            day = date.fromisoformat(value)
+        except ValueError:
+            return "%s must be an ISO date, not '%s'" % (name, value)
+        if day > captured.date():
+            return "dated %s, after the capture" % value
+        if (captured.date() - day).days > window_days:
+            return "dated %s, more than a year before the capture" % value
+    elif shape == "positive_number":
+        try:
+            if not re.fullmatch(r"[0-9]+(\.[0-9]+)?", value):
+                raise ValueError(value)
+            number = float(value)
+        except ValueError:
+            number = float("nan")
+        if not (math.isfinite(number)
+                and (number > 0 or (zero_ok and number == 0))):
+            return "%s must be a positive number, not '%s'" % (name, value)
+        if _as_of_moment(str(fact.get("as_of"))) > captured:
+            return "%s is dated %s, after the capture" % (name,
+                                                         fact.get("as_of"))
+    else:
+        raise ValueError(
+            "the floors file names a part shape %r this gate cannot "
+            "check, so the floors file must be fixed before any pack "
+            "is judged against it" % shape)
+    if fact.get("unit") not in part["units"]:
+        return "%s in %s, must be %s" % (name, fact.get("unit"),
+                                         part["units_mean"])
+    return None
+
+
+# Owner ruling AC47(3), in the architect's words: where what officers and
+# directors own cannot be established from the record, the council rules
+# without the insider evidence and the owner's pages and the seats' case
+# file say so, once each, in this sentence.
+INSIDER_NOT_CONSIDERED = ("Insider information was not available and was "
+                          "not considered in the council's ruling: what the "
+                          "company's officers and directors own could not "
+                          "be established from the record.")
+
+_EXACT_NUMBER = re.compile(r"[0-9]+(\.[0-9]+)?")
+
+
+def holder_structure(pack, depth):
+    """The holder-structure test (owner ruling AC41(1), as amended of
+    record; AC47; the architect's round-3 reading, which replaced the
+    patched one whole): ("light" | "full" | "not_considered", the holding
+    in words or None), read from the pack against the floors' `depth`
+    block, with exact decimals and no division.
+
+    Every fresh deciding figure is read as a range: an exact figure is a
+    point, a ceiling-bound one ("less than") runs from zero up to but not
+    including the figure, a floor-bound one ("at least") from the figure,
+    included, upward (the architect's round-4 reading of the edges). The
+    holding's range is the ownership percentage's, where a percentage is
+    recorded in a percent unit; where not, the group's shares over the
+    shares in issue: its low is the group's low over the largest
+    shares-in-issue high, its high the group's high over the smallest
+    shares-in-issue low, every fresh shares-in-issue figure in the
+    group's unit taking part. The depth is light only when the whole
+    range lies under the threshold - so a ceiling at the threshold reads
+    light, and an exact figure or a floor at it reads full - and full when
+    any part of it reaches or exceeds the threshold. The holding in words
+    names each figure with its own bound word - "less than" for a
+    ceiling, "at least" for a floor, the bare figure where exact - and
+    every distinct shares-in-issue figure taking part (the architect's
+    round-5 ruling). Where no figure decides and the percentage
+    is declared absent by design, the ownership cannot be established and
+    the insider evidence is not considered (AC47(3)); otherwise the safe
+    side, every dealing."""
+    capture = pack["capture"]
+    freshness = pack.get("freshness") or {}
+    facts = {fact["id"]: fact for fact in capture["tier1"]}
+    threshold = decimal.Decimal(depth["threshold_pct"])
+    stale = {fact_id for fact_id in facts if (freshness.get(fact_id) or {})
+             .get("status") != "within_rule"}
+
+    def span(fact_id):
+        """(low, high, the fact) for a fresh exact figure, the high None
+        where the figure has no upper end; (None, None, None) where the
+        figure is missing, not a number, or stale itself or through any
+        fact it is derived from (audit round 5, r5-1)."""
+        fact = facts.get(fact_id)
+        if (fact is None or _rests_on(fact_id, stale, facts) is not None
+                or not _EXACT_NUMBER.fullmatch(str(fact.get("value")))):
+            return None, None, None
+        value = decimal.Decimal(str(fact["value"]))
+        kind = (fact.get("bound") or {}).get("kind")
+        if kind == "ceiling":
+            return decimal.Decimal(0), value, fact
+        if kind == "floor":
+            return value, None, fact
+        return value, value, fact
+
+    def under(high, fact, limit):
+        """True where a range whose top is `high` lies wholly under
+        `limit`: a ceiling's top is strictly under its figure, so it may
+        sit at the limit; an exact or floor figure's top is the figure."""
+        if high is None:
+            return False
+        if (fact.get("bound") or {}).get("kind") == "ceiling":
+            return high <= limit
+        return high < limit
+
+    low, high, fact = span(depth["ownership_id"])
+    if fact is not None and fact.get("unit") in depth["ownership_units"]:
+        kind = (fact.get("bound") or {}).get("kind")
+        said = {"ceiling": "less than ", "floor": "at least "}.get(
+            kind, "") + "%s%% of the company" % fact["value"]
+        light = under(high, fact, threshold)
+        return ("light" if light else "full"), said
+    group_low, group_high, group_fact = span(depth["group_shares_id"])
+    issued = []
+    if group_fact is not None:
+        for issue_id in depth["shares_in_issue_ids"]:
+            issue_low, issue_high, issued_fact = span(issue_id)
+            if (issued_fact is not None and issued_fact.get("unit")
+                    == group_fact.get("unit")):
+                issued.append((issue_low, issue_high, issued_fact))
+    if issued:
+        fewest = min(issue_low for issue_low, _, _ in issued)
+        unit = str(group_fact.get("unit")).replace("_", " ")
+
+        def worded(fact, bare=""):
+            """The figure with its own bound word, never another's."""
+            return {"ceiling": "less than ", "floor": "at least "}.get(
+                (fact.get("bound") or {}).get("kind"), bare) + format(
+                decimal.Decimal(str(fact["value"])), ",")
+
+        counts = []
+        for _, _, issued_fact in issued:
+            count = worded(issued_fact, "the ")
+            if count not in counts:
+                counts.append(count)
+        said = "%s of %s %s in issue" % (worded(group_fact),
+                                         " or ".join(counts), unit)
+        top = group_high is not None and fewest > 0
+        light = top and under(group_high * 100, group_fact,
+                              threshold * fewest)
+        return ("light" if light else "full"), said
+    declared = [gap.get("reason_kind") for gap in capture["gaps"]
+                if gap.get("fact_class") == depth["ownership_id"]]
+    if (depth["ownership_id"] not in facts and declared
+            and all(kind == "absent_by_design" for kind in declared)):
+        return "not_considered", None
+    return "full", None
+
+
+def insider_depth(pack, floors):
+    """What the insider floor reads for this pack, for the pages that
+    print it: None where no floor of the subject carries a `depth` block,
+    else {"depth", "holding", "threshold", "summary", "officer_roles",
+    "not_considered"} - the last True only where the evidence is not
+    considered AND the pack carries no insider fact, so the sentence
+    above is never printed beside insider figures."""
+    capture = pack["capture"]
+    entry = next((entry for entry in _merged_floors(
+        floors, capture["subject"], capture) if entry.get("depth")), None)
+    if entry is None:
+        return None
+    depth = entry["depth"]
+    state, holding = holder_structure(pack, depth)
+    return {"depth": state, "holding": holding,
+            "threshold": depth["threshold_pct"],
+            "summary": list(depth["summary"]),
+            "officer_roles": list(depth["officer_roles"]),
+            "not_considered": state == "not_considered" and not any(
+                str(fact.get("id")).startswith(depth["family"])
+                for fact in capture["tier1"])}
+
+
 def _subject_label(subject):
     if subject.get("ticker"):
         return "%s (%s)" % (subject["name"], subject["ticker"])
     return subject["name"]
 
 
-def _subtyped_archetype(floors, capture):
+def _declared_archetype(floors, capture):
     """(the archetype, the sub-type) where a single name's frame declares
-    an archetype whose row carries sub-types - the financial institution
-    (owner rulings AC28 and AC30) - or None. The sub-type is None where
-    the frame names none or one the row does not know; the archetype
-    block of check() refuses that in plain words."""
+    any row of the floors' archetype table, or None. The sub-type is None
+    for a flat row, and for a row in sub-types (the financial institution,
+    owner rulings AC28 and AC30; the grower, AC49) where the frame names
+    none or one the row does not know - the archetype block of check()
+    refuses that in plain words. The one reading of the declaration: the
+    merged floors, the lifts and the brief's floors block all start here
+    (unit GROWTH-ARCHETYPE, D1)."""
     subject = capture["subject"]
     if subject["kind"] != "single_stock":
         return None
@@ -580,12 +812,28 @@ def _subtyped_archetype(floors, capture):
     archetype = frame.get("archetype") if isinstance(frame, dict) else None
     row = (((floors.get("archetype_measures") or {}).get("table") or {})
            .get(archetype) if isinstance(archetype, str) else None)
-    if not isinstance(row, dict) or not row.get("subtypes"):
+    if not isinstance(row, dict):
         return None
-    subtype = frame.get(row.get("subtype_field"))
-    if not isinstance(subtype, str) or subtype not in row["subtypes"]:
-        subtype = None
+    subtype = None
+    if row.get("subtypes"):
+        subtype = frame.get(row.get("subtype_field"))
+        if not isinstance(subtype, str) or subtype not in row["subtypes"]:
+            subtype = None
     return archetype, subtype
+
+
+def _archetype_floor_entries(floors, declared):
+    """The floors the declared archetype carries on top of its class:
+    what every sub-type carries, then what its own sub-type carries. A
+    flat row's block is read by the same key, all_subtypes, so one
+    reading serves both (owner rulings AC28, AC30 and AC49)."""
+    if not declared:
+        return []
+    block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
+    entries = list(block.get("all_subtypes") or [])
+    if declared[1]:
+        entries += list(block.get(declared[1]) or [])
+    return entries
 
 
 def _archetype_lifts(floors, declared):
@@ -600,7 +848,7 @@ def _archetype_lifts(floors, declared):
 
 def _merged_floors(floors, subject, capture=None):
     entries = list(floors["classes"][subject["kind"]]["floors"])
-    declared = _subtyped_archetype(floors, capture) if capture else None
+    declared = _declared_archetype(floors, capture) if capture else None
     # Owner ruling AC30(1) (G1): the one SUBTRACTIVE step in the merge.
     # For a lifted sub-type the class floors named in the lifts block are
     # dropped - the class's own list only, so no per-name ruling is ever
@@ -614,26 +862,26 @@ def _merged_floors(floors, subject, capture=None):
     named = floors.get("names", {})
     if ticker and ticker in named:
         entries += list(named[ticker]["floors"])
-    # Owner rulings AC28 and AC30: the third source, merged on top of the
-    # class and the name - what every financial institution carries,
-    # then what its own sub-type carries.
-    if declared:
-        block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
-        entries += list(block.get("all_subtypes") or [])
-        if declared[1]:
-            entries += list(block.get(declared[1]) or [])
+    # Owner rulings AC28, AC30 and AC49: the third source, merged on top
+    # of the class and the name - what every business of the declared
+    # archetype carries, then what its own sub-type carries.
+    entries += _archetype_floor_entries(floors, declared)
     return entries
 
 
-def _rests_on(fact_id, targets, facts_by_id, seen=None):
+def _rests_on(fact_id, targets, facts_by_id, seen=None, stop_suffix=""):
     """The first fact of `targets` this one rests on - itself or an
     operand, transitively - or None. Operands without a fact reference
-    are inline constants and rest on nothing."""
+    are inline constants and rest on nothing. Where `stop_suffix` is
+    given, a fact whose id ends in it rests on nothing: the walk stops
+    there, and neither it nor its operands are read."""
     if seen is None:
         seen = set()
     if fact_id in seen:
         return None
     seen.add(fact_id)
+    if stop_suffix and fact_id.endswith(stop_suffix):
+        return None
     if fact_id in targets:
         return fact_id
     derived = (facts_by_id.get(fact_id) or {}).get("derived")
@@ -641,7 +889,8 @@ def _rests_on(fact_id, targets, facts_by_id, seen=None):
         for operand in derived.get("operands") or ():
             reference = operand.get("fact_id")
             if reference is not None and reference in facts_by_id:
-                hit = _rests_on(reference, targets, facts_by_id, seen)
+                hit = _rests_on(reference, targets, facts_by_id, seen,
+                                stop_suffix)
                 if hit is not None:
                     return hit
     return None
@@ -935,11 +1184,57 @@ def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
 
     exited = ((floors.get("archetype_measures") or {})
               .get("fi_exited_business") or {})
-    # Each denominator is a fact its role allows (architect ruling closing
-    # P-FIa-1): the sub-type row names, per role, the ids the brief's row
-    # prescribes - on the subject's side and on the peers' alike. The
-    # continuing business's figure is the same id with its suffix.
-    suffix = exited.get("continuing_suffix") or ""
+    failures.extend(_denominator_id_failures(
+        row, rating, subtype.replace("_", " "),
+        exited.get("continuing_suffix") or ""))
+
+    # Owner ruling AC30(4) (G4): on a model transition the exited
+    # business's earnings and client money are banned as its revenue is.
+    if changing == "model_transition" and exited:
+        failures.extend(_exited_business_failures(
+            row, rating, exited.get("roles"),
+            exited.get("continuing_suffix") or "", "owner ruling AC30(4)",
+            "the continuing business's figure - a derived fact may "
+            "strike it from the whole less the part being exited, "
+            "arithmetic shown"))
+    return failures
+
+
+def _exited_business_failures(row, rating, roles, suffix, ruling, where):
+    """On a model transition, each subject denominator whose role is
+    named in `roles` is the continuing business's figure, its id ending
+    in `suffix` (owner ruling AC30(4) for the financial institution;
+    architect ruling A9 for any row carrying exited_business_roles). One
+    (what, why, where) per whole-business denominator."""
+    failures = []
+    banned_roles = set(roles or ())
+    denominators = (rating or {}).get("subject_denominator_facts") or []
+    for fid, role in zip(denominators, row.get("denominator_roles") or ()):
+        if (role in banned_roles and isinstance(fid, str)
+                and not fid.endswith(suffix)):
+            failures.append((
+                "the continuing business's %s as the rating's "
+                "denominator" % role.replace("_", " "),
+                "%s: this business is changing its "
+                "model, and the rating divides by '%s', the %s of the "
+                "whole business - including the part being sold or "
+                "run off. The %s the rating rests on is the continuing "
+                "business's, its id ending '%s'"
+                % (ruling, fid, role.replace("_", " "),
+                   role.replace("_", " "), suffix),
+                where))
+    return failures
+
+
+def _denominator_id_failures(row, rating, who, suffix):
+    """Each denominator is a fact its role allows (architect ruling
+    closing P-FIa-1): a resolved archetype row that names, per role, the
+    ids its measure is struck on holds the rating to them - on the
+    subject's side and on the peers' alike - whatever the archetype (unit
+    GROWTH-ARCHETYPE, D1). `who` names the business in the refusal; the
+    continuing business's figure is the same id ending in `suffix`, the
+    row's own exited-business data. One (what, why, where) per breach."""
+    failures = []
     for side, named in (
             ("the subject's side",
              (rating or {}).get("subject_denominator_facts") or []),
@@ -953,7 +1248,6 @@ def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
             bare = (fid[:-len(suffix)] if suffix and fid.endswith(suffix)
                     else fid)
             if bare not in allowed:
-                who = subtype.replace("_", " ")
                 what = "%s %s's %s denominator" % (
                     "an" if who[0] in "aeiou" else "a", who,
                     role.replace("_", " "))
@@ -968,30 +1262,1619 @@ def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
                     "the rating_vs_history_or_peers row: %s named as that "
                     "denominator, in the role order the sub-type lists"
                     % " or ".join("'%s'" % item for item in allowed)))
-
-    # Owner ruling AC30(4) (G4): on a model transition the exited
-    # business's earnings and client money are banned as its revenue is.
-    if changing == "model_transition" and exited:
-        suffix = exited.get("continuing_suffix") or ""
-        banned_roles = set(exited.get("roles") or ())
-        denominators = (rating or {}).get("subject_denominator_facts") or []
-        for fid, role in zip(denominators, row.get("denominator_roles") or ()):
-            if (role in banned_roles and isinstance(fid, str)
-                    and not fid.endswith(suffix)):
-                failures.append((
-                    "the continuing business's %s as the rating's "
-                    "denominator" % role.replace("_", " "),
-                    "owner ruling AC30(4): this business is changing its "
-                    "model, and the rating divides by '%s', the %s of the "
-                    "whole business - including the part being sold or "
-                    "run off. The %s the rating rests on is the continuing "
-                    "business's, its id ending '%s'"
-                    % (fid, role.replace("_", " "), role.replace("_", " "),
-                       suffix),
-                    "the continuing business's figure - a derived fact may "
-                    "strike it from the whole less the part being exited, "
-                    "arithmetic shown"))
     return failures
+
+
+def _grower_frame(floors, capture):
+    """The business frame of a single name that declares the growth
+    archetype, or None."""
+    declared = _declared_archetype(floors, capture)
+    if not declared or declared[0] != _GROWER_ARCHETYPE:
+        return None
+    frame = (capture.get("business_frame") or {}).get(
+        capture["subject"].get("ticker"))
+    return frame if isinstance(frame, dict) else None
+
+
+def _runway_units(fact_ids, facts_by_id):
+    """Each recorded runway fact's unit, in order (audit finding r1-1 of
+    sub-charge b): the months of cash left are worked out only where they
+    are all one unit - the council normalises no units anywhere, it
+    compares like with like and refuses otherwise."""
+    return [(fid, facts_by_id[fid].get("unit")) for fid in fact_ids
+            if fid in facts_by_id]
+
+
+def growth_runway(pack, floors):
+    """The months of cash a growth company has left (owner rulings AC50(7)
+    and AC50(8); architect ruling A6), or None for any other subject or a
+    runway block that cannot be read.
+
+    Returns {"cash", "burn", "threshold_months", "below", "months"}: the
+    cash is the sum of the block's cash facts (cash plus short-term
+    investments; an undrawn credit line is shown, never counted); the burn
+    is the last four quarters' capital spending less operating cash flow,
+    or None where the company generates cash; below is True where the cash
+    covers fewer months of that burn than the floors' line. The test is
+    exact multiplication, never division: below where cash times twelve is
+    less than the line times the annual burn. The months are worked out to
+    one place for printing only, cut toward zero so a company under the
+    line never prints at it - never written to the pack, never compared. The pages and the publisher read this helper; nothing
+    computes the months twice."""
+    capture = (pack or {}).get("capture") or {}
+    if not capture.get("subject"):
+        return None
+    frame = _grower_frame(floors, capture)
+    data = (floors.get("archetype_measures") or {}).get("growth_runway")
+    block = (frame or {}).get("growth_runway")
+    if not isinstance(block, dict) or not isinstance(data, dict):
+        return None
+    facts_by_id = {fact["id"]: fact for fact in capture.get("tier1") or []}
+
+    def amount(fact_id):
+        fact = facts_by_id.get(fact_id) if isinstance(fact_id, str) else None
+        return gate._decimal_or_none(fact["value"]) if fact else None
+
+    cash_ids = _dedupe(block.get("cash_facts") or [])
+    amounts = [amount(fact_id) for fact_id in cash_ids]
+    operating = amount(block.get("operating_cash_flow_fact"))
+    spending = amount(block.get("capital_expenditure_fact"))
+    if (not cash_ids or None in amounts or operating is None
+            or spending is None):
+        return None
+    if len({unit for _, unit in _runway_units(
+            cash_ids + [block.get("operating_cash_flow_fact"),
+                        block.get("capital_expenditure_fact")],
+            facts_by_id)}) != 1:
+        return None
+    cash = sum(amounts, decimal.Decimal(0))
+    burn = spending - operating
+    threshold = data.get("threshold_months")
+    if burn <= 0:
+        return {"cash": cash, "burn": None, "threshold_months": threshold,
+                "below": False, "months": None}
+    # Tenths of a month, cut toward zero by exact integer division, so the
+    # printed months never cross the line the multiplication decided
+    # (audit finding r3-1 of sub-charge (b)).
+    months = (cash * 12 * 10 // burn / 10).quantize(decimal.Decimal("0.1"))
+    return {"cash": cash, "burn": burn, "threshold_months": threshold,
+            "below": cash * 12 < decimal.Decimal(threshold) * burn,
+            "months": months}
+
+
+def _grower_failures(floors, row, frame, rating, decisive_ids,
+                     facts_by_id):
+    """Why a growth company's frame breaks the rule the floors set for it
+    (owner rulings AC50 (4), (5) and (7); architect ruling A10) - one
+    (what, why, where) per breach - or nothing where it holds. The runway
+    block's SHAPE is the provenance gate's; this is the rule against the
+    floors data. Its freshness is read in check(), as the financial
+    institution's blocks are."""
+    failures = []
+    data = (floors.get("archetype_measures") or {}).get("growth_runway") or {}
+    block = frame.get("growth_runway")
+    block = block if isinstance(block, dict) else {}
+    cash_ids = list(data.get("cash_ids") or ())
+    burn_ids = data.get("burn_ids") or {}
+    cash_facts = [fid for fid in block.get("cash_facts") or ()
+                  if isinstance(fid, str)]
+    for fid in cash_facts:
+        if fid not in cash_ids:
+            failures.append((
+                "a cash fact the floors name for the months of cash left",
+                "owner ruling AC50(7): the months of cash left count cash "
+                "and short-term investments only - %s - and the frame's "
+                "growth_runway counts '%s' as cash; a credit line or any "
+                "other figure is shown, never counted"
+                % (", ".join("'%s'" % item for item in cash_ids), fid),
+                "growth_runway.cash_facts: %s"
+                % " or ".join("'%s'" % item for item in cash_ids)))
+    burn_facts = []
+    for key, role, words in (
+            ("operating_cash_flow_fact", "operating_cash_flow",
+             "operating cash flow"),
+            ("capital_expenditure_fact", "capital_spending",
+             "capital spending")):
+        named, wanted = block.get(key), burn_ids.get(role)
+        if isinstance(named, str):
+            burn_facts.append(named)
+        if wanted and named != wanted:
+            failures.append((
+                "the cash burn fact the floors name for %s" % words,
+                "owner ruling AC50(7): the cash burn is the last four "
+                "quarters' operating cash flow less capital spending, and "
+                "the %s it is counted from is '%s' - the frame's "
+                "growth_runway names '%s'" % (words, wanted, named),
+                "growth_runway.%s: '%s'" % (key, wanted)))
+    for fid in _dedupe(cash_facts + burn_facts):
+        fact = facts_by_id.get(fid)
+        if fact is None:
+            continue
+        value = gate._decimal_or_none(fact["value"])
+        if value is None:
+            failures.append((
+                "a number for '%s', which the months of cash left are "
+                "counted from" % fid,
+                "owner ruling AC50(7): the months of cash left are worked "
+                "out from '%s', and its value is not a number" % fid,
+                "a numeric reading of '%s'" % fid))
+        elif fid == block.get("capital_expenditure_fact") and value < 0:
+            failures.append((
+                "capital spending recorded as the amount spent",
+                "owner ruling AC50(7): the cash burn is operating cash flow "
+                "less capital spending, and '%s' is below zero - recorded "
+                "with its cash-flow sign it would shrink the burn instead "
+                "of adding to it" % fid,
+                "the capital spending as the amount spent, without the "
+                "sign the cash-flow statement prints it with"))
+    units = _runway_units(_dedupe(cash_facts + burn_facts), facts_by_id)
+    if len({unit for _, unit in units}) > 1:
+        failures.append((
+            "one unit for the figures the months of cash left are counted "
+            "from",
+            "owner ruling AC50(7): the months of cash left are worked out "
+            "from the cash and the cash burn together, and they are "
+            "recorded in different units - %s - so no months can be struck "
+            "from them" % ", ".join("'%s' in %s" % (fid, unit)
+                                    for fid, unit in units),
+            "the growth_runway block's cash and burn facts recorded in one "
+            "unit"))
+    # Architect ruling A10: the cash and its burn, and the growth the
+    # yardstick is read beside, always decide a growth company's case.
+    runway_ids = _dedupe(cash_facts + burn_facts)
+    missing = [fid for fid in runway_ids if fid not in decisive_ids]
+    if runway_ids and missing:
+        failures.append((
+            "a decisive metric resting on the months of cash left",
+            "architect ruling A10 under owner ruling AC50(7): a growth "
+            "company's cash and its cash burn always decide the case, and "
+            "no decisive metric in the business frame rests on %s"
+            % ", ".join("'%s'" % fid for fid in missing),
+            "name the growth_runway block's cash and burn facts in the "
+            "'answered_by' of a decisive metric"))
+    missing = [fid for fid in _GROWER_GROWTH_PAIR if fid not in decisive_ids]
+    if missing:
+        failures.append((
+            "a decisive metric resting on revenue growth",
+            "architect ruling A10 under owner ruling AC50(5): the growth "
+            "yardstick is read beside the latest quarter's revenue growth "
+            "against the same quarter a year ago, so that growth always "
+            "decides the case, and no decisive metric in the business "
+            "frame rests on %s" % ", ".join("'%s'" % fid for fid in missing),
+            "name %s in the 'answered_by' of a decisive metric"
+            % " and ".join("'%s'" % fid for fid in _GROWER_GROWTH_PAIR)))
+    # Owner ruling AC50(4): no sales, or a loss on every sale, is not a
+    # growth company the yardstick can be struck for. A zero is already
+    # the denominators' own refusal; this is the half below zero.
+    denominators = (rating or {}).get("subject_denominator_facts") or []
+    for fid, role in zip(denominators, row.get("denominator_roles") or ()):
+        fact = facts_by_id.get(fid) if isinstance(fid, str) else None
+        value = gate._decimal_or_none(fact["value"]) if fact else None
+        if value is not None and value < 0:
+            words = role.replace("_", " ")
+            failures.append((
+                "%s above zero" % words,
+                "owner ruling AC50(4): the growth yardstick divides "
+                "enterprise value by %s, and '%s' is below zero - %s; the "
+                "council refuses such a company openly until the owner "
+                "rules on companies without sales or with a loss on every "
+                "sale" % (words, fid,
+                          "a loss on every sale" if role == "gross_profit"
+                          else "no sales to speak of"),
+                "the owner's ruling on such companies comes first; no "
+                "figure in this pack can stand in for it"))
+    # The architect's ruling on P-GROWTHc-4 under owner ruling AC50(7): the
+    # yardstick's two halves - the floors row's numerator and the gross
+    # profit the rating row divides it by - are recorded in one unit, as
+    # the months of cash left are; the council normalises no units.
+    halves = [row.get("subject_numerator")] + [
+        fid for fid, role in zip(denominators,
+                                 row.get("denominator_roles") or ())
+        if role == "gross_profit"]
+    units = _runway_units(_dedupe([fid for fid in halves
+                                   if isinstance(fid, str)]), facts_by_id)
+    if len(units) == 2 and len({unit for _, unit in units}) > 1:
+        failures.append((
+            "one unit for the two halves of the growth yardstick",
+            "owner ruling AC50(7): the growth yardstick divides the "
+            "enterprise value by the last four quarters' gross profit, and "
+            "they are recorded in different units - %s - so no multiple can "
+            "be struck from them" % ", ".join("'%s' in %s" % (fid, unit)
+                                              for fid, unit in units),
+            "the yardstick's enterprise value and gross profit recorded in "
+            "one unit"))
+    return failures
+
+
+def _canonical_test_terms(floors, declared):
+    """The canonical tests the declared archetype re-points or adds, each
+    {"words": [why, where], "authority", and "answered_by_ids",
+    "answered_by_prefix" or "answered_by_prefix_where_carried"} - the
+    archetype's own block, then its sub-type's lifts (owner rulings
+    AC30(1) and AC50(9)). Empty for every other subject, whose tests read
+    the guide unchanged."""
+    if not declared:
+        return {}
+    block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
+    terms = dict(block.get("canonical_tests") or {})
+    terms.update(_archetype_lifts(floors, declared).get("canonical_tests")
+                 or {})
+    return terms
+
+
+def _test_term_failures(term, answered_by, tier1_ids):
+    """What a canonical test's answer lacks against its term: (the facts
+    that answer it, what it names instead) per breach, in the words the
+    refusal completes."""
+    failures = []
+    ids = list(term.get("answered_by_ids") or ())
+    missing = [fid for fid in ids if fid not in answered_by]
+    if missing:
+        failures.append((", ".join("'%s'" % fid for fid in ids),
+                         "does not name %s"
+                         % ", ".join("'%s'" % fid for fid in missing)))
+    prefix = term.get("answered_by_prefix")
+    if prefix and not any(fid.startswith(prefix) and fid in tier1_ids
+                          for fid in answered_by):
+        failures.append(("a '%s' fact" % prefix, "names none"))
+    carried = term.get("answered_by_prefix_where_carried")
+    present = [fid for fid in tier1_ids
+               if carried and fid.startswith(carried)]
+    if present and not any(fid in present for fid in answered_by):
+        failures.append((
+            "a '%s' fact wherever the pack carries one, as it carries %s"
+            % (carried, ", ".join("'%s'" % fid for fid in present)),
+            "names none"))
+    return failures
+
+
+# The period a quarterly member's id ends in (owner rulings AC49(1) and
+# AC50(1)): a quarter of a year, or - for a company reporting every six
+# months - one half of it.
+_PERIOD_QUARTER = re.compile(r"q[1-4]\Z")
+_PERIOD_HALF = re.compile(r"h([12])\Z")
+
+
+def _period_place(slug):
+    """Where a quarterly member's period falls: ("quarter", n) or
+    ("half", n), n counting quarters or halves from year nought so the
+    one before is n - 1; None where the slug names no single quarter or
+    half of one year. A quarter is read by the gate's own period_order; a
+    bare year is not a quarter, though period_order reads it as its last."""
+    tokens = slug.split("_")
+    halves = [token for token in tokens if _PERIOD_HALF.match(token)]
+    if halves:
+        rest = [token for token in tokens if token not in halves]
+        order = gate.period_order("_".join(rest))
+        if (len(halves) != 1 or order is None
+                or any(_PERIOD_QUARTER.match(token) for token in rest)):
+            return None
+        return "half", order[0] * 2 + int(_PERIOD_HALF.match(
+            halves[0]).group(1)) - 1
+    order = gate.period_order(slug)
+    if order is None or not any(_PERIOD_QUARTER.match(token)
+                                for token in tokens):
+        return None
+    return "quarter", order[0] * 4 + order[1] - 1
+
+
+def _continuing_profit_suffix(floors, declared, capture):
+    """The id ending of the continuing business's operating income where
+    the frame declares a model transition, or "" (the architect's ruling
+    on audit finding r1-3's residual, under owner ruling AC50(1): standard
+    accounting's continuing-operations line, the AC30(4) precedent). Read
+    from the declared row where it names the roles its exited business
+    touches, else from the growth archetype's rows, which do: the rule
+    weighs every company it governs against the growth path, so both
+    directions read the same figures."""
+    subject = capture["subject"]
+    frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
+    if ((frame or {}).get("what_is_changing") or {}).get(
+            "kind") != "model_transition":
+        return ""
+    measures = floors.get("archetype_measures") or {}
+    table = measures.get("table") or {}
+
+    def rows(archetype, subtype=None):
+        row = table.get(archetype) or {}
+        if not row.get("subtypes"):
+            return [row]
+        if subtype:
+            return [row["subtypes"].get(subtype) or {}]
+        return list(row["subtypes"].values())
+
+    for candidates in (rows(*declared), rows(
+            (measures.get("profitability_rule") or {}).get(
+                "growth_archetype"))):
+        suffixes = {row.get("continuing_suffix") for row in candidates
+                    if row.get("exited_business_roles")
+                    and row.get("continuing_suffix")}
+        if len(suffixes) == 1:
+            return suffixes.pop()
+    return ""
+
+
+def _placed_members(members, prefix, suffix):
+    """({place: [member ids]}, [ids no period can be read from]) for the
+    members of a quarterly family, each placed by _period_place from the
+    id between `prefix` and `suffix` - the one reading of which quarter a
+    member is (owner rulings AC49(1) and AC50(1); the producer's quarters,
+    the architect's ruling on P-RESOURCEa-10, read the same way)."""
+    places, unplaced = {}, []
+    for fact_id in members:
+        place = _period_place(fact_id[len(prefix):len(fact_id)
+                                      - len(suffix)])
+        if place is None:
+            unplaced.append(fact_id)
+        else:
+            places.setdefault(place, []).append(fact_id)
+    return places, unplaced
+
+
+def _latest_wanted(capture, places, rule):
+    """(kind, need, wanted): the periods the latest quarters (or halves)
+    are, newest first, counted back from the newer of the newest member and
+    the latest period the pack reports - `need` of them, the rule's
+    quarters or half-years; wanted is empty where neither is known."""
+    kinds = sorted({kind for kind, _ in places})
+    kind = kinds[0] if kinds else "quarter"
+    need = int(rule["half_years"] if kind == "half" else rule["quarters"])
+    newest = max((number for _, number in places), default=None)
+    reported = _latest_reported_place(capture, kind)
+    if reported is not None:
+        newest = reported if newest is None else max(newest, reported)
+    return kind, need, ([] if newest is None
+                        else [newest - step for step in range(need)])
+
+
+def _profitability_failures(floors, declared, capture, facts_by_id,
+                            captured_day):
+    """The rule that chooses between earnings and the growth path (owner
+    rulings AC49(1) and AC50 (1)-(3)), read from the floors'
+    profitability_rule: for a single name declaring an archetype the rule
+    governs, or the growth archetype, and captured on or after the day its
+    quarterly floor is ruled from, the operating income of the latest four
+    quarters (or two halves) decides. A governed archetype short of that
+    refuses and points at the growth archetype; the growth archetype with
+    it refuses as graduated. Where the frame declares a model transition
+    and the pack carries the continuing business's quarters, those decide
+    and the whole business's are set aside; without them the whole
+    business decides, as where no exit is declared. One (what, why,
+    where) per breach."""
+    rule = ((floors.get("archetype_measures") or {})
+            .get("profitability_rule") or {})
+    if not rule or not declared:
+        return []
+    archetype = declared[0]
+    governs = list(rule.get("governs") or ())
+    growth = rule.get("growth_archetype")
+    if archetype not in governs and archetype != growth:
+        return []
+    prefix = rule["profit_prefix"]
+    source = "the operating income of each quarter, from its own filing"
+    for entry in _archetype_floor_entries(floors, declared):
+        if (entry.get("kind") == "parallel_prefixes"
+                and prefix in (entry.get("prefixes") or ())):
+            source = entry.get("likely_source") or source
+            if (entry.get("applies_from") and captured_day
+                    < date.fromisoformat(entry["applies_from"])):
+                return []
+    failures = []
+    suffix = _continuing_profit_suffix(floors, declared, capture)
+    members = [fact["id"] for fact in capture["tier1"]
+               if fact["id"].startswith(prefix)
+               and len(fact["id"]) > len(prefix)]
+    continuing = [fact_id for fact_id in members if suffix
+                  and fact_id.endswith(suffix)
+                  and len(fact_id) > len(prefix) + len(suffix)]
+    if continuing:
+        members = continuing
+    else:
+        suffix = ""
+    places, unplaced = _placed_members(members, prefix, suffix)
+    for fact_id in unplaced:
+        failures.append((
+            "a quarter the rule can place: '%s'" % fact_id,
+            "owner ruling AC49(1): the latest quarters are read newest "
+            "first by their period, and '%s' ends in no single quarter "
+            "or half of one year, so it cannot be placed among them"
+            % fact_id,
+            "the id ending in the quarter's period, as the floor names "
+            "it: %s" % source))
+    if failures:
+        return failures
+    kinds = sorted({kind for kind, _ in places})
+    if len(kinds) > 1:
+        return [(
+            "operating income by one kind of period",
+            "owner ruling AC50(1): a company reports by the quarter or by "
+            "the half-year, and the operating-income members here mix the "
+            "two (%s) - the rule reads the latest quarters or the latest "
+            "halves, never a blend" % ", ".join(
+                "'%s'" % fact_id for place in sorted(places)
+                if place[0] == "half" for fact_id in places[place]),
+            source)]
+    for place in sorted(places):
+        if len(places[place]) > 1:
+            failures.append((
+                "one operating-income member per period",
+                "owner ruling AC49(1): %s name the same period, so the "
+                "latest quarters cannot be counted"
+                % " and ".join("'%s'" % item for item in places[place]),
+                source))
+    if failures:
+        return failures
+    kind, need, wanted = _latest_wanted(capture, places, rule)
+    newest = wanted[0] if wanted else None
+    words = "quarters" if kind == "quarter" else "half-years"
+    missing = [number for number in wanted if (kind, number) not in places]
+    if newest is None or missing:
+        return [(
+            "the operating income of each of the %d latest %s" % (need,
+                                                                words),
+            "owner ruling AC49(1): whether this company is rated on its "
+            "earnings or on the growth path is chosen by its %d latest %s, "
+            "and the pack carries %s - so the rule cannot choose"
+            % (need, words,
+               "no '%s' member at all" % prefix if newest is None else
+               "no '%s' member for %s" % (
+                   prefix + ("..." + suffix if suffix else ""), ", ".join(
+                   _period_words(kind, number) for number in missing))),
+            source)]
+    chosen = [places[(kind, number)][0] for number in wanted]
+    unread = [fact_id for fact_id in chosen
+              if gate._decimal_or_none(facts_by_id[fact_id]["value"])
+              is None]
+    if unread:
+        return [(
+            "a number for the operating income of '%s'" % fact_id,
+            "owner ruling AC49(1): the rule reads whether each of the "
+            "latest %s shows an operating profit, and '%s' is not a number"
+            % (words, fact_id), source) for fact_id in unread]
+    losses = [fact_id for fact_id in chosen
+              if gate._decimal_or_none(facts_by_id[fact_id]["value"]) <= 0]
+    if archetype in governs and losses:
+        return [(
+            "four profitable quarters behind a %s"
+            % archetype.replace("_", " "),
+            "owner ruling AC49(1): a company without four profitable "
+            "quarters behind it is rated on the growth path, never on "
+            "earnings it does not yet have - the frame declares a '%s', "
+            "and the operating income of %s is at or below zero"
+            % (archetype, ", ".join("'%s'" % item for item in losses)),
+            "the archetype in the business frame: '%s', the growth path, "
+            "rated on enterprise value over gross profit beside how fast "
+            "sales grow" % growth)]
+    if archetype == growth and not losses:
+        return [(
+            "a growth company without four profitable quarters behind it",
+            "owner rulings AC49(1) and AC50(2): the rule works both ways - "
+            "the operating income of each of the latest %s (%s) is above "
+            "zero, so this company has graduated and is rated on its "
+            "earnings, not on the growth path"
+            % (words, ", ".join("'%s'" % item for item in chosen)),
+            "the archetype in the business frame: one of %s, the "
+            "archetypes rated on earnings" % ", ".join(
+                "'%s'" % item for item in governs))]
+    return []
+
+
+def _producer_rule_failures(floors, declared, frame, capture, facts_by_id,
+                            captured_day, stale_words_of):
+    """The rule both ways (owner ruling AC51(R4); architect ruling B8), read
+    from the floors' resource_rule: a single name captured on or after its
+    applies_from whose frame declares an archetype the rule refuses, and
+    whose pack carries any tier-1 fact whose id starts with reserve_prefix
+    (a class, never a list of ids), is refused and pointed at the producer -
+    unless it is a profit-maker whose integrated_major block passes the
+    three-arm test (owner ruling AC52(1) as amended), which a profit-maker's
+    block meets wherever it is declared. The four-quarters rule is not
+    touched: a producer steps outside it by not being governed (AC54(R13)).
+    `stale_words_of(fact_id)` is the check's own: None for a fact fresh at
+    capture through every operand, else the words saying it is stale.
+    One (what, why, where) per breach."""
+    rule = ((floors.get("archetype_measures") or {}).get("resource_rule")
+            or {})
+    if not rule or not declared or (
+            rule.get("applies_from") and captured_day
+            < date.fromisoformat(rule["applies_from"])):
+        return []
+    archetype = declared[0]
+    if archetype not in (rule.get("refuses") or ()):
+        return []
+    block = frame.get("integrated_major")
+    if (archetype == gate._INTEGRATED_MAJOR_ARCHETYPE
+            and isinstance(block, dict)):
+        products = (floors.get("archetype_measures") or {}).get(
+            "resource_products") or {}
+        return _integrated_major_failures(
+            rule, block, facts_by_id, stale_words_of, products,
+            integrated_major_prices(rule, products, [
+                fact["id"] for fact in capture["tier1"]]))
+    reserves = _reserve_ids(rule, [fact["id"] for fact in capture["tier1"]])
+    if not reserves:
+        return []
+    why = ("owner ruling AC51(R4): a company that reports reserves and earns "
+           "from what it extracts is rated as a producer - never on earnings "
+           "at the top of the cycle, never as a growth company - and the "
+           "frame declares '%s' while the pack carries the reserves %s"
+           % (archetype, ", ".join("'%s'" % fid for fid in reserves)))
+    where = ("the archetype '%s' in the business frame, with its "
+             "producer_subtype and resource_base" % rule["producer_archetype"])
+    if archetype == gate._INTEGRATED_MAJOR_ARCHETYPE:
+        why += ("; an integrated oil major is rated as a profit-maker only "
+                "with the integrated_major block, which this frame does not "
+                "carry (owner ruling AC52(1))")
+        where += (" - or, for an integrated oil major, the frame's "
+                  "integrated_major block")
+    return [("the producer archetype for a company that reports reserves",
+             why, where)]
+
+
+# The architect's ruling on P-RESOURCEc-3 (owner ruling AC52(1): an
+# integrated major is rated as a profit-maker "with its reserves and today's
+# commodity price shown beside"): today's price of an integrated oil major is
+# a price of one of these products, named in its id as a whole word (the name
+# rule of sub-charge (b)), in the product's price unit from the floors.
+_INTEGRATED_MAJOR_PRODUCTS = ("crude_oil", "natural_gas")
+
+
+def integrated_major_prices(rule, products, tier1_order):
+    """[(fact id, product)] in the pack's order: every today's-price fact
+    (the resource rule's reference_price_fact family) naming crude oil or
+    natural gas as a whole word - the one set the three-arm test reads and
+    the integrated major's pages print."""
+    prefixes = tuple((rule.get("block_families") or {}).get(
+        "reference_price_fact") or ())
+    found = []
+    for fid in tier1_order:
+        named = [product for product in _INTEGRATED_MAJOR_PRODUCTS
+                 if product in products and "_%s_" % product in "_%s_" % fid]
+        if prefixes and fid.startswith(prefixes) and named:
+            found.append((fid, named[0]))
+    return found
+
+
+def _integrated_major_failures(rule, block, facts_by_id, stale_words_of,
+                               products, prices):
+    """The integrated oil major's three-arm test (owner ruling AC52(1) as
+    amended; the architect's session-2 ruling on the arms): each arm's share
+    fact is known by its id's prefix, as data; upstream production and
+    downstream refining and marketing are each at or above the floors'
+    share of group capital employed, in percent; midstream is measured only
+    where the block names its share fact. Its evidence facts, required
+    always, are the contract's and the gate's. A failed arm refuses naming
+    the arm and its figure or its id, and points at the producer.
+    Every fact the block names is checked here as one class, in one loop
+    (audit round 1, r1-8; the architect's ruling on P-RESOURCEa-14): it is
+    read only fresh at capture, and each arm share is also a number in
+    percent from 0 to 100 - a stale or impossible share is refused by name
+    and never set against the threshold. The arms' sum is deliberately not
+    bounded: a segment note's corporate and eliminations lines can be
+    negative, so honest arm shares may total over 100, and the evidence
+    auditor checks the figures against the segment note.
+    Today's price (the architect's ruling on P-RESOURCEc-3) is read in the
+    same loop: every fact `prices` names (integrated_major_prices) is fresh
+    at capture under a rule no looser than its product's, and a number in
+    its product's price unit; at least one is carried."""
+    failures = []
+    prefixes = rule.get("integrated_major_arm_prefixes") or {}
+    least = decimal.Decimal(str(rule["integrated_major_min_share"]))
+    downstream = rule["integrated_major_downstream_words"]
+    words = {"upstream": "upstream production",
+             "downstream": "downstream " + downstream,
+             "midstream": "midstream"}
+    producer = "the archetype '%s' in the business frame" % (
+        rule["producer_archetype"])
+    test = ("owner ruling AC52(1) as amended: an integrated oil major's "
+            "upstream production and downstream %s arms are each at or above "
+            "%s percent of the group's capital employed over the last three "
+            "financial years combined, midstream too where the company "
+            "reports it as its own segment" % (downstream, least))
+    beside = ("owner ruling AC52(1): an integrated oil major is rated as a "
+              "profit-maker with its reserves and today's commodity price "
+              "shown beside")
+    named = [(arm, block.get(arm + "_share_fact"))
+             for arm in ("upstream", "downstream", "midstream")]
+    named += [(None, fid) for fid in
+              block.get("midstream_evidence_facts") or ()]
+    named += [(("price", product), fid) for fid, product in prices]
+    for arm, fid in named:
+        if not isinstance(fid, str):
+            continue
+        price = arm[1] if isinstance(arm, tuple) else None
+        today = ("today's price of %s beside an integrated oil major"
+                 % price.replace("_", " ") if price else None)
+        prefix = (prefixes.get(arm) or "") if arm and not price else ""
+        if arm and not price and not fid.startswith(prefix):
+            failures.append((
+                "a share fact for the %s arm of an integrated oil major"
+                % words[arm],
+                "%s - each arm's share is known by its fact id's prefix, "
+                "'%s' for the %s arm, and the block names '%s'%s"
+                % (test, prefix, arm, fid,
+                   "; the downstream arm is %s, a chemicals arm is not "
+                   "downstream" % downstream if arm == "downstream" else ""),
+                "integrated_major.%s_share_fact: a fact whose id starts "
+                "'%s', or %s" % (arm, prefix, producer)))
+            continue
+        fact = facts_by_id.get(fid)
+        if fact is None:
+            continue
+        stale = stale_words_of(fid)
+        if stale is not None:
+            failures.append((
+                "a fresh reading of %s" % (
+                    today if price else
+                    "the %s arm's share of capital employed" % words[arm]
+                    if arm else
+                    "the midstream evidence of an integrated oil major"),
+                "%s - %s%s" % (
+                    beside if price else test, "" if arm else "its midstream "
+                    "is shown by the company's own reported pipeline, "
+                    "processing or LNG assets, ", "and " + stale),
+                "a fresher reading of '%s' from the source that produced it"
+                % fid))
+            continue
+        if price:
+            data = products[price]
+            ceiling = data.get("max_price_freshness_days")
+            if (gate._decimal_or_none(fact["value"]) is None
+                    or fact.get("unit") != data["price_unit"]):
+                failures.append((
+                    "%s, a number in %s" % (today, data["price_unit"]),
+                    "%s - and '%s' is recorded as '%s' in %s; the council "
+                    "converts no units" % (beside, fid, fact["value"],
+                                           fact.get("unit")),
+                    "'%s' as a number in %s" % (fid, data["price_unit"])))
+            elif (ceiling is not None
+                  and fact["freshness_rule_days"] > ceiling):
+                failures.append((
+                    "%s, read under a rule no looser than %s days"
+                    % (today, ceiling),
+                    "%s - and '%s' declares a %s-day rule, so a price that "
+                    "old would still read as today's" % (
+                        beside, fid, fact["freshness_rule_days"]),
+                    "'%s' dated at the sitting from %s, its freshness rule "
+                    "at most %s days" % (fid, data.get("benchmark_words"),
+                                         ceiling)))
+            continue
+        if arm is None:
+            continue
+        value = gate._decimal_or_none(fact["value"])
+        if value is None or fact.get("unit") != "percent":
+            failures.append((
+                "the %s arm's share of capital employed in percent"
+                % words[arm],
+                "%s - and '%s' is recorded as '%s' in %s, so the arm "
+                "cannot be set against the share"
+                % (test, fid, fact["value"], fact.get("unit")),
+                "'%s' as a number in percent" % fid))
+        elif not 0 <= value <= 100:
+            failures.append((
+                "the %s arm's share of capital employed as a percent from 0 "
+                "to 100" % words[arm],
+                "%s - and '%s' is %s percent, which no share of the group's "
+                "capital employed can be, so the arm cannot be set against "
+                "the share" % (test, fid, fact["value"]),
+                "'%s' as the arm's share from the segment note, from 0 to "
+                "100 percent" % fid))
+        elif value < least:
+            failures.append((
+                "the %s arm at or above %s percent of capital employed"
+                % (words[arm], least),
+                "%s - and the %s arm's share '%s' is %s percent, so the "
+                "company is not an integrated major and is rated as a "
+                "producer" % (test, arm, fid, fact["value"]),
+                "%s, or an arm share at or above %s percent"
+                % (producer, least)))
+    if not prices:
+        failures.append((
+            "today's price of crude oil or natural gas beside an integrated "
+            "oil major",
+            "%s - and the pack carries no '%s' fact naming crude oil or "
+            "natural gas" % (beside, "' or '".join(
+                (rule.get("block_families") or {}).get(
+                    "reference_price_fact") or ())),
+            "a today's-price fact such as 'reference_price_crude_oil' or "
+            "'reference_price_natural_gas', dated at the sitting, in %s"
+            % " or ".join(products[product]["price_unit"] for product in
+                          _INTEGRATED_MAJOR_PRODUCTS if product in products)))
+    return failures
+
+
+def _producer_unit_failures(row, rating, counted, facts_by_id):
+    """The yardstick's halves (the dispatch update's item 3, the architect's
+    ruling on P-GROWTHc-4 applied to the producer; owner rulings AC52(R5)
+    and (R6)): the enterprise value and the cash flow it is divided by are
+    recorded in one unit, and the reserves in the unit the floors count the
+    product in - the sub-type's boe_unit for oil and gas, else the
+    product's own - or the council refuses by name; it converts no units.
+    A product off the floors' list (`counted` None) is refused by name in
+    _producer_failures, which calls this."""
+    failures = []
+    roles = dict(zip(row.get("denominator_roles") or (),
+                     (rating or {}).get("subject_denominator_facts") or ()))
+    halves = [fid for fid in (row.get("subject_numerator"),
+                              roles.get("cash_flow")) if isinstance(fid, str)]
+    units = _runway_units(_dedupe(halves), facts_by_id)
+    if len(units) == 2 and units[0][1] != units[1][1]:
+        failures.append((
+            "one unit for the enterprise value and the cash flow of the "
+            "producer's yardstick",
+            "owner ruling AC52(R5): the producer's yardstick divides the "
+            "enterprise value by the last four quarters' operating cash "
+            "flow, and they are recorded in different units - %s - so no "
+            "multiple can be struck from them"
+            % ", ".join("'%s' in %s" % (fid, unit) for fid, unit in units),
+            "the yardstick's enterprise value and operating cash flow "
+            "recorded in one unit"))
+    wanted = (counted or {}).get("unit")
+    reserves = roles.get("reserves")
+    fact = facts_by_id.get(reserves) if isinstance(reserves, str) else None
+    if wanted and fact is not None and fact.get("unit") != wanted:
+        failures.append((
+            "the reserves in the unit the floors count them in",
+            "owner ruling AC52(R6): a producer's reserves are counted in "
+            "the commodity's own unit - %s here - and '%s' is recorded in "
+            "%s; the council converts no units"
+            % (wanted, reserves, fact.get("unit")),
+            "'%s' recorded in %s" % (reserves, wanted)))
+    return failures
+
+
+# The producer's own output and quarterly families (owner rulings AC54(R14)
+# and (R16)): the last four quarters' output the reserve life is read
+# against, the prefix a by-product's own output starts with, and the two
+# quarterly families of the evidence list's first floor, each with its words.
+_PRODUCER_OUTPUT_TTM = "production_ttm"
+_PRODUCER_OUTPUT_PREFIX = "production_"
+_PRODUCER_QUARTERS = (("production_quarter_", "output"),
+                      ("realized_price_quarter_", "price received"))
+# The headline quarterly figure of each family above, in the same order.
+_PRODUCER_HEADLINES = ("production_q", "realized_price_q")
+# What the producer pages print beside the rule's own figures (the
+# architect's ruling on P-RESOURCEc-4 and -5): each read as a number, fresh.
+_PRODUCER_YEAR_AGO = ("production_prior_year_q", "realized_price_prior_year_q")
+_PRODUCER_STANDARDIZED = "standardized_measure"
+_PRODUCER_BALANCE = ("total_debt_mrq_end", "cash_and_investments_mrq_end",
+                     "asset_retirement_obligation")
+
+
+def _reserve_ids(rule, fact_ids):
+    """The ids among `fact_ids` that are reported reserves: starting with
+    the rule's reserve_prefix and never with its reserve_history_prefix, a
+    past year-end's figure (the architect's ruling on P-RESOURCEa-2) - the
+    one place the reserve prefix is read."""
+    prefix = rule.get("reserve_prefix") or ""
+    history = rule.get("reserve_history_prefix")
+    return [fid for fid in fact_ids if isinstance(fid, str) and prefix
+            and fid.startswith(prefix) and len(fid) > len(prefix)
+            and not (history and fid.startswith(history))]
+
+
+def _producer_units(floors, declared, frame):
+    """The units a producer's figures are counted in (owner ruling AC52(R6);
+    lesson 2: one function reads every unit against the floors' product
+    list, for the subject and every peer): {"product", "unit" - the rated
+    reserves' unit, the sub-type's boe_unit for oil and gas, else the
+    product's own - "price_unit", "quantities" - the units a reserve or
+    output figure may be counted in - "costs" - the units a unit cost may
+    be stated in - and "product_data"}, or None where the frame's product
+    is off the floors' list. The council converts no units."""
+    measures = floors.get("archetype_measures") or {}
+    row = (((((measures.get("table") or {}).get(declared[0]) or {})
+             .get("subtypes") or {}).get(declared[1])) or {})
+    product = ((frame or {}).get("resource_base") or {}).get("product")
+    data = ((measures.get("resource_products") or {}).get(product)
+            if isinstance(product, str) else None)
+    if not isinstance(data, dict):
+        return None
+    boe = row.get("boe_unit")
+    return {"product": product, "unit": boe or data["unit"],
+            "price_unit": data["price_unit"],
+            "quantities": {unit for unit in (data["unit"], boe) if unit},
+            "costs": {unit for unit in (data["price_unit"],
+                                        row.get("boe_price_unit")) if unit},
+            "product_data": data}
+
+
+def _producer_frame(floors, capture):
+    """(declared, frame) for a single name whose frame declares the producer
+    archetype with a sub-type the table knows, else None."""
+    declared = _declared_archetype(floors, capture)
+    if (not declared or declared[0] != gate._PRODUCER_ARCHETYPE
+            or declared[1] is None):
+        return None
+    frame = (capture.get("business_frame") or {}).get(
+        capture["subject"].get("ticker"))
+    return (declared, frame) if isinstance(frame, dict) else None
+
+
+def resource_readings(pack, floors):
+    """The producer's worked-out figures (owner rulings AC52(R5), AC53(R9)
+    and AC54(R13); architect ruling B7), or None for any other subject, a
+    product off the floors' list or a resource block that cannot be read.
+
+    Returns {"product", "unit", "price_unit", "reserves" (the rated
+    denominator's value), "production_ttm", "reserve_life_years",
+    "value_per_unit", "reserve_price", "today_price",
+    "today_below_reserve_price", "cash_flow_negative"}. Units are read
+    through _producer_units only: a reserve or output figure outside the
+    product's unit (or the barrel of oil equivalent for oil and gas) reads
+    None, the reserve life needs the reserves and the output in ONE unit,
+    and a price outside the product's price unit reads None - the council
+    never converts. The reserve price is the LOWEST price any cited reserve
+    figure was counted at, and today is below it only by exact comparison
+    against that lowest price, every cited reserve price read (None where
+    any is unreadable). The reserve life (reserves over the last four
+    quarters' output) and the value per unit (enterprise value over the
+    reserves) are cut toward zero - the life to one place, the value per
+    unit to three significant figures in the enterprise value's unit
+    (P-RESOURCEc-1) - for printing only - never compared, never written to the pack. The pages and the
+    chairman's sentence read this helper; nothing works a figure out
+    twice."""
+    capture = (pack or {}).get("capture") or {}
+    if not capture.get("subject"):
+        return None
+    found = _producer_frame(floors, capture)
+    block = (found[1].get("resource_base") if found else None)
+    if not isinstance(block, dict):
+        return None
+    declared, frame = found
+    units = _producer_units(floors, declared, frame)
+    if units is None:
+        return None
+    row = (floors["archetype_measures"]["table"][declared[0]]["subtypes"]
+           [declared[1]])
+    rating = next((item for item in (capture.get("sufficiency") or {}).get(
+        "requirements") or () if item.get("id")
+        == "rating_vs_history_or_peers"), {})
+    roles = dict(zip(row.get("denominator_roles") or (),
+                     rating.get("subject_denominator_facts") or ()))
+    facts_by_id = {fact["id"]: fact for fact in capture.get("tier1") or []}
+
+    def amount(fact_id, allowed=None):
+        fact = facts_by_id.get(fact_id) if isinstance(fact_id, str) else None
+        if fact is None or (allowed is not None
+                            and fact.get("unit") not in allowed):
+            return None
+        return gate._decimal_or_none(fact["value"])
+
+    reserves_id = roles.get("reserves")
+    reserves = amount(reserves_id, units["quantities"])
+    output = amount(_PRODUCER_OUTPUT_TTM, units["quantities"])
+    life = None
+    if (reserves is not None and output is not None and reserves >= 0
+            and output > 0 and facts_by_id[reserves_id]["unit"]
+            == facts_by_id[_PRODUCER_OUTPUT_TTM]["unit"]):
+        life = (reserves * 10 // output / 10).quantize(decimal.Decimal("0.1"))
+    value = amount(row.get("subject_numerator"))
+    per_unit = None
+    if value is not None and reserves is not None and reserves > 0:
+        # The architect's ruling on P-RESOURCEc-1 (owner ruling AC16): three
+        # significant figures, cut toward zero by the exact division, so a
+        # positive value in a scaled unit (USD_m over single barrels) never
+        # reads 0; written out in plain digits, never an exponent.
+        with decimal.localcontext() as exact:
+            exact.prec, exact.rounding = 3, decimal.ROUND_DOWN
+            per_unit = value / reserves
+        if per_unit.as_tuple().exponent > 0:
+            per_unit = per_unit.quantize(decimal.Decimal(1))
+    price = {units["price_unit"]}
+    cited = [amount(fid, price)
+             for fid in block.get("reserve_price_facts") or ()]
+    lowest = min(cited) if cited and None not in cited else None
+    today = amount(block.get("reference_price_fact"), price)
+    cash = amount(roles.get("cash_flow"))
+    return {"product": units["product"], "unit": units["unit"],
+            "price_unit": units["price_unit"], "reserves": reserves,
+            "production_ttm": output, "reserve_life_years": life,
+            "value_per_unit": per_unit, "reserve_price": lowest,
+            "today_price": today,
+            "today_below_reserve_price": (None if lowest is None
+                                          or today is None
+                                          else today < lowest),
+            "cash_flow_negative": None if cash is None else cash < 0}
+
+
+def _line_share(line, facts_by_id):
+    """The fact carrying a revenue line's share of the period, read as the
+    provenance gate binds it (owner ruling AC12.2): one of the line's own
+    facts, or a fact struck only from them, whose value is the share as
+    written; None where none is."""
+    share = str(line.get("share_of_period")).strip()
+    cited = set(line.get("facts") or ())
+    for fact_id in line.get("facts") or ():
+        fact = facts_by_id.get(fact_id)
+        if fact is not None and str(fact["value"]).strip() == share:
+            return fact
+    for fact_id, fact in facts_by_id.items():
+        derived = fact.get("derived")
+        if (derived and fact_id not in cited
+                and str(fact["value"]).strip() == share
+                and all(operand.get("fact_id") in cited
+                        for operand in derived.get("operands") or ())):
+            return fact
+    return None
+
+
+def _producer_failures(floors, declared, row, frame, rating, capture,
+                       facts_by_id, freshness, captured_day, decisive_ids,
+                       gap_kinds, stale_words_of, stale_source):
+    """Why a producer's frame breaks the rule the floors set for it (owner
+    rulings AC51-AC54; the architect's dispatch update of sub-charge b) -
+    one (what, why, where) per breach - or nothing where it holds. Each
+    rule is stated as a class over every fact the resource_base block
+    cites, every peer and every by-product, never a list of ids. The
+    block's SHAPE is the provenance gate's. `stale_words_of(fact_id)` and
+    `stale_source(fact_id)` (the first stale fact it rests on) are the
+    check's own. The
+    trailing output is not re-derived here: its arithmetic is declared and
+    recomputed where every derived figure is, at the provenance gate."""
+    failures = []
+    measures = floors.get("archetype_measures") or {}
+    rule = measures.get("resource_rule") or {}
+    block = frame.get("resource_base")
+    block = block if isinstance(block, dict) else {}
+    units = _producer_units(floors, declared, frame)
+    product = block.get("product")
+    roles = dict(zip(row.get("denominator_roles") or (),
+                     (rating or {}).get("subject_denominator_facts") or ()))
+    peer_roles = dict(zip(row.get("denominator_roles") or (),
+                          (rating or {}).get("peer_denominator_metrics")
+                          or ()))
+    reserves_id = roles.get("reserves")
+    tier1_order = [fact["id"] for fact in capture["tier1"]]
+
+    def ids(field):
+        named = block.get(field)
+        named = [named] if isinstance(named, str) else list(named or ())
+        return [fid for fid in named if isinstance(fid, str)]
+
+    def value_of(fact_id):
+        fact = facts_by_id.get(fact_id)
+        return gate._decimal_or_none(fact["value"]) if fact else None
+
+    def listing(items):
+        return " or ".join("'%s'" % item for item in sorted(items))
+
+    # Owner ruling AC51(R3), the P-RESOURCEa-5 refusal: a product off the
+    # floors' list is refused with what would make it sittable.
+    if units is None:
+        failures.append((
+            "a main product the owner has ruled on",
+            "owner ruling AC51(R3): the council rates producers of %s at "
+            "first, anything else refused openly until added - and the "
+            "frame's resource_base names '%s'" % (", ".join(
+                name.replace("_", " ") for name in sorted(
+                    measures.get("resource_products") or {})), product),
+            "the owner's ruling adding '%s' to the floors' product list, "
+            "with the unit its reserves and output are counted in, the unit "
+            "its price is quoted in and its benchmark price - no figure in "
+            "this pack can stand in for it" % product))
+    # Architect rulings B4 and B12, lesson 1: every fact the block names
+    # under a field starts with that field's family.
+    families = dict(rule.get("block_families") or {})
+    families.update((rule.get("block_families_by_subtype") or {}).get(
+        declared[1]) or {})
+    words = {"reserve_facts": "the reserves",
+             "reserve_price_facts": "the price the reserves were counted at",
+             "reference_price_fact": "today's price of the main commodity",
+             "unit_cost_facts": "the cost of each unit",
+             "hedge_facts": "the hedges",
+             "production_facts": "the output",
+             "realized_price_facts": "the price received"}
+    for field in words:
+        if field == "reserve_facts":
+            wanted = (rule.get("reserve_prefix") or "",)
+            strays = [fid for fid in ids(field)
+                      if fid not in _reserve_ids(rule, [fid])]
+        else:
+            wanted = tuple(families.get(field) or ())
+            strays = [fid for fid in ids(field)
+                      if wanted and not fid.startswith(wanted)]
+        for fid in strays:
+            failures.append((
+                "a fact of its own family as %s: '%s'" % (words[field], fid),
+                "architect ruling B12 under owner rulings AC51-AC54: every "
+                "fact the resource_base block names as %s starts with %s%s, "
+                "and '%s' does not - so the council would print as %s a "
+                "figure that is not one" % (
+                    words[field], listing(wanted),
+                    ", never '%s', a past year-end's figure"
+                    % rule["reserve_history_prefix"]
+                    if field == "reserve_facts"
+                    and rule.get("reserve_history_prefix") else "",
+                    fid, words[field]),
+                "resource_base.%s: a fact whose id starts with %s"
+                % (field, listing(wanted))))
+    if isinstance(reserves_id, str) and reserves_id not in ids(
+            "reserve_facts"):
+        failures.append((
+            "the rated reserves among the resource block's reserve facts",
+            "owner ruling AC52(R5): the yardstick divides enterprise value "
+            "by the reserves '%s', and the resource_base block's "
+            "reserve_facts do not name it - so the reserves rated are not "
+            "the reserves the block dates, prices and ages" % reserves_id,
+            "resource_base.reserve_facts naming '%s'" % reserves_id))
+    # The architect's ruling on P-RESOURCEa-10: the quarterly members read
+    # are the latest, counted back from the pack's latest reported period
+    # as the four-quarters rule counts them, each fresh.
+    quarter_rule = measures.get("profitability_rule") or {}
+    quarter_where = ("one '%s' member for each of the latest quarters, the "
+                     "id ending in the quarter's period (for example "
+                     "_q2_fy2026), from that quarter's report or production "
+                     "release")
+    chosen = {}
+    for prefix, said in _PRODUCER_QUARTERS:
+        members = [fid for fid in tier1_order
+                   if fid.startswith(prefix) and len(fid) > len(prefix)]
+        places, unplaced = _placed_members(members, prefix, "")
+        doubled = [fid for place in sorted(places)
+                   if len(places[place]) > 1 for fid in places[place]]
+        if unplaced or doubled or len({kind for kind, _ in places}) > 1:
+            failures.append((
+                "the %s of each of the latest quarters, one member per "
+                "period" % said,
+                "owner ruling AC54(R16): output and the price received are "
+                "read quarter by quarter, newest first by their period, and "
+                "%s cannot be placed as one member per period of one kind"
+                % ", ".join("'%s'" % fid for fid in unplaced + doubled
+                            or members),
+                quarter_where % prefix))
+            continue
+        kind, need, wanted = _latest_wanted(capture, places, quarter_rule)
+        missing = [number for number in wanted
+                   if (kind, number) not in places]
+        periods = "quarters" if kind == "quarter" else "half-years"
+        if not wanted or missing:
+            failures.append((
+                "the %s of each of the %d latest %s" % (said, need, periods),
+                "owner ruling AC54(R14): whether output is growing and what "
+                "each unit earns are read from the %d latest %s, counted "
+                "back from the latest period the pack reports, and the pack "
+                "carries %s" % (need, periods, (
+                    "no '%s' member at all" % prefix if not wanted else
+                    "no '%s' member for %s" % (prefix, ", ".join(
+                        _period_words(kind, number) for number in missing)))),
+                quarter_where % prefix))
+            continue
+        chosen[prefix] = [places[(kind, number)][0] for number in wanted]
+    # The architect's ruling at audit round 5 (replacing the separate
+    # readings of audit r1-1, r1-2, r4-2 and r4-5, P-RESOURCEb-6 and -8, the
+    # units reads, the freshness loop and the reserves' age): ONE set, built
+    # once, of every fact the rule or its standard tests read, each tagged
+    # with its role - the block's cited fields, the headlines, the trailing
+    # output, the latest quarters chosen above, the yardstick's operands,
+    # every fact answering a standard test, every declared by-product's
+    # facts and every peer's reserves. Every per-fact property is applied
+    # over it by role in one place, below. A figure absent from the pack is
+    # refused where it is required (the floors' required ids, the rated
+    # denominators), never here.
+    products = measures.get("resource_products") or {}
+    extras = [extra for extra in block.get("by_products") or ()
+              if isinstance(extra, str)]
+    tagged = {}
+
+    def tag(role, fids):
+        for fid in fids:
+            if isinstance(fid, str) and fid in facts_by_id:
+                tagged.setdefault(fid, set()).add(role)
+
+    def names(fid, others):
+        return [name for name in others if "_%s_" % name in "_%s_" % fid]
+
+    for field in sorted(set(block) - {"product", "by_products",
+                                      "reserves_standard",
+                                      "hedge_none_by_design"}):
+        tag(field, ids(field))
+    tag("headline", _PRODUCER_HEADLINES)
+    tag("trailing_output", [_PRODUCER_OUTPUT_TTM])
+    for prefix, members in chosen.items():
+        tag(prefix, members)
+    tag("operand", [row.get("subject_numerator")] + list(roles.values()))
+    # A prefix member naming a declared by-product is the by-product's,
+    # unless the test's own answer names it (audit r5-1).
+    answers = {item.get("id"): item.get("answered_by") or () for item in (
+        capture.get("sufficiency") or {}).get("requirements") or ()}
+    for test_id, term in _canonical_test_terms(floors, declared).items():
+        heads = tuple(head for head in (
+            term.get("answered_by_prefix"),
+            term.get("answered_by_prefix_where_carried")) if head)
+        tag("test", list(term.get("answered_by_ids") or ()) + [
+            fid for fid in tier1_order if heads and fid.startswith(heads)
+            and (not names(fid, extras) or fid in answers.get(test_id, ()))])
+    # Owner ruling AC56(2), P-RESOURCEb-11: a royalty or streaming company's
+    # first test reads "the fixed price it pays under each stream", so a
+    # lifted test's prefix answer is EVERY fact of that prefix the block
+    # cites - each already in the set above under its block role, read
+    # there for its number, its unit and its freshness.
+    answered = {item.get("id") for item in (capture.get(
+        "sufficiency") or {}).get("requirements") or ()
+        if item.get("status") == "answered"}
+    for test_id, term in sorted((_archetype_lifts(floors, declared).get(
+            "canonical_tests") or {}).items()):
+        prefix = term.get("answered_by_prefix")
+        unanswered = sorted(
+            fid for fid, role in tagged.items() if prefix and test_id
+            in answered and fid.startswith(prefix) and role & set(block)
+            and fid not in answers.get(test_id, ()))
+        if unanswered:
+            failures.append((
+                "every stream payment the resource block cites answering "
+                "'%s'" % test_id,
+                "owner ruling AC56(2): %s - so each stream payment the "
+                "resource block cites answers it, and its answer does not "
+                "name %s" % (term["words"][0], ", ".join(
+                    "'%s'" % fid for fid in unanswered)),
+                "%s's answered_by naming %s" % (test_id, ", ".join(
+                    "'%s'" % fid for fid in unanswered))))
+    tag("peer_reserve", ["peer_%s__%s" % (peer_roles["reserves"],
+                                          subjects.slug(peer["ticker"]))
+                         for peer in frame.get("peers") or ()
+                         if peer_roles.get("reserves")])
+    # Owner ruling AC52(R6), P-RESOURCEa-8 and -9: every peer's figures in
+    # the subject's unit - nothing converted.
+    if units is not None:
+        money = (facts_by_id.get(row.get("subject_numerator")) or {}).get(
+            "unit")
+        for peer in frame.get("peers") or ():
+            slug = subjects.slug(peer["ticker"])
+            for metric, unit in ((peer_roles.get("reserves"), units["unit"]),
+                                 (row.get("peer_numerator_metric"), money),
+                                 (peer_roles.get("cash_flow"), money)):
+                pid = "peer_%s__%s" % (metric, slug)
+                have = (facts_by_id.get(pid) or {}).get("unit")
+                if metric and unit and pid in facts_by_id and have != unit:
+                    failures.append((
+                        "peer %s's '%s' in the subject's unit"
+                        % (peer["ticker"], metric),
+                        "owner rulings AC52(R6) and AC54(R15): each peer is "
+                        "set beside the subject on the producer's yardstick, "
+                        "so its figure is recorded in the unit the "
+                        "subject's is - %s - and '%s' is recorded in %s; "
+                        "the council converts no units" % (unit, pid, have),
+                        "'%s' recorded in %s" % (pid, unit)))
+    # The architect's ruling on P-RESOURCEa-12 (AC52(R6)): each by-product
+    # is shown apart - a reserve and an output figure of its own, in its own
+    # unit, its id naming it - and never summed into the rated figures.
+    # Owner ruling AC56(1): only the main product must be on the list; a
+    # by-product off it is shown in the one allowed unit its own reserve
+    # and output figures are recorded in, never converted - a unit of
+    # quantity on the rule's own list (audit r1-1), never money or a share.
+    by_product_units = set(rule.get("by_product_units") or ())
+    for extra in (extra for extra in block.get("by_products") or ()
+                  if isinstance(extra, str)):
+        token = "_%s_" % extra
+        named = [fid for fid in tier1_order if token in "_%s_" % fid]
+        data = products.get(extra)
+        unit = data.get("unit") if isinstance(data, dict) else None
+        counted = _reserve_ids(rule, named) + [
+            fid for fid in named if fid.startswith(_PRODUCER_OUTPUT_PREFIX)]
+        seen = sorted({str(facts_by_id[fid].get("unit")) for fid in counted})
+        if unit is None and len(seen) == 1 and seen[0] in by_product_units:
+            unit = seen[0]
+        elif unit is None and len(seen) > 1:
+            failures.append((
+                "the by-product '%s' in one unit of its own" % extra,
+                "owner ruling AC56(1): a by-product off the floors' product "
+                "list is shown apart in the unit the company reports it in, "
+                "never converted - and its figures are recorded in %d "
+                "units: %s" % (len(seen), ", ".join(
+                    "'%s' in %s" % (fid, facts_by_id[fid].get("unit"))
+                    for fid in counted)),
+                "every reserve and output figure naming '%s' recorded in "
+                "one unit, as the company reports it" % extra))
+        elif unit is None and seen:
+            failures.append((
+                "the by-product '%s' in a unit of quantity on the floors' "
+                "list" % extra,
+                "owner ruling AC56(1): a by-product off the product list is "
+                "shown in the unit the company reports its quantity in, a "
+                "unit on the producer rule's by_product_units - and %s are "
+                "recorded in %s, which is not on it" % (", ".join(
+                    "'%s'" % fid for fid in counted), seen[0]),
+                "the figures naming '%s' in a unit of quantity on the "
+                "floors' by_product_units, as the company reports them"
+                % extra))
+        own = [fid for fid in named
+               if unit is not None and facts_by_id[fid].get("unit") == unit]
+        # Audit r5-2: its figures are numbers; its other facts (a report
+        # date) are read for freshness alone.
+        figures = tuple(head for heads in families.values() for head in heads)
+        tag("by_product", [fid for fid in named if fid.startswith(figures)])
+        tag("by_product_other", named)
+        tag("by_product_reserve", _reserve_ids(rule, named))
+        lacking = [said for said, have in (
+            ("a reserve figure", _reserve_ids(rule, own)),
+            ("an output figure", [fid for fid in own if fid.startswith(
+                _PRODUCER_OUTPUT_PREFIX)])) if not have]
+        if lacking and (unit is not None or not seen):
+            failures.append((
+                "the by-product '%s' shown apart, with figures of its own"
+                % extra,
+                "owner ruling AC52(R6): by-products are shown apart and "
+                "never converted, so '%s' carries a reserve and an output "
+                "figure of its own in %s, each id naming '%s' - and the "
+                "pack carries no %s" % (extra, unit or (
+                    "the one unit its own figures are recorded in"), extra,
+                    " and no ".join(lacking)),
+                "a '%s' fact and a '%s' fact naming '%s', each in %s, from "
+                "the reserve report and the production release"
+                % (rule.get("reserve_prefix"), _PRODUCER_OUTPUT_PREFIX,
+                   extra, unit or "one unit of quantity on the floors' "
+                   "by_product_units")))
+        for rated in (reserves_id, _PRODUCER_OUTPUT_TTM):
+            hit = (_rests_on(rated, set(named), facts_by_id)
+                   if isinstance(rated, str) else None)
+            if hit is not None:
+                failures.append((
+                    "'%s' without the by-product '%s' summed into it"
+                    % (rated, extra),
+                    "owner ruling AC52(R6): by-products are shown apart, "
+                    "never summed into the rated figure, and '%s' rests on "
+                    "'%s'" % (rated, hit),
+                    "'%s' struck from the main product alone, the "
+                    "by-product shown beside it" % rated))
+    # Owner ruling AC53(R12), P-RESOURCEa-6: the reserves no older than the
+    # ruled age at the sitting, counted from the report's own date - and
+    # every reserve figure and reserve price the block cites no older.
+    most = rule.get("reserve_max_age_days")
+    report_id = block.get("reserve_report_date_fact")
+    report = facts_by_id.get(report_id) if isinstance(report_id, str) else None
+    renew = ("the latest annual reserve report (the annual filing's reserves "
+             "section or the company's own reserves statement), dated within "
+             "%s days of the sitting" % most)
+    if most is not None and report is not None:
+        try:
+            dated = date.fromisoformat(str(report["value"]).strip())
+        except ValueError:
+            dated = None
+        if dated is None or dated > captured_day:
+            failures.append((
+                "a reserve report date the council can count from",
+                "owner ruling AC53(R12): reserve figures are at most %s "
+                "days old at the sitting, counted from the latest annual "
+                "reserve report's own date, and '%s' reads '%s', which is "
+                "no date on or before the capture" % (most, report_id,
+                                                      report["value"]),
+                "'%s' as the report's effective date, YYYY-MM-DD" % report_id))
+        elif (captured_day - dated).days > most:
+            failures.append((
+                "reserve figures no older than %s days" % most,
+                "owner ruling AC53(R12): reserve figures are at most %s days "
+                "old at the sitting, counted from the latest annual reserve "
+                "report's own date, and '%s' dates the report %s, %d days "
+                "before the capture" % (most, report_id, dated,
+                                        (captured_day - dated).days),
+                renew))
+    # The one place every per-fact property is applied, by role: (i) a
+    # number (audit r1-2), (ii) the unit its role requires (AC52(R6)),
+    # (iii) fresh, one fresh member never vouching for another, (iv) a
+    # reserve no older than the ruled age (AC53(R12)) and never below zero
+    # (P-RESOURCEa-15; a zero is the denominators' own refusal), (v) a fact
+    # read for the main product names it where it is a price (audit r1-1)
+    # and never names another listed commodity (P-RESOURCEb-10) - a
+    # by-product's own facts are read for the by-product.
+    quantities = ("reserve_facts", "production_facts", "trailing_output",
+                  _PRODUCER_QUARTERS[0][0], "reported_reserve")
+    prices = ("reserve_price_facts", "realized_price_facts",
+              "reference_price_fact", _PRODUCER_QUARTERS[1][0])
+    unit_rules = [] if units is None else [
+        (quantities, units["quantities"], "reserves and output"),
+        (prices, {units["price_unit"]}, "prices"),
+        (("unit_cost_facts",), units["costs"], "unit costs")]
+    # The architect's ruling on P-RESOURCEc-4 and -5 (AC52(R6)): the pages
+    # print only facts in this set - every reported reserve, and a reserve
+    # naming another listed commodity that is no by-product (oil and gas
+    # apart beside the barrel-of-oil-equivalent total) read with that
+    # commodity's own prices, in its own units - and the figures beside.
+    tag("shown", _PRODUCER_YEAR_AGO + _PRODUCER_BALANCE
+        + (_PRODUCER_STANDARDIZED,))
+    commodities = sorted(set(products) | set(extras))
+    parts = {}
+    for fid in _reserve_ids(rule, tier1_order):
+        named = names(fid, commodities)
+        if set(named) & set(extras):
+            continue
+        # Audit r2-2: a reserve naming two commodities is the main
+        # product's, refused below as naming another.
+        if len(named) == 1 and named[0] != product:
+            parts[fid] = named[0]
+            tag("component_reserve", [fid])
+        else:
+            tag("reported_reserve", [fid])
+    for field in ("reserve_price_facts", "reference_price_fact"):
+        for fid in tier1_order:
+            named = names(fid, commodities)
+            if (fid.startswith(tuple(families.get(field) or ()))
+                    and len(named) == 1 and named[0] in parts.values()):
+                parts[fid] = named[0]
+                tag("component_" + field, [fid])
+    if _ROLE_SINK is not None:
+        _ROLE_SINK.update(tagged)
+    reserve_roles = {"reserve_facts", "by_product_reserve", "peer_reserve",
+                     "reported_reserve", "component_reserve"}
+    others = [name for name in products if name != (units or {}).get(
+        "product")]
+    for fid, role in tagged.items():
+        fact, value = facts_by_id[fid], value_of(fid)
+        if role == {"peer_reserve"}:
+            role = set()
+        elif value is None and role - (set(block) - set(words)) - {
+                "by_product_other"}:
+            failures.append((
+                "a number the council can read as '%s'" % fid,
+                "owner rulings AC52(R5) and AC53(R9)-(R11): the producer's "
+                "figures are read, compared and printed as numbers, and '%s' "
+                "reads '%s'" % (fid, fact["value"]),
+                "'%s' as the figure its source states, a plain number" % fid))
+        for said_roles, allowed, said in unit_rules:
+            if role & set(said_roles) and fact.get("unit") not in allowed:
+                failures.append((
+                    "'%s' in the unit the floors count %s in" % (fid, said),
+                    "owner ruling AC52(R6): a producer of %s counts its %s in "
+                    "%s - and '%s' is recorded in %s; the council compares "
+                    "like with like and converts no units" % (
+                        units["product"].replace("_", " "), said,
+                        listing(allowed), fid, fact.get("unit")),
+                    "'%s' recorded in %s" % (fid, listing(allowed))))
+                break
+        part = products.get(parts.get(fid)) or {}
+        allowed = part.get("unit" if "component_reserve" in role
+                           else "price_unit")
+        if part and fact.get("unit") != allowed:
+            said = "reserves" if "component_reserve" in role else "prices"
+            failures.append((
+                "'%s' in the unit the floors count %s's %s in" % (
+                    fid, parts[fid].replace("_", " "), said),
+                "owner ruling AC52(R6): the pages print '%s' apart as %s's "
+                "own, and %s's %s are counted in %s - it is recorded in %s; "
+                "the council converts no units" % (
+                    fid, parts[fid].replace("_", " "), parts[fid].replace(
+                        "_", " "), said, allowed, fact.get("unit")),
+                "'%s' recorded in %s" % (fid, allowed)))
+        if role and stale_words_of(fid) is not None:
+            said = dict(_PRODUCER_QUARTERS)
+            failures.append((
+                "a fresh reading of '%s', %s" % (fid, (
+                    "which the frame's resource block cites" if role
+                    & set(block) else "one of the latest quarters' %s"
+                    % said[min(role & set(said))] if role & set(said)
+                    else "which the producer rule or its standard tests "
+                    "read")),
+                stale_words_of(fid),
+                "a fresher reading of '%s' from the source that produced it"
+                % (stale_source(fid) or fid)))
+        age = (freshness.get(fid) or {}).get("age_days")
+        if (role & {"reserve_facts", "reserve_price_facts",
+                    "by_product_reserve", "reported_reserve",
+                    "component_reserve", "component_reserve_price_facts"}
+                and most is not None
+                and age is not None and age > most):
+            failures.append((
+                "a reserve figure no older than %s days: '%s'" % (most, fid),
+                "owner ruling AC53(R12): reserve figures are at most %s days "
+                "old at the sitting, and '%s' is dated %d days before the "
+                "capture" % (most, fid, age), renew))
+        if (tagged[fid] & reserve_roles and value is not None
+                and value < 0):
+            failures.append((
+                "reserves at or above zero: '%s'" % fid,
+                "owner ruling AC52(R5): the producer's yardstick divides "
+                "enterprise value by the reserves, and '%s' is %s - below "
+                "zero, which no reserve report can show" % (fid, value),
+                "'%s' as the reserves the report states, in its own unit"
+                % fid))
+        main = role - {"by_product", "by_product_reserve",
+                       "by_product_other", "component_reserve",
+                       "component_reserve_price_facts",
+                       "component_reference_price_fact"}
+        field = min(main & {"reserve_price_facts", "reference_price_fact"},
+                    default=None)
+        if units is None or not main:
+            continue
+        if field and names(fid, [units["product"]]) == []:
+            failures.append((
+                "the main product's own price as %s: '%s'"
+                % (words[field], fid),
+                "owner ruling AC53(R9): every reserve figure is read "
+                "beside the price it was counted at and today's price "
+                "of the main commodity, '%s' - and '%s' does not name "
+                "it, so another commodity's price could be read as "
+                "its own" % (units["product"], fid),
+                "resource_base.%s: a fact whose id names '%s'"
+                % (field, units["product"])))
+        elif names(fid, others):
+            failures.append((
+                "a fact of the main product, '%s', naming no other "
+                "commodity: '%s'" % (units["product"], fid),
+                "owner rulings AC52(R6) and AC53(R9): the producer's figures "
+                "are its main product's, and '%s' names '%s', another "
+                "commodity on the product list - a by-product is shown "
+                "apart, never read as the main product's"
+                % (fid, names(fid, others)[0]),
+                "'%s' for '%s' alone, or the other commodity declared in "
+                "resource_base.by_products and shown apart"
+                % (fid, units["product"])))
+    # The architect's ruling on P-RESOURCEb-6 (AC54(R14)): each headline
+    # quarterly figure is its family's latest member - the same number in
+    # the same unit - or two readings of one quarter differ. An unreadable
+    # side is the number check's refusal, just above.
+    for (prefix, said), headline in zip(_PRODUCER_QUARTERS,
+                                        _PRODUCER_HEADLINES):
+        latest = (chosen.get(prefix) or [None])[0]
+        if latest is None or headline not in facts_by_id:
+            continue
+        pair = [(value_of(fid), facts_by_id[fid].get("unit"))
+                for fid in (headline, latest)]
+        if None in (pair[0][0], pair[1][0]) or pair[0] == pair[1]:
+            continue
+        failures.append((
+            "'%s' equal to its own quarter's '%s'" % (headline, latest),
+            "the architect's ruling on P-RESOURCEb-6 under owner ruling "
+            "AC54(R14): the latest quarter's %s is one figure, and '%s' "
+            "reads %s %s while '%s' reads %s %s" % (
+                said, headline, facts_by_id[headline]["value"], pair[0][1],
+                latest, facts_by_id[latest]["value"], pair[1][1]),
+            "'%s' and '%s' as the same quarter's figure from the same report"
+            % (headline, latest)))
+    # Architect ruling B4, P-RESOURCEa-7: today's price is read under a rule
+    # no looser than the product's own; its staleness is the freshness loop's.
+    # A component's today's price the pages print, likewise under its own
+    # product's (the architect's ruling on P-RESOURCEc-5).
+    todays = [(block.get("reference_price_fact"),
+               (units or {}).get("product_data", {}))] + [
+        (fid, products[part]) for fid, part in sorted(parts.items())
+        if fid.startswith(tuple(families.get("reference_price_fact") or ()))]
+    for today_id, data in todays:
+        reference = (facts_by_id.get(today_id)
+                     if isinstance(today_id, str) else None)
+        ceiling = data.get("max_price_freshness_days")
+        if (reference is None or ceiling is None
+                or reference["freshness_rule_days"] <= ceiling):
+            continue
+        failures.append((
+            "today's price read under a rule no looser than %s days"
+            % ceiling,
+            "architect ruling B4 under owner ruling AC53(R9): every reserve "
+            "figure is read beside today's price, current within %s days as "
+            "the product list rules it, and '%s' declares a %s-day rule - "
+            "so a price that old would still read as today's"
+            % (ceiling, today_id, reference["freshness_rule_days"]),
+            "'%s' dated at the sitting from %s, its freshness rule at most "
+            "%s days" % (today_id, data.get("benchmark_words"), ceiling)))
+    reference_id = block.get("reference_price_fact")
+    # Owner ruling AC53(R11), P-RESOURCEa-13: hedges shown, never netted -
+    # 'none' only where no hedge figure is carried and the gap is declared.
+    hedge = tuple(families.get("hedge_facts") or ())
+    if block.get("hedge_none_by_design") is True and hedge:
+        carried = [fid for fid in tier1_order if fid.startswith(hedge)]
+        if carried:
+            failures.append((
+                "no hedge figure beside a company said not to hedge",
+                "owner ruling AC53(R11): hedges are shown, never netted, and "
+                "'none' is written only where the company does not hedge - "
+                "the frame says it does not (hedge_none_by_design), and the "
+                "pack carries %s" % ", ".join("'%s'" % fid
+                                              for fid in carried),
+                "the hedge facts named in resource_base.hedge_facts, or no "
+                "fact starting with %s" % listing(hedge)))
+        kinds = gap_kinds.get(hedge[0]) or []
+        if not kinds or not all(kind == "absent_by_design" for kind in kinds):
+            failures.append((
+                "the hedges declared absent by design",
+                "owner ruling AC53(R11): a company that does not hedge says "
+                "so twice - the frame's hedge_none_by_design, and the '%s' "
+                "gap declared absent by design - and the pack %s"
+                % (hedge[0], "declares no such gap" if not kinds else
+                   "declares it for another reason"),
+                "a gap for the fact class '%s' with the reason_kind "
+                "'absent_by_design'" % hedge[0]))
+    carried = [fid for fid in tier1_order if hedge and fid.startswith(hedge)]
+    for fid in (fid for fid in list(roles.values())
+                + [row.get("subject_numerator")] if isinstance(fid, str)):
+        hit = _rests_on(fid, set(carried), facts_by_id) if carried else None
+        if hit is not None:
+            failures.append((
+                "'%s' without a hedge netted into it" % fid,
+                "owner ruling AC53(R11): hedges are shown beside the "
+                "yardstick, never netted into it, and '%s' rests on '%s'"
+                % (fid, hit),
+                "'%s' as the company reports it, the hedges shown apart"
+                % fid))
+    # Architect ruling B11: today's price always decides (the subject's two
+    # denominators already must, by the rating measure's own check).
+    if isinstance(reference_id, str) and reference_id not in decisive_ids:
+        failures.append((
+            "a decisive metric resting on today's price",
+            "architect ruling B11 under owner ruling AC53(R9): every "
+            "reserve figure is read beside today's price of the main "
+            "commodity, so that price always decides a producer's case, and "
+            "no decisive metric in the business frame rests on '%s'"
+            % reference_id,
+            "name '%s' in the 'answered_by' of a decisive metric"
+            % reference_id))
+    # The architect's ruling on P-RESOURCEa-11 (AC51(R1)): the revenue lines
+    # of the producer's natures carry more than half of revenue.
+    natures = set(rule.get("sales_natures") or ())
+    marks = floors.get("prose_figure_marks") or {}
+    shares, unread = [], []
+    for line in frame.get("how_it_earns") or ():
+        carrier = _line_share(line, facts_by_id)
+        value = gate._decimal_or_none(carrier["value"]) if carrier else None
+        unit = (carrier or {}).get("unit")
+        whole = (100 if unit in (marks.get("percent_units") or ()) else
+                 1 if unit in (marks.get("fraction_units") or ()) else None)
+        if value is None or whole is None:
+            unread.append(line["line"])
+        else:
+            shares.append((line.get("nature"), carrier["id"], value, unit,
+                           whole))
+    said = ", ".join(sorted(natures))
+    if natures and (unread or len({unit for *_, unit, _ in shares}) > 1):
+        failures.append((
+            "each revenue line's share of revenue, in one unit the council "
+            "can read",
+            "owner ruling AC51(R1): a producer's sales come mostly from what "
+            "it extracts or from royalties and streams, read from each "
+            "revenue line's own share fact - and %s" % (
+                "no share fact of %s is a number in a percent or fraction "
+                "unit" % ", ".join("'%s'" % item for item in unread)
+                if unread else "the lines' shares are recorded in %s"
+                % ", ".join(sorted({unit for *_, unit, _ in shares}))),
+            "each revenue line's share struck as a fact over its own "
+            "figures, all in one percent or fraction unit"))
+    elif natures and shares:
+        own = sum((value for nature, _, value, _, _ in shares
+                   if nature in natures), decimal.Decimal(0))
+        whole = shares[0][4]
+        if not own * 2 > whole:
+            failures.append((
+                "more than half of revenue from what the producer extracts, "
+                "or from royalties and streams",
+                "owner ruling AC51(R1): a producer's sales come mostly from "
+                "what it extracts under a reserve standard, or from royalties "
+                "and streams on others' output - the revenue lines of nature "
+                "%s carry more than half of revenue, and here they carry %s "
+                "of %s (%s)" % (said, own, whole, ", ".join(
+                    "'%s' %s" % (fid, value) for nature, fid, value, _, _
+                    in shares if nature in natures) or "no such line"),
+                "the archetype in the business frame that fits a company "
+                "earning most of its revenue elsewhere, or the revenue "
+                "lines' natures and shares as the latest report states them"))
+    # The yardstick's halves in one unit (sub-charge a's check, its units
+    # read through the same function).
+    failures += _producer_unit_failures(row, rating, units, facts_by_id)
+    return failures
+
+
+def _latest_reported_place(capture, kind):
+    """The latest period the pack reports, numbered as _period_place
+    numbers a `kind` ("quarter" or "half"): a quarter as the gate's
+    latest_reported_period reads it; a half as the report names it, or
+    the half its quarter or year ends in (owner ruling AC50(1); audit
+    finding r1-4). None where the report names no period."""
+    latest = gate.latest_reported_period(capture)
+    if kind == "quarter":
+        return None if latest is None else latest[0] * 4 + latest[1] - 1
+    for fact in capture.get("tier1") or []:
+        if (isinstance(fact, dict)
+                and fact.get("id") == gate._LATEST_REPORT_ID):
+            place = _period_place(gate.period_slug(
+                str(fact.get("value")).split(",", 1)[0]))
+            if place is not None and place[0] == "half":
+                return place[1]
+            break
+    return None if latest is None else (latest[0] * 4 + latest[1] - 1) // 2
+
+
+def _period_words(kind, number):
+    """A placed period in plain words, as the ids spell it."""
+    if kind == "half":
+        return "h%d fy%d" % (number % 2 + 1, number // 2)
+    return "q%d fy%d" % (number % 4 + 1, number // 4)
 
 
 def _dedupe(items):
@@ -1002,6 +2885,24 @@ def _dedupe(items):
             seen.add(item)
             kept.append(item)
     return kept
+
+
+# Where producer_role_set collects the producer rule's role-tagged set.
+_ROLE_SINK = None
+
+
+def producer_role_set(pack, floors):
+    """{fact id: roles}: the one role-tagged set the producer rule reads for
+    this pack, as check() builds it - empty for any other subject. The
+    architect's ruling on P-RESOURCEc-4 and -5: the producer pages print
+    only facts in it."""
+    global _ROLE_SINK
+    _ROLE_SINK = {}
+    try:
+        check(pack, floors)
+        return _ROLE_SINK
+    finally:
+        _ROLE_SINK = None
 
 
 def check(pack, floors):
@@ -1072,15 +2973,20 @@ def check(pack, floors):
 
     class_config = floors["classes"][subject["kind"]]
     entries = _merged_floors(floors, subject, capture)
-    declared = _subtyped_archetype(floors, capture)
+    declared = _declared_archetype(floors, capture)
     # Owner ruling AC30(1) (G1): for a bank, insurer, reinsurer or
     # financial holding the free-cash test is answered by distributable
     # capital, and its refusal words come from the lifts data block. The
     # guide itself is never changed: every other subject reads it as is.
-    lifts = _archetype_lifts(floors, declared)
+    # Owner ruling AC50(9): a growth company's three standard tests - the
+    # revenue test added to its checklist, the profit and cash tests
+    # answered by gross profit and the months of cash - read the same way.
+    terms = _canonical_test_terms(floors, declared)
     guide = dict(_CANONICAL_GUIDE)
-    if lifts:
-        guide["free_cash_flow"] = tuple(lifts["free_cash_flow_test_words"])
+    for test_id, term in terms.items():
+        guide[test_id] = tuple(term["words"])
+    test_ids = CANONICAL_TEST_IDS + tuple(
+        test_id for test_id in terms if test_id not in CANONICAL_TEST_IDS)
 
     tier1_rules = {}
     tier1_order = []
@@ -1147,14 +3053,36 @@ def check(pack, floors):
             words = ("'%s' rests on %s" % (fact_id, words))
         return words
 
+    def stale_or_none(fact_id):
+        """None for a fact fresh through every operand, else the words
+        saying it is stale - the rule helpers' reading of freshness."""
+        return (stale_words(fact_id) if stale_dependency(fact_id) is not None
+                else None)
+
     satisfied = []
     lifted_by_declared_gap = []
     advisory_missing = []
     missing = []
+    notes = []
+    open_guided = gate.open_guidance_ids(capture)
 
     def refuse(what, why_needed, where):
         missing.append({"what": what, "why_needed": why_needed,
                         "where_it_likely_lives": where})
+
+    def refuse_stale_cited(fact_ids, block_words):
+        """Every fact a frame block cites is read as the case stands: each
+        one fresh, one fresh member never vouching for another (the
+        financial institution's and the grower's loop; the producer's reads
+        its one set of every fact it reads)."""
+        for fact_id in _dedupe(fact_ids):
+            if (isinstance(fact_id, str) and fact_id in tier1_rules
+                    and not fresh(fact_id)):
+                refuse("a fresh reading of '%s', which the frame's %s cites"
+                       % (fact_id, block_words),
+                       stale_words(fact_id),
+                       "a fresher reading of '%s' from the source that "
+                       "produced it" % (stale_dependency(fact_id) or fact_id))
 
     def enforce_stale(entry, what, words):
         """A floor's fact is PRESENT but stale: the level governs.
@@ -1195,6 +3123,117 @@ def check(pack, floors):
                         "not declare why it is unavailable")
         refuse(what, why, entry["likely_source"])
 
+    def shape_fault(entry, part, fact_id, zero_ok=False):
+        return _shape_fault(part, facts_by_id[fact_id],
+                            capture["captured_at"],
+                            entry.get("window_days"), zero_ok)
+
+    def evaluate_depth(entry):
+        """The insider floor's depth (owner ruling AC41(1), as amended of
+        record; AC47): True where this settles the entry, False where the
+        dealings are judged as before. Under the threshold the three
+        summary facts meet the floor, whole and well shaped, beside
+        whatever dealings the pack carries; at or over it a summary alone
+        refuses and every dealing is judged as before. The summary is
+        checked whole only where it is what meets the floor; beside the
+        dealings a part is checked for shape, unit, date and freshness
+        through the facts it rests on - more is never less at either
+        depth. Where the ownership cannot be established
+        the floor does not apply, and an insider fact in the pack refuses,
+        because the pages then say the insider evidence was not
+        considered. No summary, no dealing: the declared gap as before."""
+        depth = entry["depth"]
+        state, holding = holder_structure(pack, depth)
+        family = [i for i in tier1_order if i.startswith(depth["family"])]
+        if state == "not_considered":
+            if family:
+                refuse("no insider fact while the ownership is unknown",
+                       "what officers and directors own could not be "
+                       "established from the record - the percentage is "
+                       "declared absent and no share counts decide it - so "
+                       "the insider evidence is not considered, yet the "
+                       "pack carries %s; record the ownership (the "
+                       "percentage, or %s beside the shares in issue) or "
+                       "drop those facts (%s)"
+                       % (", ".join(family), depth["group_shares_id"],
+                          entry["why"]),
+                       entry["likely_source"])
+            else:
+                notes.append(INSIDER_NOT_CONSIDERED)
+            return True
+        summary = [i for i in depth["summary"] if i in tier1_rules]
+        dealt = any(i.startswith(prefix) for prefix in entry["prefixes"]
+                    for i in tier1_order)
+        if not summary:
+            return False
+        captured_day = _as_of_moment(capture["captured_at"]).date()
+
+        def summary_faults(fact_ids):
+            """Each named summary part missing, malformed, or not dated on
+            the capture's own day - its twelve months end where the
+            capture's do (audit round 1, r1-3)."""
+            faults = []
+            for fact_id in fact_ids:
+                if fact_id not in tier1_rules:
+                    faults.append("%s: missing" % fact_id)
+                    continue
+                fault = shape_fault(entry, depth["summary"][fact_id],
+                                    fact_id)
+                as_of = str(facts_by_id[fact_id].get("as_of"))
+                if not fault and _as_of_moment(as_of).date() != captured_day:
+                    fault = "dated %s, not on the capture's own day" % as_of
+                if fault:
+                    faults.append("%s: %s" % (fact_id, fault))
+            return faults
+
+        what = "the twelve-month insider summary"
+        if dealt and (state == "full"
+                      or len(summary) < len(depth["summary"])):
+            # The dealings meet the floor here - every dealing at the full
+            # depth, the officers' own at the light - so the summary is
+            # checked for completeness only where it is what meets it; a
+            # part carried beside the dealings is printed as a fact, so it
+            # is checked for shape, unit and date and a malformed one
+            # refuses by name (audit round 1, r1-4); a part of one rides,
+            # more is never less (audit round 5, r5-2). It is read for
+            # freshness through the facts it rests on exactly as a whole
+            # summary is, so a stale-resting part refuses by name
+            # (P-INSIDERDEPTH-5).
+            faults = summary_faults(summary)
+            if faults:
+                refuse(what, "; ".join(faults) + " (%s)" % entry["why"],
+                       entry["likely_source"])
+            elif not all(fresh(i) for i in summary):
+                enforce_stale(entry, what, "; ".join(
+                    stale_words(i) for i in summary if not fresh(i)))
+            return False
+        if state == "full":
+            refuse("every insider dealing",
+                   "officers and directors together own %s, against a "
+                   "threshold of %s%% - at this ownership every dealing is "
+                   "carried, and the twelve-month summary does not answer "
+                   "the insider floor (%s)"
+                   % (holding or "an amount this record does not "
+                      "establish", depth["threshold_pct"], entry["why"]),
+                   entry["likely_source"])
+            return True
+        faults = summary_faults(depth["summary"])
+        if faults:
+            refuse(what, "; ".join(faults) + " (%s)" % entry["why"],
+                   entry["likely_source"])
+        elif not all(fresh(i) for i in summary):
+            enforce_stale(entry, what, "; ".join(
+                stale_words(i) for i in summary if not fresh(i)))
+        else:
+            satisfied.extend(summary)
+            notes.append("Insider dealings: officers and directors "
+                         "together own %s, under the threshold of %s%%, so "
+                         "the twelve-month summary and the chief "
+                         "executive's, finance chief's and chair's own "
+                         "dealings answer the insider floor."
+                         % (holding, depth["threshold_pct"]))
+        return not dealt
+
     def evaluate(entry):
         floor_kind = entry["kind"]
         if floor_kind == "id":
@@ -1221,7 +3260,12 @@ def check(pack, floors):
                 for what, why, where in _substitute_failures(
                         entry, facts_by_id, gap_kinds):
                     refuse(what, why, where)
-                if not fresh(fact_id):
+                fault = entry.get("shape") and shape_fault(
+                    entry, entry["shape"], fact_id)
+                if fault:
+                    refuse(fact_id, "%s (%s)" % (fault, entry["why"]),
+                           entry["likely_source"])
+                elif not fresh(fact_id):
                     enforce_stale(entry, fact_id, stale_words(fact_id))
                 else:
                     satisfied.append(fact_id)
@@ -1252,6 +3296,28 @@ def check(pack, floors):
         elif floor_kind == "prefix":
             prefix = entry["prefix"]
             matches = [i for i in tier1_order if i.startswith(prefix)]
+            part = (entry.get("shapes") or {}).get(prefix)
+            if part and matches:
+                # Every match is checked and a malformed one refuses;
+                # the one exception is a zero beside one that counts,
+                # which neither refuses nor counts (round 3 Step 0 of
+                # unit U4(d), P-U4d-6). A bare prefix names no period
+                # and never counts (round 5 Step 0, P-U4d-7).
+                counting = [i for i in matches if i != prefix
+                            and not shape_fault(entry, part, i)]
+                faults = [(i, "a fact id must name its period after "
+                           + prefix if i == prefix else
+                           shape_fault(entry, part, i,
+                                       zero_ok=bool(counting)))
+                          for i in matches if i not in counting]
+                faults = [pair for pair in faults if pair[1]]
+                if faults:
+                    refuse("a fact whose id starts with '%s'" % prefix,
+                           "; ".join("%s: %s" % pair for pair in faults)
+                           + " (%s)" % entry["why"],
+                           entry["likely_source"])
+                    return
+                matches = counting
             usable = [i for i in matches if fresh(i)]
             if usable:
                 satisfied.append(usable[0])
@@ -1289,7 +3355,13 @@ def check(pack, floors):
             # member of it must carry its companion.
             prefix = entry["prefix"]
             companion = entry["companion_prefix"]
-            matches = [i for i in tier1_order if i.startswith(prefix)]
+            # A promise for a period not yet reported has no outcome to
+            # pair with (owner ruling AC45(9)): the floor asks its pair
+            # only of a period that has since been reported, so a pack
+            # whose only guidance is this year's still owes a reported
+            # pair or the declared gap.
+            matches = [i for i in tier1_order if i.startswith(prefix)
+                       and i not in open_guided]
             if not matches:
                 enforce_absence(
                     entry,
@@ -1319,6 +3391,8 @@ def check(pack, floors):
             # of them, so a capture cannot answer three peaks and one
             # recovery time and read as complete (ANCHORLESS-SPEC
             # 4.A.6: the durations were the cold read's central gap).
+            if entry.get("depth") and evaluate_depth(entry):
+                return
             prefixes = entry["prefixes"]
             suffixes = {}
             for prefix in prefixes:
@@ -1326,6 +3400,13 @@ def check(pack, floors):
                                     for fact_id in tier1_order
                                     if fact_id.startswith(prefix)
                                     and len(fact_id) > len(prefix)}
+                # A bare prefix names no member (round 5 Step 0,
+                # P-U4d-7): where the part is shaped, it refuses.
+                if (entry.get("shapes") or {}).get(prefix) and any(
+                        fact_id == prefix for fact_id in tier1_order):
+                    refuse(prefix, "a dealing's fact id must carry its "
+                           "number after %s (%s)" % (prefix, entry["why"]),
+                           entry["likely_source"])
             empty = [p for p in prefixes if not suffixes[p]]
             if len(empty) == len(prefixes):
                 enforce_absence(
@@ -1378,8 +3459,22 @@ def check(pack, floors):
                            "page (%s)"
                            % (prefix, suffix, entry["why"]),
                            entry["likely_source"])
+            # A member is counted whole or not at all: a fault in any
+            # of its parts keeps every part of it out of the count.
+            faulty = set()
             for prefix in prefixes:
+                part = (entry.get("shapes") or {}).get(prefix)
                 for suffix in sorted(suffixes[prefix]):
+                    fault = part and shape_fault(entry, part,
+                                                 prefix + suffix)
+                    if fault:
+                        faulty.add(suffix)
+                        refuse(prefix + suffix, "%s %s: %s (%s)"
+                               % (entry["member_name"], suffix, fault,
+                                  entry["why"]),
+                               entry["likely_source"])
+            for prefix in prefixes:
+                for suffix in sorted(suffixes[prefix] - faulty):
                     fact_id = prefix + suffix
                     if not fresh(fact_id):
                         enforce_stale(entry, fact_id, stale_words(fact_id))
@@ -1401,7 +3496,14 @@ def check(pack, floors):
                 "floors file must be fixed before any pack is judged "
                 "against it" % floor_kind)
 
+    # A floor ruled after a capture was made (its `applies_from` date) is
+    # not read against it: the capture's own recorded date tells the two
+    # apart, so no capture on record is judged by it (owner ruling AC46(2)).
+    captured_day = _as_of_moment(capture["captured_at"]).date()
     for entry in entries:
+        if (entry.get("applies_from") and captured_day
+                < date.fromisoformat(entry["applies_from"])):
+            continue
         evaluate(entry)
 
     # ---- the ASSET CLASS's own anchors (ANCHORLESS-SPEC section 4) ----
@@ -1457,7 +3559,7 @@ def check(pack, floors):
     absence_allowed = (class_config.get("canonical_tests")
                        == "absent_by_design_allowed"
                        or subjects.is_anchorless(subject))
-    for test_id in CANONICAL_TEST_IDS:
+    for test_id in test_ids:
         guide_why, guide_where = guide[test_id]
         requirement = requirements_by_id.get(test_id)
         if requirement is None or requirement["kind"] != "canonical_test":
@@ -1488,17 +3590,16 @@ def check(pack, floors):
                        "it is marked answered but names no supporting "
                        "facts (%s)" % description,
                        hint)
-            prefix = lifts.get("free_cash_flow_test_answered_by_prefix")
-            if (requirement_id == "free_cash_flow" and prefix
-                    and requirement["kind"] == "canonical_test"
-                    and not any(fact_id.startswith(prefix)
-                                and fact_id in tier1_rules
-                                for fact_id in answered_by)):
-                refuse(requirement_id,
-                       "owner ruling AC30(1): %s - so this test is "
-                       "answered by a '%s' fact, and it names none (%s)"
-                       % (guide[requirement_id][0], prefix, description),
-                       hint)
+            term = terms.get(requirement_id)
+            if term and requirement["kind"] == "canonical_test":
+                for facts, lacks in _test_term_failures(
+                        term, answered_by, tier1_order):
+                    refuse(requirement_id,
+                           "%s: %s - so this test is answered by %s, and "
+                           "it %s (%s)"
+                           % (term["authority"], guide[requirement_id][0],
+                              facts, lacks, description),
+                           hint)
             for fact_id in answered_by:
                 if fact_id in tier1_rules:
                     offender = stale_dependency(fact_id)
@@ -1690,7 +3791,8 @@ def check(pack, floors):
                    "archetype calls for, and this one names none - so "
                    "nothing binds the rating to the kind of business it is",
                    "the 'measure' field on the rating_vs_history_or_peers "
-                   "row: one of the four the contract names")
+                   "row: the measure the floors' archetype table gives the "
+                   "declared archetype")
         if entry is not None:
             if measure and measure != entry["measure"]:
                 refuse("a rating measure that fits the declared archetype",
@@ -1704,11 +3806,18 @@ def check(pack, floors):
                        "the two agree")
             if (entry.get("anchorless_only")
                     and not subjects.is_anchorless(subject)):
+                # Unit GROWTH-ARCHETYPE, D3: the earning archetypes are
+                # read from the table, so the words never go stale.
+                earning = [key.replace("_", " ")
+                           for key, row in table.items()
+                           if isinstance(row, dict)
+                           and not row.get("anchorless_only")]
                 refuse("an archetype legal for a priced single name",
                        "owner ruling AC15 (P2): '%s' keeps the anchorless "
                        "ladder and is legal only for an asset with no "
                        "earnings; this subject is a priced equity, rated "
-                       "on one of the three earning archetypes" % archetype,
+                       "on one of the earning archetypes the floors' table "
+                       "names - %s" % (archetype, ", ".join(earning)),
                        "the archetype in the business frame")
             numerator = entry.get("subject_numerator")
             if numerator and not entry.get("anchorless_only"):
@@ -1890,8 +3999,89 @@ def check(pack, floors):
                                "a dated numeric reading of '%s' for %s, or a "
                                "declared gap for the fact class '%s'"
                                % (den_id, peer["ticker"], _PEER_GAP_CLASS))
+        # Owner rulings AC49(1) and AC50 (1)-(3): the latest quarters choose
+        # between earnings and the growth path, in both directions.
+        for what, why, where in _profitability_failures(
+                floors, declared, capture, facts_by_id, captured_day):
+            refuse(what, why, where)
+        # Owner ruling AC51(R4), architect ruling B8: a company that reports
+        # reserves is rated as a producer, unless an integrated oil major's
+        # three arms pass (AC52(1) as amended). Where the capture also meets
+        # the four-quarters refusal, both print: each is true.
+        for what, why, where in _producer_rule_failures(
+                floors, declared, frame, capture, facts_by_id, captured_day,
+                stale_or_none):
+            refuse(what, why, where)
         changing = (frame.get("what_is_changing") or {}).get("kind")
-        if declared and declared[1] and entry is not None:
+        # Unit GROWTH-ARCHETYPE, D1: the per-role denominator check is the
+        # resolved row's, whatever the archetype; the financial
+        # institution's own rules run for the financial institution alone,
+        # the denominator check in its old place among them.
+        is_fi = (declared is not None and declared[0] == _FI_ARCHETYPE
+                 and declared[1] is not None and entry is not None)
+        if declared and entry is not None and not is_fi:
+            for what, why, where in _denominator_id_failures(
+                    entry, rating, archetype.replace("_", " "),
+                    entry.get("continuing_suffix") or ""):
+                refuse(what, why, where)
+            # Architect ruling A9 (audit finding r1-2): a row naming the
+            # roles its exited business touches rates a changing company
+            # on the continuing business's figures only.
+            if (changing == "model_transition"
+                    and entry.get("exited_business_roles")):
+                for what, why, where in _exited_business_failures(
+                        entry, rating, entry["exited_business_roles"],
+                        entry.get("continuing_suffix") or "",
+                        "architect ruling A9",
+                        "the continuing business's figure, its id ending "
+                        "'%s', as the filing reports it or struck from "
+                        "the continuing business's own figures, "
+                        "arithmetic shown"
+                        % (entry.get("continuing_suffix") or "")):
+                    refuse(what, why, where)
+        # Owner rulings AC50 (4), (5) and (7), architect ruling A10: the
+        # growth company's own rules, for the growth company alone - its
+        # months-of-cash block against the floors, its cash, burn and growth
+        # always decisive, and no loss on every sale. Below the line the
+        # rating is capped at publication, never refused (AC50(8)).
+        if (declared is not None and declared[0] == _GROWER_ARCHETYPE
+                and entry is not None and declared[1] is not None):
+            decisive_ids = set()
+            for metric_row in frame["decisive_metrics"]:
+                decisive_ids.update(metric_row.get("answered_by") or [])
+            for what, why, where in _grower_failures(
+                    floors, entry, frame, rating, decisive_ids, facts_by_id):
+                refuse(what, why, where)
+            # Every figure the months of cash left are counted from, or the
+            # block shows beside them, is read as the case stands: one
+            # fresh member never vouches for another.
+            block = frame.get("growth_runway")
+            block = block if isinstance(block, dict) else {}
+            refuse_stale_cited(
+                list(block.get("cash_facts") or ())
+                + [block.get("operating_cash_flow_fact"),
+                   block.get("capital_expenditure_fact")]
+                + list(block.get("undrawn_facility_facts") or ()),
+                "months-of-cash block")
+        # Owner rulings AC51-AC54 (sub-charge b): the producer's own rules,
+        # for the producer alone - the product listed, one unit throughout,
+        # the families, the reserves' age, today's price, the hedges, the
+        # latest quarters, the by-products, what it mostly sells, today's
+        # price always decisive, no reserve below zero, the yardstick's
+        # halves in one unit - and every fact its resource block cites read
+        # as the case stands: one fresh member never vouches for another.
+        if (declared is not None and entry is not None
+                and declared[1] is not None
+                and declared[0] == gate._PRODUCER_ARCHETYPE):
+            decisive_ids = set()
+            for metric_row in frame["decisive_metrics"]:
+                decisive_ids.update(metric_row.get("answered_by") or [])
+            for what, why, where in _producer_failures(
+                    floors, declared, entry, frame, rating, capture,
+                    facts_by_id, freshness, captured_day, decisive_ids,
+                    gap_kinds, stale_or_none, stale_dependency):
+                refuse(what, why, where)
+        if is_fi:
             decisive_ids = set()
             for metric_row in frame["decisive_metrics"]:
                 decisive_ids.update(metric_row.get("answered_by") or [])
@@ -1920,25 +4110,38 @@ def check(pack, floors):
                     ("cost of risk", list(risk_cost.get("facts") or ())),
                     ("secondary engine's share",
                      list(frame.get("fi_secondary_share_facts") or ()))):
-                for fact_id in _dedupe(cited):
-                    if (isinstance(fact_id, str) and fact_id in tier1_rules
-                            and not fresh(fact_id)):
-                        refuse("a fresh reading of '%s', which the frame's "
-                               "%s cites" % (fact_id, block_words),
-                               stale_words(fact_id),
-                               "a fresher reading of '%s' from the source "
-                               "that produced it"
-                               % (stale_dependency(fact_id) or fact_id))
-        forbidden = ((archetype_data.get("forbidden_on_model_transition")
-                      or {}).get("trailing_revenue_fact_ids") or [])
+                refuse_stale_cited(cited, block_words)
+        banned = archetype_data.get("forbidden_on_model_transition") or {}
+        # A family named by prefix (the quarterly revenue members, owner
+        # ruling AC49(1), architect ruling A9) is banned member by member.
+        banned_prefixes = tuple(banned.get("trailing_revenue_prefixes")
+                                or ())
+        forbidden = list(banned.get("trailing_revenue_fact_ids") or [])
+        forbidden += [fact_id for fact_id in tier1_order
+                      if banned_prefixes
+                      and fact_id.startswith(banned_prefixes)]
+        # A CONTINUING fact - its id ending in the resolved row's
+        # continuing suffix (the financial institution's in its
+        # exited-business block), its derivation accepted by the gate - is
+        # the continuing business's figure: its operands are the arithmetic
+        # that removes the exited part, not a reliance on it, so the walk
+        # stops there (the architect's ruling on audit findings r1-3 and
+        # r2-1, replacing the r1-3 exemption of the member alone).
+        if is_fi:
+            kept_suffix = (archetype_data.get("fi_exited_business")
+                           or {}).get("continuing_suffix") or ""
+        else:
+            kept_suffix = (entry or {}).get("continuing_suffix") or ""
 
         def rests_on_forbidden(fact_id):
             """The first forbidden trailing-revenue fact this rating fact
-            rests on - itself or an operand, transitively - or None. A
-            derived fact struck from the exited business's revenue is that
-            revenue, however many operands deep (owner ruling AC15 P2; the
-            same operand walk stale_dependency does)."""
-            return _rests_on(fact_id, forbidden, facts_by_id)
+            rests on - itself or an operand, transitively, never through a
+            continuing fact - or None. A derived fact struck from the
+            exited business's revenue is that revenue, however many
+            operands deep (owner ruling AC15 P2; the same operand walk
+            stale_dependency does)."""
+            return _rests_on(fact_id, forbidden, facts_by_id,
+                             stop_suffix=kept_suffix)
 
         if changing == "model_transition" and rating:
             # The ban walks every fact the rating rests on, not only
@@ -2427,7 +4630,7 @@ def check(pack, floors):
                   "advisory_missing": _dedupe(advisory_missing)}
     message = _compose_message(result, _subject_label(subject),
                                floors_out, len(requirements), missing,
-                               _class_note(floors, subject))
+                               _class_note(floors, subject), notes)
     return {"result": result,
             "asset_class": subjects.asset_class(subject),
             "floors": floors_out,
@@ -2461,7 +4664,7 @@ def _class_note(floors, subject):
 
 
 def _compose_message(result, label, floors_out, requirement_count,
-                     missing, class_note=None):
+                     missing, class_note=None, notes=()):
     lines = []
     if result == "pass":
         lines.append("The evidence is sufficient to convene the "
@@ -2472,6 +4675,7 @@ def _compose_message(result, label, floors_out, requirement_count,
                      "on the pack's checklist, every one answered or "
                      "covered by a declared reason."
                      % (len(floors_out["satisfied"]), requirement_count))
+        lines.extend(notes)
         if floors_out["lifted_by_declared_gap"]:
             lines.append("Absences declared with a reason (accepted): "
                          "%s." % ", ".join(

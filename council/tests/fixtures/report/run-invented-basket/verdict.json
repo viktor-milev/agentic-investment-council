@@ -1,4 +1,5 @@
 {
+ "answer_line": "Yes, a buy as one idea at today's prices; the next test is each leg's dated results. (INVENTED FIXTURE)",
  "atlas_envelope": {
   "asset_class": "equity",
   "challenge_status": "success",
@@ -146,6 +147,7 @@
   "verdict_hash": null,
   "warnings": []
  },
+ "business_read": null,
  "challenge": {
   "change_appendix": [],
   "dispositions": [],
@@ -171,6 +173,8 @@
   }
  ],
  "conviction_rationale": "INVENTED FIXTURE - the pair earns a buy on this record: the blended rating sits a tenth under its own five-year average and both named legs answered their essential metrics.",
+ "decisive_argument": null,
+ "decisive_metrics_read": null,
  "evidence_dependencies": [
   "price_last__achp",
   "pair_pe_blended_current",
@@ -188,6 +192,10 @@
  },
  "provenance": {
   "challenger_model_requested": "gpt-5.6-sol",
+  "codex_version": {
+   "challenge": null,
+   "evidence_audit": null
+  },
   "evidence": {
    "approval_note": "Invented fixture note: read the one page for both members and let it sit.",
    "approved_at": "2026-08-31T08:55Z",
@@ -242,7 +250,7 @@
  "rating": "buy",
  "run_id": "report-fixture-invented-basket",
  "scenario_rating": null,
- "schema_version": "1.4.0",
+ "schema_version": "1.7.0",
  "sizing_inputs": [
   {
    "as_of": null,

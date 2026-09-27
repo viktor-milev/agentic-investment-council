@@ -368,7 +368,8 @@ class TestReadsEverySchemaVersion(unittest.TestCase):
                 "prompt_bytes_total": 1}}
 
     def test_every_version_builds_a_valid_row(self):
-        for version in ("1.0.0", "1.1.0", "1.2.0", "1.3.1", "1.4.0"):
+        for version in ("1.0.0", "1.1.0", "1.2.0", "1.3.1", "1.4.0",
+                        "1.5.0"):
             row = ledger.build_row(self._minimal(version), RULES)
             self.assertEqual(validate.validate(row, ledger._schema()), [],
                              version)

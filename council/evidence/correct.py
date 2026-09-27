@@ -65,6 +65,40 @@ def _restrike_value(original_value, computed):
             return format(computed, "f")
 
 
+def _restrike_exact(derived, original_value, computed):
+    """An exact re-struck figure. A share or yield that declares its
+    rounding keeps the declaration and is written to the declared places
+    (architect ruling closing audit finding r2-2), padded where the exact
+    value fits them; where it does not, the exact form is written and the
+    gate's re-check refuses the mismatch by name."""
+    places = derived.get("rounded_places")
+    if derived["operation"] == "divide" and places is not None:
+        with localcontext() as context:
+            context.prec = gate._EXACT_PRECISION
+            context.traps[Inexact] = True
+            try:
+                return format(computed.quantize(Decimal(1).scaleb(-places)),
+                              "f")
+            except (Inexact, InvalidOperation):
+                return format(computed, "f")
+    return _restrike_value(original_value, computed)
+
+
+def _restrike_rounded(derived, values):
+    """A share or yield whose division no longer comes out even,
+    re-struck by the gate's one rounding rule at the places its
+    arithmetic declares (owner ruling AC41(2)), or None when that cannot
+    stand: another operation, no declared rounding, or too few
+    significant digits at those places."""
+    places = derived.get("rounded_places")
+    if derived["operation"] != "divide" or places is None:
+        return None
+    value = gate.rounded_quotient(values, places)
+    if gate.significant_digits(value) < gate._ROUNDED_SIGNIFICANT_DIGITS:
+        return None
+    return value
+
+
 def restrike(capture, changed_id):
     """Re-strike every derived figure resting on the changed fact, in
     dependency order (owner ruling AC15, P7). Returns (restruck, error):
@@ -92,6 +126,7 @@ def restrike(capture, changed_id):
                 reference = operand.get("fact_id")
                 if reference is not None and reference in facts_by_id:
                     operand["value"] = facts_by_id[reference]["value"]
+            rounded = None
             try:
                 values = [Decimal(operand["value"])
                           for operand in derived["operands"]]
@@ -100,20 +135,23 @@ def restrike(capture, changed_id):
                     context.traps[Inexact] = True
                     computed = gate._compute(derived["operation"], values)
             except Inexact:
-                return restruck, (
-                    "the figure '%s', struck from the corrected fact, has "
-                    "no exact decimal value once '%s' changes (its division "
-                    "no longer terminates) - it cannot be re-struck "
-                    "deterministically. Correct it directly with its own "
-                    "source, or re-gather the chain; nothing was written."
-                    % (fact_id, changed_id))
+                rounded = _restrike_rounded(derived, values)
+                if rounded is None:
+                    return restruck, (
+                        "the figure '%s', struck from the corrected fact, "
+                        "has no exact decimal value once '%s' changes (its "
+                        "division no longer terminates) - it cannot be "
+                        "re-struck deterministically. Correct it directly "
+                        "with its own source, or re-gather the chain; "
+                        "nothing was written." % (fact_id, changed_id))
             except (InvalidOperation, ArithmeticError) as exc:
                 return restruck, (
                     "the figure '%s', struck from the corrected fact, "
                     "cannot be re-struck: %r; nothing was written."
                     % (fact_id, exc))
             old_value = fact["value"]
-            new_value = _restrike_value(old_value, computed)
+            new_value = (rounded if rounded is not None
+                         else _restrike_exact(derived, old_value, computed))
             fact["value"] = new_value
             if new_value != old_value:
                 restruck.append({"id": fact_id, "change": "changed",
@@ -366,13 +404,18 @@ def _invalidate_reviewed_evidence(capture_path):
     The full evidence document (P6, sub-charge b) is removed for the same
     reason and is the one a reviewed sitting actually approves, so removing
     it forces a fresh full document before re-approval (audit sub-charge b,
-    r1-3 correction path). `approval.json`/`brief.md`/`EVIDENCE-FULL.md` are
-    the names the host and runbook use. Returns what was removed."""
+    r1-3 correction path). The page that document is read on,
+    `EVIDENCE-FULL.html` (owner ruling AC40(2b)), goes with it, so no stale
+    page survives a changed fact. `approval.json`/`brief.md`/
+    `EVIDENCE-FULL.md`/`EVIDENCE-FULL.html` are the names the host and
+    runbook use. Returns what was removed."""
     evidence_dir = os.path.dirname(os.path.abspath(capture_path))
     removed = []
     for name, words in (("approval.json", "the reviewed-mode approval"),
                         ("brief.md", "the one-page brief"),
-                        ("EVIDENCE-FULL.md", "the full evidence document")):
+                        ("EVIDENCE-FULL.md", "the full evidence document"),
+                        ("EVIDENCE-FULL.html",
+                         "the page the full evidence document is read on")):
         path = os.path.join(evidence_dir, name)
         if os.path.isfile(path):
             os.remove(path)

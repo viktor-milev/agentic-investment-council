@@ -47,6 +47,14 @@ def _generated_note(fact):
                 % (derived["window"], derived["formula"], fact["value"]))
     equation = _OPERATOR_TEXT[derived["operation"]].join(
         operand["value"] for operand in derived["operands"])
+    places = gate.rounded_division_places(derived, fact["value"])
+    if places is not None:
+        # Owner ruling AC41(2): a division that does not come out even is
+        # recorded rounded once, and the note says so.
+        return ("Deterministic transform inside the pack: %s = %s, rounded "
+                "half-up to %d decimal place%s. Not an independent "
+                "observation." % (equation, fact["value"], places,
+                                  "" if places == 1 else "s"))
     return ("Deterministic transform inside the pack: %s = %s. "
             "Not an independent observation." % (equation, fact["value"]))
 

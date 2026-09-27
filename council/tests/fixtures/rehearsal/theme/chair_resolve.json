@@ -28,6 +28,50 @@
    }
   ],
   "conviction_rationale": "INVENTED FIXTURE - a watch-state: the theme's falsifiers are named and scored and the named universe answered its essential metrics, but nothing prices the theme itself.",
+  "answer_line": "INVENTED FIXTURE - not yet a buy; watch the named triggers before buying the theme.",
+  "decisive_argument": {
+   "seat": "advisor_risk",
+   "why": "INVENTED FIXTURE - the risk reading carried the watch-state: nothing prices the theme itself, so the falsifiers are what to watch."
+  },
+  "business_read": "INVENTED FIXTURE - utility-scale battery storage, named through two companies: one assembles and runs storage systems for utilities, the other makes the battery racks inside them. What is changing is how fast utilities deploy storage.",
+  "decisive_metrics_read": [
+   {
+    "metric": "Deployment backlog",
+    "constituent": "GSTA",
+    "value": "3.2 GW",
+    "implies": "Deployment is booked ahead."
+   },
+   {
+    "metric": "Revenue against last year",
+    "constituent": "GSTA",
+    "value": "1180 USD_m against 940 USD_m",
+    "implies": "The systems leg is growing."
+   },
+   {
+    "metric": "Margin per gigawatt-hour installed",
+    "constituent": "GSTA",
+    "value": "declared a gap in the case file",
+    "implies": "Profit per unit cannot be read."
+   },
+   {
+    "metric": "Storage revenue this quarter",
+    "constituent": "GSTB",
+    "value": "890 USD_m",
+    "implies": "The racks leg is all storage."
+   },
+   {
+    "metric": "Revenue against last year",
+    "constituent": "GSTB",
+    "value": "890 USD_m against 760 USD_m",
+    "implies": "The racks leg is growing."
+   },
+   {
+    "metric": "Price per kilowatt-hour shipped",
+    "constituent": "GSTB",
+    "value": "declared a gap in the case file",
+    "implies": "Pricing cannot be read."
+   }
+  ],
   "evidence_dependencies": [
    "storage_installs_q",
    "storage_installs_prior_year_q",

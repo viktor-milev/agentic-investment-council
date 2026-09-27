@@ -1,0 +1,6 @@
+{
+  "comment": "An estimate at the fresh-input rate: every token figure is priced as fresh input, never a bill.",
+  "note": "List prices for the cost estimate on the report page (owner ruling AC41(4): cost shown as a two-row money estimate, labelled as an estimate, plus time; unit READ-A). Dollars per million tokens. The sitting's record carries one token count per seat, not the split into fresh input, cached input and output, so every token figure is priced at the model's list price for fresh input - an estimate, never a bill. The architect keeps these figures current; the page prints the basis beside the figures.",
+  "council": {"usd_per_million_tokens": "5", "basis": "Claude list price for fresh input, the rate the project's own cost reports use"},
+  "outside": {"usd_per_million_tokens": "5", "basis": "the outside model's input rate as the code-audit plugin prices its reviewer"}
+}

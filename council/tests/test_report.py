@@ -14,6 +14,7 @@ import contextlib
 import datetime
 import decimal
 import html as html_lib
+import html.parser as html_lib_parser
 import hashlib
 import io
 import json
@@ -31,8 +32,9 @@ sys.path.insert(0, os.path.abspath(
 
 from council.engine import briefs  # noqa: E402
 from council.evidence import brief as pack_brief  # noqa: E402
-from council.evidence import freeze, tape  # noqa: E402
+from council.evidence import freeze, tape, trace  # noqa: E402
 from council.engine import ladder  # noqa: E402
+from council.engine import runrecord  # noqa: E402
 from council.lib import prose  # noqa: E402
 from council.lib import validate  # noqa: E402
 from council.report import render_report as R  # noqa: E402
@@ -208,16 +210,16 @@ def _rewrite_pack(run_dir, change):
 # then the main appendices - about nine entries, not the seventeen process steps of before. The
 # "Appendices" divider, the challenge diff and the run stamps are folded appendices WITHOUT a
 # menu entry, reached by scrolling; they are checked separately below.
-ANCHORS = ("decision", "synthesis", "detail", "evidence", "question", "review",
-           "advisors", "challenger", "atlas")
+ANCHORS = ("decision", "synthesis", "advisors", "review", "challenge", "detail", "evidence",
+           "appendices")
 
 # Every h2 heading on the fixture page, in plain words (audit B5): the nine menu tiers plus the
 # folded appendices that carry an h2 but no menu entry.
 SECTION_HEADINGS = (
-    "Executive summary", "The chairman's final synthesis", "The decision in detail",
-    "The evidence", "Appendices — the full record", "The owner's question", "Peer review",
-    "The five advisors", "The challenger's full response",
-    "What changed after the outside audit", "What the portfolio system receives",
+    "The answer", "The chairman's synthesis", "The decision in detail", "The evidence",
+    "Appendices", "The owner's question", "The peer review and what all five missed",
+    "The five advisors", "The outside model's own words",
+    "What changed after the outside challenge", "What the portfolio system receives",
     "About this sitting",
 )
 
@@ -339,14 +341,14 @@ TAG = re.compile(r"<[^>]+>")
 def _front(page):
     """The executive summary's own HTML: everything between its heading and the chairman's
     synthesis, which now follows it directly (owner ruling AC16(3),(5))."""
-    return page[page.index('<h2 id="decision">'):page.index('<h2 id="synthesis">')]
+    return page[page.index('<h2 id="decision"'):page.index('<h2 id="synthesis"')]
 
 
 def _masthead(page):
     """The masthead and the sticky bar (design audit C4 tier 0 / C5): the page body from its
     header to the executive summary heading. The rating box, the key-data strip, the warnings
     band and the sticky summary bar sit here now, above the tiers (owner ruling AC16(3),(9))."""
-    return page[page.index('<header class="masthead">'):page.index('<h2 id="decision">')]
+    return page[page.index('<header class="masthead">'):page.index('<h2 id="decision"')]
 
 
 def _detail(page):
@@ -354,13 +356,13 @@ def _detail(page):
     between its heading and the frozen evidence that follows it. The downside ladder, the
     anchorless scenario ladder, the dated events, the outside auditor's objections and the
     challenge round live here now, moved down from the executive summary and the appendices."""
-    return page[page.index('<h2 id="detail">'):page.index('<h2 id="evidence">')]
+    return page[page.index('<h2 id="detail"'):page.index('<h2 id="evidence"')]
 
 
 def _stamps(page):
     """The 'About this sitting' run-stamps appendix (owner ruling AC16 moved the clocks here off
     the executive summary): everything from its heading to the end of the page."""
-    return page[page.index('<h2 id="stamps">'):]
+    return page[page.index('<h3 id="stamps">'):]
 
 
 def _visible_text(fragment):
@@ -385,7 +387,7 @@ class TestSelfContained(unittest.TestCase):
 class TestSectionsAndNavigation(unittest.TestCase):
     def test_every_section_present_with_its_nav_entry(self):
         for anchor in ANCHORS:
-            self.assertIn('<h2 id="%s">' % anchor, HTML, anchor)
+            self.assertIn('<h2 id="%s"' % anchor, HTML, anchor)
             self.assertIn('href="#%s"' % anchor, HTML, anchor)
 
     def test_section_headings_in_plain_words(self):
@@ -450,9 +452,9 @@ class TestCompactEvidenceTableCap(unittest.TestCase):
 
     def test_all_dependencies_open_and_no_second_fold_when_25_or_fewer(self):
         self.assertNotIn("this verdict rests on</summary>", HTML)
-        for fid in ("last_price", "revenue_fy2025", "free_cash_flow_fy2025",
-                    "forward_earnings_multiple", "risk_free_rate_10y"):
-            self.assertIn("<code>%s</code>" % fid, HTML)
+        for fid in ("last price", "revenue fy2025", "free cash flow fy2025",
+                    "forward earnings multiple", "risk free rate 10y"):
+            self.assertIn("<tr><td>%s</td>" % fid, HTML)
 
     def test_open_rows_capped_at_25_with_the_rest_in_a_second_fold(self):
         extra = [{"id": "dep%02d" % i, "value": "%d.0" % i, "unit": "USD_m",
@@ -470,8 +472,8 @@ class TestCompactEvidenceTableCap(unittest.TestCase):
         intro = html.index("The figures the verdict says its ruling rests on")
         fold = html.index("The other 5 facts this verdict rests on")
         open_region = html[intro:fold]
-        self.assertEqual(open_region.count("<code>dep"), 25)
-        self.assertNotIn("<code>dep29</code>", open_region)
+        self.assertEqual(open_region.count("<tr><td>dep"), 25)
+        self.assertNotIn("<tr><td>dep29</td>", open_region)
 
     def test_a_bounded_dependency_fact_shows_its_bound_in_the_compact_table(self):
         # Round 1 finding r1-1: a decisive dependency fact that is a ceiling or floor must not
@@ -517,7 +519,7 @@ class TestCompactEvidenceTableCap(unittest.TestCase):
         intro = html.index("The figures the verdict says its ruling rests on")
         fold = html.index("The other 5 facts this verdict rests on")
         open_region = html[intro:fold]
-        self.assertIn("<code>dep29</code>", open_region)
+        self.assertIn("<tr><td>dep29</td>", open_region)
 
 
 class TestVerdictBlock(unittest.TestCase):
@@ -595,16 +597,16 @@ class TestTripwires(unittest.TestCase):
 
 class TestChallengeSummary(unittest.TestCase):
     def test_model_and_success_status(self):
-        self.assertIn("<strong>The outside audit ran.</strong>", HTML)
-        self.assertIn("gpt-5.6-sol", HTML)
+        self.assertIn("<strong>The outside challenge ran.</strong>", HTML)
+        self.assertIn("OpenAI GPT-5.6 Sol", HTML)
 
     def test_findings_with_named_dispositions_in_plain_words(self):
         self.assertIn("<strong>F1</strong> &middot; a claim without support", HTML)
         self.assertIn("<strong>F2</strong> &middot; a blind spot", HTML)
-        self.assertIn('<span class="tag addressed">addressed</span>', HTML)
-        self.assertIn('<span class="tag overruled">overruled</span>', HTML)
+        self.assertIn('<span class="tag addressed" title="the verdict actually moved">acted on', HTML)
+        self.assertIn('<span class="tag overruled" title="set aside, with the reason', HTML)
         self.assertIn("the verdict actually moved", HTML)
-        self.assertIn("rejected, with the reason on the record", HTML)
+        self.assertIn("set aside, with the reason on the record", HTML)
 
     def test_endorsement_rendered_when_present(self):
         self.assertIn("The highest rating it would support on this record: "
@@ -621,7 +623,7 @@ class TestChangeAppendix(unittest.TestCase):
     def test_unendorsed_raise_row_carries_the_warning_styling_class(self):
         self.assertIn('<tr class="alarm"><td class="nowrap"><code>rating</code></td>'
                       '<td>hold</td><td>monitor</td><td class="nowrap">'
-                      '<span class="tag alarmtag">a raise the auditor did not see</span>'
+                      '<span class="tag alarmtag">a raise the outside challenge did not see</span>'
                       "</td></tr>", HTML)
 
     def test_empty_appendix_renders_the_exact_sentence(self):
@@ -629,9 +631,9 @@ class TestChangeAppendix(unittest.TestCase):
             run_dir = _mutated_copy(tmp, lambda d: _rewrite_verdict(
                 d, lambda doc: doc["challenge"].__setitem__("change_appendix", [])))
             page = _render(run_dir)
-        self.assertIn("Nothing changed after the outside audit.", page)
+        self.assertIn("Nothing changed after the outside challenge.", page)
         self.assertNotIn('<tr class="alarm">', page)
-        self.assertIn('<h2 id="changes">', page)   # the section always exists
+        self.assertIn('<h3 id="changes">', page)   # the section always exists
 
 
 class TestSynthesis(unittest.TestCase):
@@ -655,7 +657,7 @@ class TestEvidence(unittest.TestCase):
         self.assertIn(disclosure, HTML)
         fold = HTML.index("<details><summary>Every figure on the record")
         self.assertLess(HTML.index(disclosure), fold)
-        self.assertGreater(HTML.index(disclosure), HTML.index('<h2 id="evidence">'))
+        self.assertGreater(HTML.index(disclosure), HTML.index('<h2 id="evidence"'))
 
     def test_value_cells_render_in_the_market_form(self):
         # The evidence table's value column is no longer nowrap - it can carry a whole tier-2
@@ -681,11 +683,9 @@ class TestEvidence(unittest.TestCase):
         self.assertGreaterEqual(HTML.count('<span class="tag checked">checked</span>'), 9)
 
     def test_derived_fact_carries_its_generated_arithmetic_note(self):
-        # The note is the freeze's own generated sentence, repeated
-        # verbatim - the page never re-derives arithmetic prose.
-        self.assertIn("Deterministic transform inside the pack: "
-                      "88.40 * 110.0 = 9724.00. "
-                      "Not an independent observation.", HTML)
+        # The note is the freeze's own equation, read out of its sentence (unit READ-A) - the
+        # page never re-derives arithmetic prose.
+        self.assertIn("Calculated: 88.40 * 110.0 = 9724.00", HTML)
 
     def test_tier2_passage_is_quoted_never_rounded(self):
         self.assertIn("Management guided 2026 revenue to a range of 940 to 980 USD millions on "
@@ -693,8 +693,8 @@ class TestEvidence(unittest.TestCase):
                       "printed 862.5.", HTML)
 
     def test_declared_gap_and_sufficiency_summary(self):
-        self.assertIn("<strong>short_borrow_cost</strong>", HTML)
-        self.assertIn("<code>market_structure_read</code>", HTML)
+        self.assertIn("(short_borrow_cost &middot; the test it weakens: market_structure_read)",
+                      HTML)
         self.assertIn("5 of 6 checks were answered before any seat was paid; 1 was declared "
                       "as a gap.", HTML)
         self.assertIn(">declared gap<", HTML)
@@ -716,7 +716,7 @@ class TestQuestionAndFrame(unittest.TestCase):
 
 class TestAtlasEnvelope(unittest.TestCase):
     def test_compact_table_with_rating_key_numbers_and_pack_hash(self):
-        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        atlas = HTML[HTML.index('<h3 id="atlas">'):]
         self.assertIn("Monitor - no view yet; watch the named triggers", atlas)
         self.assertIn("<td>last price</td>", atlas)
         self.assertIn('<td class="nowrap">$88.40</td>', atlas)
@@ -740,7 +740,7 @@ class TestTheHandOffStandsAlone(unittest.TestCase):
 
     def atlas(self, page=None):
         page = page if page is not None else HTML
-        return page[page.index('<h2 id="atlas">'):]
+        return page[page.index('<h3 id="atlas">'):]
 
     def test_the_package_names_its_own_subject_and_sitting(self):
         atlas = self.atlas()
@@ -753,9 +753,9 @@ class TestTheHandOffStandsAlone(unittest.TestCase):
 
     def test_the_package_states_the_audit_outcome_and_the_ceiling(self):
         atlas = self.atlas()
-        self.assertIn("The outside audit ran, and the package says so.",
+        self.assertIn("The outside challenge ran, and the package says so.",
                       atlas)
-        self.assertIn("The highest rating the auditor said the record "
+        self.assertIn("The highest rating the outside challenge said the record "
                       "supports is <strong>Hold", atlas)
 
     def test_the_warnings_are_said_to_travel_with_it(self):
@@ -763,7 +763,7 @@ class TestTheHandOffStandsAlone(unittest.TestCase):
                       "package too &mdash; 2 of them", self.atlas())
 
     def test_a_package_with_no_endorsed_ceiling_says_that_plainly(self):
-        self.assertIn("The auditor endorsed no ceiling, so the package "
+        self.assertIn("The outside challenge endorsed no ceiling, so the package "
                       "carries none.", self.atlas(BASKET_HTML))
 
     def test_the_ids_the_reader_does_not_know_are_named(self):
@@ -810,7 +810,7 @@ class TestAPackageWrittenBeforeTheAuditFields(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(verdict, handle)
         page = _render(run_dir)
-        return page[page.index('<h2 id="atlas">'):]
+        return page[page.index('<h3 id="atlas">'):]
 
     def legacy(self):
         return self.rendered_without(
@@ -833,8 +833,8 @@ class TestAPackageWrittenBeforeTheAuditFields(unittest.TestCase):
 
     def test_a_current_package_still_states_its_audit_state(self):
         """The guard must not silence a package that HAS the fields."""
-        atlas = HTML[HTML.index('<h2 id="atlas">'):]
-        self.assertIn("The outside audit ran, and the package says so.",
+        atlas = HTML[HTML.index('<h3 id="atlas">'):]
+        self.assertIn("The outside challenge ran, and the package says so.",
                       atlas)
         self.assertNotIn("predates", atlas)
 
@@ -862,7 +862,7 @@ class TestAFailedAuditIsNotAnAuditConclusion(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(verdict, handle)
         page = _render(run_dir)
-        return page[page.index('<h2 id="atlas">'):]
+        return page[page.index('<h3 id="atlas">'):]
 
     def test_a_failed_audit_never_claims_a_ceiling_was_considered(self):
         for status in ("timeout", "launch_failure", "malformed_output",
@@ -875,7 +875,7 @@ class TestAFailedAuditIsNotAnAuditConclusion(unittest.TestCase):
         atlas = self.rendered("timeout")
         self.assertIn("did NOT run", atlas)
         self.assertIn("no ceiling was accepted", atlas)
-        self.assertIn("a gap, not the auditor", atlas)
+        self.assertIn("a gap, not the outside challenge", atlas)
 
     def test_it_never_says_nobody_answered_when_papers_were_rejected(self):
         """The closing incremental's one finding. Two of the six
@@ -894,7 +894,7 @@ class TestAFailedAuditIsNotAnAuditConclusion(unittest.TestCase):
 
     def test_a_successful_audit_with_no_ceiling_still_says_so(self):
         atlas = self.rendered("success")
-        self.assertIn("The auditor endorsed no ceiling", atlas)
+        self.assertIn("The outside challenge endorsed no ceiling", atlas)
 
     def test_a_successful_audit_with_a_ceiling_still_names_it(self):
         atlas = self.rendered("success", ceiling="hold")
@@ -921,7 +921,7 @@ class TestBoundRowsInTheHandOff(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(verdict, handle)
         page = _render(run_dir)
-        return page[page.index('<h2 id="atlas">'):]
+        return page[page.index('<h3 id="atlas">'):]
 
     def test_a_ceiling_key_number_says_so_and_names_its_line(self):
         atlas = self.rendered({"kind": "ceiling",
@@ -938,7 +938,7 @@ class TestBoundRowsInTheHandOff(unittest.TestCase):
         self.assertIn("can only be higher", atlas)
 
     def test_an_untagged_package_renders_no_bound_words(self):
-        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        atlas = HTML[HTML.index('<h3 id="atlas">'):]
         self.assertNotIn("declared a CEILING", atlas)
         self.assertNotIn("declared a FLOOR", atlas)
 
@@ -958,18 +958,16 @@ class TestHeadAndFooter(unittest.TestCase):
         self.assertIn('<div class="kicker">Investment Council</div>', masthead)
         self.assertIn('<h1>Specimen Works <span class="tkr">(INVENTED-X: SPWK)</span></h1>',
                       masthead)
-        stamp = ('<div class="stamp muted small">seats ran on <strong>claude-opus-4-6</strong> '
-                 "&middot; the challenge went to <strong>gpt-5.6-sol</strong></div>")
+        stamp = ('<div class="stamp muted small">Advisors and chairman: <strong>Claude Opus 4.6'
+                 "</strong> &middot; outside challenge: <strong>OpenAI GPT-5.6 Sol</strong></div>")
         self.assertIn(stamp, masthead)
         # The run id and the publication timestamp are still on the page, in the footer.
-        self.assertIn("run <code>report-fixture-invented-1</code>", HTML)
-        self.assertIn("published 2026-08-30T10:26Z", HTML)
+        self.assertIn("Sitting <code>report-fixture-invented-1</code>", HTML)
+        self.assertIn("Published 30 Aug 2026, 10:26 UTC.", HTML)
 
     def test_footer_carries_run_id_computed_hash_and_schema_version(self):
-        self.assertIn("publication hash <code>%s</code>" % VERDICT_SHA, HTML)
-        self.assertIn("contract version <code>1.4.0</code>", HTML)
-        self.assertIn("Rendered from the run directory by "
-                      "<code>council/report/render_report.py</code>", HTML)
+        self.assertIn("file as it sits on disk</th><td><code>%s</code>" % VERDICT_SHA, HTML)
+        self.assertIn('<th class="nowrap">Contract version</th><td>1.7.0</td>', HTML)
 
 
 class TestMastheadDesignAndPrint(unittest.TestCase):
@@ -984,8 +982,8 @@ class TestMastheadDesignAndPrint(unittest.TestCase):
                       "triggers</div>", masthead)
         # The price the ruling is made against, and its date, from the envelope's leading number
         # under its own label - no label map, no new field (owner ruling AC16).
-        self.assertIn('<dl class="rating-price"><dt>last price</dt><dd>$88.40 '
-                      '<span class="asof">28 Aug 2026</span></dd></dl>', masthead)
+        self.assertIn('<dl class="rating-price"><dt>%s</dt><dd>$88.40 ' % R._glossed("last price")
+                      + '<span class="asof">28 Aug 2026</span></dd></dl>', masthead)
 
     def test_the_masthead_carries_the_one_phrase_question(self):
         # The owner's one-phrase question as asked, under the title (closes register item P-U6b-10).
@@ -995,9 +993,9 @@ class TestMastheadDesignAndPrint(unittest.TestCase):
     def test_the_model_names_are_a_small_stamp_under_the_rating_box(self):
         masthead = _masthead(HTML)
         box = masthead[masthead.index('<div class="ratingbox">'):masthead.index("</aside>")]
-        self.assertIn('<div class="stamp muted small">seats ran on '
-                      "<strong>claude-opus-4-6</strong> &middot; the challenge went to "
-                      "<strong>gpt-5.6-sol</strong></div>", box)
+        self.assertIn('<div class="stamp muted small">Advisors and chairman: <strong>Claude Opus '
+                      "4.6</strong> &middot; outside challenge: <strong>OpenAI GPT-5.6 Sol"
+                      "</strong></div>", box)
         # The old page-second-line model stamp is gone (owner ruling AC16(9), audit B9/B10).
         self.assertNotIn('<div class="meta">', HTML)
 
@@ -1148,9 +1146,7 @@ class TestChallengerFullResponse(unittest.TestCase):
         self.assertIn("The highest rating this record supports is hold.", HTML)
         self.assertIn("<h4>F1 &middot; a claim without support</h4>", HTML)
         self.assertIn("<h4>F2 &middot; a blind spot</h4>", HTML)
-        self.assertIn("<h4>The raw findings, exactly as returned</h4>", HTML)
-        self.assertIn("<pre><code>", HTML)
-        self.assertIn("&quot;id&quot;: &quot;F1&quot;", HTML)
+        self.assertNotIn("The raw findings", HTML)
 
     def test_failed_challenge_is_stated_loudly_and_shows_no_response_fold(self):
         def mutate(run_dir):
@@ -1162,8 +1158,8 @@ class TestChallengerFullResponse(unittest.TestCase):
             page = _render(_mutated_copy(tmp, mutate))
         self.assertIn(R.AUDIT_FAILED_SENTENCE, page)
         self.assertIn("the bridge timed out after 30 minutes", page)
-        self.assertIn("the challenger ran out of time", page)
-        self.assertIn("This run directory carries no challenger papers.", page)
+        self.assertIn("the outside model ran out of time", page)
+        self.assertIn("This run directory carries no outside challenge papers.", page)
         self.assertNotIn("<details><summary>Its full response", page)
 
 
@@ -1217,10 +1213,10 @@ C1_WORKED_EXAMPLES = [
     # visible after the figure (P-U6b-1): a per-year rate read as a bare percent misleads.
     ("3.91", "percent_per_year", "3.9% per year"),
     ("7.75", "percent", "7.8%"),
-    ("71", "percent", "71%"),
+    ("71", "percent", "71.0%"),
     ("15.9", "percent", "15.9%"),
-    ("0.97", "percent", "1%"),
-    ("4.00", "percent", "4%"),
+    ("0.97", "percent", "1.0%"),
+    ("4.00", "percent", "4.0%"),
     ("0.908383", "fraction_annualized", "90.8% annualized"),
     ("0.494479", "fraction_of_price", "-49.4%"),
     ("4.21", "%", "4.2%"),
@@ -1332,7 +1328,7 @@ class TestNumberRules(unittest.TestCase):
         self.assertTrue(result.startswith("0.01%"), result)
         self.assertEqual(R.format_number("3.91", "percent_per_year"), "3.9% per year")
         self.assertEqual(R.format_number("48.605", "percent annualised"), "48.6% annualised")
-        self.assertEqual(R.format_number("71", "percent"), "71%")
+        self.assertEqual(R.format_number("71", "percent"), "71.0%")
 
     def test_percent_basis_is_generalised_from_the_unit_tail(self):
         # P-U6b-4 (architect ruling, round 4): whatever follows the leading percent/fraction token
@@ -1344,7 +1340,7 @@ class TestNumberRules(unittest.TestCase):
         self.assertEqual(R.format_number("12.34", "percent_yoy"), "12.3% year over year")
         self.assertEqual(R.format_number("41.7", "percent_of_revenue"), "41.7% of revenue")
         self.assertEqual(R.format_number("2.5", "percent_of_book"), "2.5% of book")
-        self.assertEqual(R.format_number("71", "percent"), "71%")
+        self.assertEqual(R.format_number("71", "percent"), "71.0%")
         self.assertEqual(R.format_number("0.494479", "fraction_of_price"), "-49.4%")
 
     def test_the_prose_matcher_will_not_start_inside_another_token(self):
@@ -1434,9 +1430,9 @@ class TestNumberRules(unittest.TestCase):
     def test_percentage_points_are_not_mislabelled_as_percent(self):
         # Round 1 finding r1-2: "percentage_points" is a DIFFERENT unit from "percent" and is
         # present in the frozen packs; rendering a percentage-point figure with a "%" sign changes
-        # its meaning. It falls through to the safe unit-word spelling. True percent units (exact,
+        # its meaning. It reads to one decimal as points (unit READ-A). True percent units (exact,
         # or a "percent " / "percent_" qualifier) still render as a percentage.
-        self.assertEqual(R.format_number("-0.17", "percentage_points"), "-0.17 percentage points")
+        self.assertEqual(R.format_number("-0.17", "percentage_points"), "-0.2 points")
         self.assertEqual(R.format_number("-5.67", "percentage_points_of_gross_margin"),
                          "-5.67 percentage points of gross margin")
         self.assertEqual(R.format_number("3.9", "percent_per_year"), "3.9% per year")
@@ -1468,7 +1464,7 @@ class TestNumberRules(unittest.TestCase):
 
     def test_zero_has_one_rendering(self):
         self.assertEqual(R.format_number("-0.0"), "0")
-        self.assertEqual(R.format_number("0e50", "percent"), "0%")
+        self.assertEqual(R.format_number("0e50", "percent"), "0.0%")
         self.assertEqual(R.format_number("0", "USD"), "$0")
 
     def test_text_that_is_not_a_pure_number_passes_through_as_words(self):
@@ -1619,7 +1615,7 @@ class TestSC3Round1Regressions(unittest.TestCase):
 
     # r1-3: the hand-off section omitted the envelope's sizing inputs.
     def test_the_atlas_section_renders_every_sizing_input(self):
-        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        atlas = HTML[HTML.index('<h3 id="atlas">'):]
         self.assertIn("The deepest peak-to-trough fall", atlas)
         self.assertIn("-46", atlas)
         self.assertIn("5 Nov 2026", atlas)
@@ -1627,7 +1623,7 @@ class TestSC3Round1Regressions(unittest.TestCase):
     # r1-4: the page asserted the outside audit happened on runs where
     # it did not.
     def test_the_audit_happened_prose_is_gated_on_success(self):
-        self.assertIn("read the full case file and audited", HTML)
+        self.assertIn("read the full case file and challenged", HTML)
 
         def mutate(run_dir):
             _rewrite_verdict(run_dir, lambda doc: doc["challenge"].update(
@@ -1653,7 +1649,7 @@ class TestSC3Round7Regression(unittest.TestCase):
             _rewrite_verdict(run_dir, add_dep)
         with tempfile.TemporaryDirectory() as tmp:
             page = _render(_mutated_copy(tmp, mutate))
-        needle = "rests on this</span> <code>guidance_passage</code>"
+        needle = "used in the ruling</span> Guidance passage"
         self.assertIn(needle, page)
 
 
@@ -1665,7 +1661,7 @@ class TestSC3Round6Regressions(unittest.TestCase):
         self.assertNotIn("this verdict was built on", HTML)
         self.assertIn("in the evidence pack", HTML)
         # the declared dependencies are marked on their rows
-        self.assertIn("rests on this", HTML)
+        self.assertIn("used in the ruling", HTML)
 
     # r6-3: null seat models were silently dropped from the line.
     def test_partial_model_provenance_says_so(self):
@@ -1961,7 +1957,7 @@ class TestEnvelopeKindFields(unittest.TestCase):
     the proportions under their ruled label."""
 
     def test_the_basket_envelope_rows(self):
-        atlas = BASKET_HTML[BASKET_HTML.index('<h2 id="atlas">'):]
+        atlas = BASKET_HTML[BASKET_HTML.index('<h3 id="atlas">'):]
         self.assertIn('<th class="nowrap">Subject kind</th><td>a basket '
                       "of 2 named instruments judged as one idea</td>",
                       atlas)
@@ -1972,14 +1968,14 @@ class TestEnvelopeKindFields(unittest.TestCase):
         self.assertIn("<li>BGRD: the remaining third</li>", atlas)
 
     def test_the_theme_envelope_rows(self):
-        atlas = THEME_HTML[THEME_HTML.index('<h2 id="atlas">'):]
+        atlas = THEME_HTML[THEME_HTML.index('<h3 id="atlas">'):]
         self.assertIn('<th class="nowrap">Subject kind</th><td>an '
                       "investment theme judged through its named "
                       "expression</td>", atlas)
         self.assertIn('<th class="nowrap">Constituents</th>', atlas)
 
     def test_the_single_name_envelope_row(self):
-        atlas = HTML[HTML.index('<h2 id="atlas">'):]
+        atlas = HTML[HTML.index('<h3 id="atlas">'):]
         self.assertIn('<th class="nowrap">Subject kind</th>'
                       "<td>a single name</td>", atlas)
 
@@ -2061,7 +2057,7 @@ class TestThemesCRound1Regression(unittest.TestCase):
     Both tag assertions FAILED pre-fix."""
 
     def test_a_member_bound_sizing_row_shows_its_tag(self):
-        atlas = BASKET_HTML[BASKET_HTML.index('<h2 id="atlas">'):]
+        atlas = BASKET_HTML[BASKET_HTML.index('<h3 id="atlas">'):]
         self.assertIn('<span class="tag">ACHP</span> INVENTED - the '
                       "average value changing hands daily in one leg of "
                       "the pair", atlas)
@@ -2116,8 +2112,10 @@ class TestThemesCRound3Regression(unittest.TestCase):
         # audit C5), so the strip-before-thesis order is checked at the page level.
         self.assertLess(THEME_HTML.index("<h3>The numbers this ruling turns on</h3>"),
                         THEME_HTML.index(self.THESIS_LEAD))
-        self.assertLess(front.index(self.THESIS_LEAD),
-                        front.index('<span class="lead">The thesis</span>'))
+        # The five-sentence thesis card is gone (owner ruling AC41(4)); the theme's thesis still
+        # comes before the chairman's rationale.
+        self.assertNotIn('<span class="lead">The thesis</span>', front)
+        self.assertLess(front.index(self.THESIS_LEAD), front.index("Why this rating, in the chairman"))
 
     def test_no_thesis_card_without_a_theme_block(self):
         self.assertNotIn(self.THESIS_LEAD, HTML)
@@ -2165,23 +2163,23 @@ class TestDecisionFrontOrder(unittest.TestCase):
     everything else folds behind it as appendices."""
 
     def test_the_front_is_the_first_section_on_every_page(self):
-        # A reader dives deeper the further they scroll (owner ruling AC16, audit C4): the
-        # executive summary, then the chairman's synthesis, then the decision in detail, then
-        # the evidence, then the appendices.
+        # The eight numbered sections in the ruled order (owner's finding 5): the
+        # answer first, then the chairman, the advisors, the peer review, the challenge, the
+        # decision in detail, the evidence and the appendices.
         for page in (HTML, BASKET_HTML, THEME_HTML):
-            found = re.findall(r'<h2 id="([a-z]+)">', page)
-            self.assertEqual(found[:4], ["decision", "synthesis", "detail", "evidence"], found[:5])
+            found = re.findall(r'<h2 id="([a-z]+)"', page)
+            self.assertEqual(found, list(ANCHORS), found)
 
     def test_the_front_precedes_every_other_section_anchor(self):
-        opening = HTML.index('<h2 id="decision">')
+        opening = HTML.index('<h2 id="decision"')
         for anchor in ANCHORS:
             if anchor == "decision":
                 continue
-            self.assertLess(opening, HTML.index('<h2 id="%s">' % anchor), anchor)
+            self.assertLess(opening, HTML.index('<h2 id="%s"' % anchor), anchor)
 
     def test_the_appendices_divider_exists_and_names_itself_plainly(self):
-        self.assertIn('<h2 id="appendices">Appendices — the full record</h2>', HTML)
-        self.assertIn("The record behind the decision above, all folded", HTML)
+        self.assertIn('<span class="secnum">8</span>Appendices</h2>', HTML)
+        self.assertIn("The record behind the decision, all folded", HTML)
 
     def test_the_tripwire_and_verdict_and_warnings_appendix_sections_are_gone(self):
         # The full tripwire table lives once, in the executive summary (owner ruling AC16, the
@@ -2236,7 +2234,7 @@ class TestDecisionFrontContent(unittest.TestCase):
         masthead = _masthead(HTML)
         self.assertIn("The numbers this ruling turns on", masthead)
         self.assertIn('<dl class="keydata">', masthead)
-        self.assertIn("<dt>last price</dt><dd>$88.40</dd>", masthead)
+        self.assertIn("<dt>%s</dt><dd>$88.40</dd>" % R._glossed("last price"), masthead)
         self.assertIn("<dt>realized volatility, 90 days</dt><dd>41.7%</dd>", masthead)
 
     def test_a_key_data_strip_shows_at_most_eight_and_names_the_rest(self):
@@ -2325,13 +2323,16 @@ class TestExecutiveSummaryMinimumContent(unittest.TestCase):
         self.assertIn(expected, _front(HTML))
 
     def test_the_thesis_is_at_most_five_sentences(self):
+        # Owner ruling AC41(4): the five-sentence thesis card repeated the rationale printed in
+        # full beneath it and is dropped; the rationale's opening sentences stay on the front, once.
         rationale = json.load(open(os.path.join(FIXTURE, "verdict.json")))["conviction_rationale"]
         reformatted = R.reformat_prose(rationale, "chairman rationale", [])
-        thesis = " ".join(prose.split_sentences(reformatted, prose.load_rules())[:5])
+        opening = prose.split_sentences(reformatted, prose.load_rules())[0]
         front = _front(HTML)
-        card = front[front.index("The thesis"):]
-        card = card[:card.index("</div>") + 6]
-        self.assertIn(R.markdown(thesis), card)
+        self.assertNotIn('<span class="lead">The thesis</span>', front)
+        card = front[front.index("Why this rating, in the chairman"):]
+        self.assertIn(_visible_text(R.markdown(opening)), _visible_text(card))
+        self.assertEqual(_visible_text(front).count(_visible_text(R.markdown(opening))), 1)
 
 
 class TestDecisionFrontAnchorless(unittest.TestCase):
@@ -2439,10 +2440,13 @@ class TestDecisionFrontAnchored(unittest.TestCase):
 
     def test_an_anchored_front_carries_the_mispricing_read_and_no_ladder(self):
         front = _front(HTML)
-        self.assertIn('<div class="card"><span class="lead">The mispricing read</span>'
+        self.assertIn('<div class="card"><span class="lead">The price read</span>'
                       "The council reads the price as <strong>rich</strong>", front)
-        self.assertIn("Roughly 24.1 times forward earnings against a five-year average near "
-                      "20 times; about a fifth above it.", front)
+        # The arithmetic moved to the chairman's synthesis (architect ruling 9 on READ-A).
+        arithmetic = ("Roughly 24.1 times forward earnings against a five-year average near "
+                      "20 times; about a fifth above it.")
+        self.assertNotIn(arithmetic, front)
+        self.assertIn(arithmetic, _synthesis(HTML))
         self.assertNotIn("How this rating was earned: the scenario ladder", front)
         self.assertNotIn("The sum, written out", front)
 
@@ -2464,7 +2468,7 @@ class TestDecisionFrontAnchored(unittest.TestCase):
         self.assertNotIn('<div class="rating-word">Strong buy</div>', page)
         self.assertNotIn("The bar it had to clear", detail)
         # The read comes first, in the summary; the context ladder follows it, below.
-        self.assertLess(page.index("The mispricing read"),
+        self.assertLess(page.index("The price read"),
                         page.index("A scenario ladder, as supporting context only"))
 
 
@@ -2477,20 +2481,24 @@ class TestDecisionFrontCalendar(unittest.TestCase):
 
     def test_every_dated_event_renders_with_its_date_and_its_source(self):
         self.assertIn("The dated event calendar", self.detail)
-        self.assertIn('<td class="nowrap">16 Sep 2026</td><td>INVENTED FIXTURE - the central '
-                      "bank&#x27;s published meeting calendar", self.detail)
-        self.assertIn("<code>calendar_rate_decision_next</code>", self.detail)
-        self.assertIn("<code>calendar_protocol_next</code>", self.detail)
+        # The event by its plain name (unit READ-A); its source and id are in the evidence fold.
+        self.assertIn('<td class="nowrap">16 Sep 2026</td><td>calendar rate decision next</td>',
+                      self.detail)
+        self.assertIn('<td class="nowrap">20 Apr 2028</td><td>calendar protocol next</td>',
+                      self.detail)
+        self.assertNotIn("INVENTED FIXTURE - the central bank", self.detail)
+        self.assertNotIn("<code>calendar_", self.detail)
 
     def test_an_event_with_no_date_of_its_own_shows_the_day_it_was_checked(self):
-        self.assertIn('<td class="nowrap">25 Aug 2026</td><td>no date announced yet; the review '
-                      "is expected late in the year ", self.detail)
+        self.assertIn('<td class="nowrap">25 Aug 2026</td><td>calendar policy review &mdash; no '
+                      "date announced yet; the review is expected late in the year</td>",
+                      self.detail)
 
     def test_the_calendar_is_ordered_soonest_first(self):
-        self.assertLess(self.detail.index("calendar_policy_review"),
-                        self.detail.index("calendar_rate_decision_next"))
-        self.assertLess(self.detail.index("calendar_rate_decision_next"),
-                        self.detail.index("calendar_protocol_next"))
+        self.assertLess(self.detail.index("calendar policy review"),
+                        self.detail.index("calendar rate decision next"))
+        self.assertLess(self.detail.index("calendar rate decision next"),
+                        self.detail.index("calendar protocol next"))
 
     def test_a_pack_with_no_dated_events_renders_no_calendar_at_all(self):
         # Audit B6: an empty section is skipped entirely - no heading, no 'no dated events'
@@ -2854,14 +2862,14 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
     def appendix(self, page):
         # The outside auditor's objections and the post-audit change list moved to the
         # decision-in-detail tier (owner ruling AC16, audit C4 tier 3).
-        return page[page.index('<h2 id="detail">'):
-                    page.index('<h2 id="evidence">')]
+        return page[page.index('<h2 id="detail"'):
+                    page.index('<h2 id="evidence"')]
 
     def test_a_change_that_decides_nothing_is_one_folded_line(self):
         page = self.page([_change("last_price")])
         front = _front(page)
-        self.assertIn("1 figure changed after the outside auditor read "
-                      "the evidence", _visible_text(front))
+        self.assertIn("1 figure changed after the evidence check",
+                      _visible_text(front))
         self.assertIn("none of them a number this decision turns on",
                       _visible_text(front))
         self.assertIn("<details>", front)
@@ -2875,11 +2883,12 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
         page = self.page([_change("last_price"), _change("revenue_q")])
         front = _front(page)
         text = _visible_text(front)
-        self.assertIn("2 figures changed after the outside auditor read "
-                      "the evidence, 1 of them decisive.", text)
+        self.assertIn("2 figures changed after the evidence check; 1 of them "
+                      "is a number this decision turns on.", text)
+        self.assertIn("The one: revenue q.", text)
         self.assertIn('<div class="card alarm">', front)
         self.assertNotIn("<details>",
-                         front[front.index("1 of them decisive"):])
+                         front[front.index("1 of them is a number"):])
 
     def test_a_change_to_a_decisive_metrics_own_answer_is_loud_too(self):
         def add_frame(run_dir):
@@ -2890,23 +2899,26 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
                      "answered_by": ["free_cash_flow_fy2025"]}]}}))
         page = self.page([_change("free_cash_flow_fy2025")],
                          extra=add_frame)
-        self.assertIn("1 figure changed after the outside auditor read "
-                      "the evidence, 1 of them decisive.",
+        self.assertIn("1 figure changed after the evidence check; 1 of them "
+                      "is a number this decision turns on.",
                       _visible_text(_front(page)))
 
     def test_a_members_own_headline_figure_counts_as_its_own(self):
         """A constituent of an expression wears its member suffix, and the
         pair it belongs to is read from the id underneath it."""
         page = self.page([_change("net_income_q__achp")])
-        self.assertIn("1 of them decisive", _visible_text(_front(page)))
+        self.assertIn("1 of them is a number this decision turns on",
+                      _visible_text(_front(page)))
 
     def test_the_appendix_prints_what_was_read_and_what_was_sat_on(self):
         page = self.page([_change("last_price", old="123.45", new="130.00")])
         text = _visible_text(self.appendix(page))
-        self.assertIn("Changed after the outside auditor read the evidence",
-                      text)
-        self.assertIn("The auditor read 123.45; the council sat on 130.00.",
-                      text)
+        self.assertIn("Changed after the evidence check", text)
+        # The value sat on in the market form, with the fact's date (unit READ-A); the number
+        # the evidence check read stands as recorded, its unit not being on the record (r4-1).
+        self.assertIn("last price \u2014 The evidence check read the number 123.45, in a unit "
+                      "this record does not keep; the council sat on $130.00 (as of 28 Aug "
+                      "2026).", text)
 
     def test_the_appendix_names_added_and_removed_in_plain_words(self):
         page = self.page([_change("rent_per_unit", change="added",
@@ -2915,28 +2927,51 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
                                   old="INVENTED - it used to say this",
                                   new=None)])
         text = _visible_text(self.appendix(page))
-        self.assertIn("It was gathered after the audit and reads 7.5.", text)
-        self.assertIn("It was taken out after the audit; it read INVENTED - "
-                      "it used to say this.", text)
+        self.assertIn("rent per unit \u2014 Added after the evidence check: 7.5.", text)
+        self.assertIn("old note \u2014 Taken out after the evidence check; it read "
+                      "INVENTED - it used to say this.", text)
 
     def test_a_value_that_stands_says_what_moved_instead(self):
         page = self.page([_change("last_price", old="123.45", new="123.45")])
-        self.assertIn("Its value stands at 123.45; what moved is its unit, "
-                      "its date or where it came from.",
+        self.assertIn("It reads $123.45 (as of 28 Aug 2026); the evidence check read the "
+                      "same number, 123.45, in a unit this record does not keep; what moved "
+                      "is its unit, its date or where it came from.",
                       _visible_text(self.appendix(page)))
+
+    def test_the_old_side_is_never_read_by_a_unit_it_may_not_have_had(self):
+        """The change record keeps the value the evidence check read, not its unit; a fact
+        re-gathered in another unit must not have its old number dressed in the new one
+        (audit round 4 of READ-A, r4-1): 100 read in millions is not "$100B"."""
+        def in_billions(run_dir):
+            def change(doc):
+                for fact in doc["capture"]["tier1"]:
+                    if fact["id"] == "revenue_fy2025":
+                        fact["unit"] = "USD_billion"
+            _rewrite_pack(run_dir, change)
+        page = self.page([_change("revenue_fy2025", old="100", new="100"),
+                          _change("last_price", old="123.45", new="130.00")],
+                         extra=in_billions)
+        text = _visible_text(self.appendix(page))
+        self.assertNotIn("stands at $100B", text)
+        self.assertNotIn("read $100B", text)
+        self.assertNotIn("read $123.45", text)
+        self.assertIn("the evidence check read the same number, 100, in a unit this record "
+                      "does not keep", text)
+        self.assertIn("The evidence check read the number 123.45, in a unit this record does "
+                      "not keep; the council sat on $130.00", text)
 
     def test_the_appendix_marks_the_ones_the_decision_turns_on(self):
         page = self.page([_change("last_price"), _change("revenue_q")])
         text = _visible_text(self.appendix(page))
-        self.assertIn("revenue_q \u2014 a number this decision turns on",
+        self.assertIn("revenue q \u2014 a number this decision turns on",
                       text)
-        self.assertNotIn("last_price \u2014 a number this decision turns on",
+        self.assertNotIn("last price \u2014 a number this decision turns on",
                          text)
 
     def test_a_pack_that_changed_nothing_says_nothing(self):
         page = self.page([])
-        self.assertNotIn("changed after the outside auditor read the "
-                         "evidence", _visible_text(page))
+        self.assertNotIn("changed after the evidence check",
+                         _visible_text(page))
 
     def test_a_failed_audit_claims_no_reading_to_have_changed_after(self):
         """Nobody read this evidence, so nothing can have moved after the
@@ -2950,7 +2985,7 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
         page = _audit_page(block)
         self.assertIn(R.EVIDENCE_UNCHECKED_SENTENCE,
                       _visible_text(_front(page)))
-        self.assertNotIn("of them decisive", _visible_text(_front(page)))
+        self.assertNotIn("this decision turns on", _visible_text(_front(page)))
 
     def test_the_post_audit_change_alarm_names_the_decisive_count(self):
         """The decisive-change alarm on the front is a constant, deliberately terse card whatever
@@ -2966,8 +3001,8 @@ class TestWhatChangedAfterTheAuditReachesThePage(unittest.TestCase):
             _rewrite_verdict(run_dir, _bloat_verdict)
 
         front = _visible_text(_front(self.page(changes, extra=bloat)))
-        self.assertIn("41 figures changed after the outside auditor read "
-                      "the evidence, 1 of them decisive.", front)
+        self.assertIn("41 figures changed after the evidence check; 1 of them "
+                      "is a number this decision turns on.", front)
 
 
 class TestTheAuditOfTheEvidenceOnTheFront(unittest.TestCase):
@@ -2975,7 +3010,7 @@ class TestTheAuditOfTheEvidenceOnTheFront(unittest.TestCase):
 
     def test_a_clean_audit_is_one_folded_line(self):
         front = _front(HTML)
-        self.assertIn("An outside auditor read this evidence before the "
+        self.assertIn("The evidence check: an outside model read this evidence before the "
                       "council sat and raised 2 points, none of them "
                       "blocking", _visible_text(front))
         self.assertIn("<details>", front)
@@ -2984,7 +3019,7 @@ class TestTheAuditOfTheEvidenceOnTheFront(unittest.TestCase):
         page = _audit_page(_blocking_block())
         front = _front(page)
         text = _visible_text(front)
-        self.assertIn("The outside auditor called 1 point blocking before "
+        self.assertIn("The evidence check called 1 point blocking before "
                       "the council sat.", text)
         self.assertIn('<div class="card alarm">', front)
         self.assertNotIn("<details>", front[front.index("blocking before"):])
@@ -3016,7 +3051,7 @@ class TestTheAuditOfTheEvidenceOnTheFront(unittest.TestCase):
             _rewrite_verdict(run_dir, _bloat_verdict)
 
         front = _front(_audit_page(block, extra=bloat))
-        self.assertIn("The outside auditor called 3 points blocking",
+        self.assertIn("The evidence check called 3 points blocking",
                       _visible_text(front))
 
 
@@ -3025,8 +3060,8 @@ class TestTheAuditOfTheEvidenceInTheAppendix(unittest.TestCase):
         # The outside auditor's objections moved to the decision-in-detail tier (owner ruling
         # AC16, audit C4 tier 3): the auditor's paragraph and blocking findings open, the
         # non-blocking findings and the post-audit change list folded.
-        return page[page.index('<h2 id="detail">'):
-                    page.index('<h2 id="evidence">')]
+        return page[page.index('<h2 id="detail"'):
+                    page.index('<h2 id="evidence"')]
 
     def test_the_section_carries_every_point_and_its_answer(self):
         text = _visible_text(self.appendix(HTML))
@@ -3039,8 +3074,8 @@ class TestTheAuditOfTheEvidenceInTheAppendix(unittest.TestCase):
 
     def test_the_auditors_own_paragraph_is_word_for_word_and_attributed(self):
         section = self.appendix(HTML)
-        self.assertIn("gpt-5.6-sol", _visible_text(section))
-        self.assertIn("The auditor&#x27;s reading of this evidence, in its "
+        self.assertIn("OpenAI GPT-5.6 Sol", _visible_text(section))
+        self.assertIn("The outside model&#x27;s reading of this evidence, in its "
                       "own words", section)
         self.assertIn("INVENTED FIXTURE - the record is unusually complete "
                       "on price and cash generation, and thin on what the "
@@ -3077,7 +3112,7 @@ class TestTheAuditOfTheEvidenceInTheAppendix(unittest.TestCase):
         self.assertIn("<h3>Declared gaps</h3>", page)
         section = page[page.index("<h3>Declared gaps</h3>"):]
         section = _visible_text(section[:section.index("<h3", 10)])
-        self.assertIn("conceded to the outside auditor", section)
+        self.assertIn("conceded to the evidence check", section)
         self.assertNotIn(reason, section)
 
     def test_a_source_doubt_that_names_no_page_is_labelled_a_doubt(self):
@@ -3221,12 +3256,14 @@ class TestTheCaptureClocksSitBesideTheSittingsOwn(unittest.TestCase):
         # The fixture's approval stands at 09:05 and this suite renders 84 minutes later. Its
         # run was created at 09:12, so a clock started there would print 77 - the seven
         # minutes between the go and the run belong to the council, not to the pause.
-        self.assertIn("The council sat 84 minutes, from the go to this page being rendered.",
+        self.assertIn("Time 84 minutes sitting",
                       self.stamps)
 
     def test_the_capture_is_counted_beside_that_clock_and_never_inside_it(self):
-        self.assertIn("Gathering it took another 46 minutes and 0.384M tokens, counted "
-                      "beside that clock and never inside it.", self.stamps)
+        # Printed beside the sitting's own clock, never added into it; its tokens are counted in
+        # the cost estimate below (unit READ-A).
+        self.assertIn("Time 84 minutes sitting, plus 46 minutes gathering the evidence.",
+                      self.stamps)
         self.assertNotIn("127 minutes", self.stamps)
 
     def test_a_page_with_no_readable_start_prints_no_wall_clock(self):
@@ -3241,8 +3278,8 @@ class TestTheCaptureClocksSitBesideTheSittingsOwn(unittest.TestCase):
                     doc["provenance"]["timestamps"]["run_started"] = "one morning"
                 _rewrite_verdict(run_dir, change)
             page = _visible_text(_stamps(_render(_mutated_copy(tmp, mutate))))
-        self.assertNotIn("The council sat", page)
-        self.assertIn("Gathering it took another 46 minutes", page)
+        self.assertNotIn("minutes sitting", page)
+        self.assertIn("46 minutes gathering the evidence", page)
 
 
 class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
@@ -3266,14 +3303,14 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
         11:00 is a 115-minute sitting, and 81 is the number that hid the overrun. The clock now
         sits in the run-stamps appendix (owner ruling AC16)."""
         stamps = _visible_text(_stamps(self.page_at(115)))
-        self.assertIn("The council sat 115 minutes, from the go to this page being rendered.",
+        self.assertIn("Time 115 minutes sitting",
                       stamps)
         self.assertNotIn("81 minutes", stamps)
 
     def test_a_later_rendering_prints_a_later_clock(self):
-        self.assertIn("The council sat 60 minutes",
+        self.assertIn("60 minutes sitting",
                       _visible_text(_stamps(self.page_at(60))))
-        self.assertIn("The council sat 89 minutes",
+        self.assertIn("89 minutes sitting",
                       _visible_text(_stamps(self.page_at(89))))
 
     def test_a_sitting_over_its_budget_says_so_on_the_front(self):
@@ -3285,7 +3322,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
         front = _front(page)
         self.assertIn("This sitting missed its 90-minute budget.", _visible_text(front))
         self.assertIn('<div class="card alarm"><span class="shout">This sitting missed', front)
-        self.assertIn("The council sat 95 minutes", _visible_text(_stamps(page)))
+        self.assertIn("95 minutes sitting", _visible_text(_stamps(page)))
 
     def test_a_sitting_inside_its_budget_says_nothing_about_it(self):
         self.assertNotIn("missed its", _visible_text(_front(self.page_at(89))))
@@ -3302,7 +3339,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
                 "config", {"minutes_cap": 40}))
         page = self.page_at(45, mutate)
         self.assertIn("This sitting missed its 40-minute budget.", _visible_text(_front(page)))
-        self.assertIn("The council sat 45 minutes", _visible_text(_stamps(page)))
+        self.assertIn("45 minutes sitting", _visible_text(_stamps(page)))
 
     def test_the_budget_missed_alarm_shows_on_the_longest_front(self):
         """The budget-missed alarm renders on the front even for the longest chairman on record;
@@ -3326,7 +3363,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
                 "config", {"minutes_cap": 0}))
         page = self.page_at(60, mutate)
         self.assertIn("This sitting missed its 0-minute budget.", _visible_text(_front(page)))
-        self.assertIn("The council sat 60 minutes", _visible_text(_stamps(page)))
+        self.assertIn("60 minutes sitting", _visible_text(_stamps(page)))
 
     def test_a_run_that_named_no_cap_is_judged_against_the_default(self):
         """The other side: the fixture carries no config at all, which is
@@ -3343,7 +3380,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
         printed 'The council sat -9 minutes' to him, and no budget could be
         missed at a negative duration."""
         page = self.page_at(-9)
-        self.assertIn("The council sat 0 minutes", _visible_text(_stamps(page)))
+        self.assertIn("0 minutes sitting", _visible_text(_stamps(page)))
         self.assertNotIn("-9", _visible_text(_stamps(page)))
         self.assertNotIn("missed its", _visible_text(_front(page)))
 
@@ -3372,7 +3409,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
             self.assertEqual(_report_bytes(run_dir), first)
             self.assertEqual(len([e for e in _events(run_dir)
                                   if e["event"] == R.REPORT_RENDERED_EVENT]), 1)
-            minutes = float(re.search(r"The council sat ([\d,.]+) minutes",
+            minutes = float(re.search(r"([\d,.]+) minutes sitting",
                                       _visible_text(_stamps(first))).group(1)
                             .replace(",", ""))
             recorded = R._stamp(stamps[0]["at"])
@@ -3469,7 +3506,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
             moment = self.START + datetime.timedelta(minutes=61)
             _stamp_first_render(run_dir, moment)
             self.assertEqual(_render_cli(run_dir), 0)
-            self.assertIn("The council sat 61 minutes",
+            self.assertIn("61 minutes sitting",
                           _visible_text(_stamps(_report_bytes(run_dir))))
             self.assertEqual(len([e for e in _events(run_dir)
                                   if e["event"] == R.REPORT_RENDERED_EVENT]),
@@ -3504,7 +3541,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
             _stamp_first_render(run_dir,
                                 self.START + datetime.timedelta(minutes=84))
             self.assertEqual(R.render(run_dir), first)
-            self.assertIn("The council sat 84 minutes",
+            self.assertIn("84 minutes sitting",
                           _visible_text(_stamps(first)))
 
     def test_a_run_with_no_record_at_all_prints_no_clock_and_writes_nothing(
@@ -3516,7 +3553,7 @@ class TestTheClockRunsToTheRenderedReport(unittest.TestCase):
             self.assertEqual(_render_cli(run_dir), 0)
             self.assertFalse(os.path.exists(
                 os.path.join(run_dir, "runrecord.jsonl")))
-            self.assertNotIn("The council sat",
+            self.assertNotIn("minutes sitting",
                              _visible_text(_front(_report_bytes(run_dir))))
 
     def test_the_recorded_row_never_displaces_the_runs_own_last_event(self):
@@ -3553,9 +3590,9 @@ class TestSeatCostAndEstimateOnThePage(unittest.TestCase):
 
     def test_a_counted_figure_does_not_say_estimated(self):
         page = self._estimated_page(False)
-        # the gathering-cost line is present but carries no "(estimated)"
-        self.assertIn("Gathering it took another", page)
-        self.assertNotIn("tokens (estimated)", page)
+        # the gathering line is present but carries no "(estimated)"
+        self.assertIn("minutes gathering the evidence.", page)
+        self.assertNotIn("gathering the evidence (estimated)", page)
 
     def test_the_seat_cost_appendix_is_rendered(self):
         def mutate(run_dir):
@@ -3569,10 +3606,13 @@ class TestSeatCostAndEstimateOnThePage(unittest.TestCase):
             _rewrite_verdict(run_dir, change)
         with tempfile.TemporaryDirectory() as tmp:
             page = _render(_mutated_copy(tmp, mutate))
-        self.assertIn("The sitting&#x27;s cost, seat by seat", page)
-        self.assertIn("advisor_bear", page)
+        self.assertIn("Each seat&#x27;s share", page)
+        self.assertIn("<td>The Bear</td>", page)   # the seat under its plain name
+        self.assertNotIn("advisor_bear", _stamps(page))
         self.assertIn("400", page)     # tokens per turn
-        self.assertIn("&mdash;", page)  # the null input/output cells
+        # The two always-empty input and output columns are gone (unit READ-A).
+        self.assertNotIn("Input tokens", page)
+        self.assertNotIn("Output tokens", page)
 
     def test_no_seat_cost_block_renders_no_section(self):
         def mutate(run_dir):
@@ -3580,7 +3620,7 @@ class TestSeatCostAndEstimateOnThePage(unittest.TestCase):
                              doc["provenance"].pop("seat_cost", None))
         with tempfile.TemporaryDirectory() as tmp:
             page = _render(_mutated_copy(tmp, mutate))
-        self.assertNotIn("seat by seat", page)
+        self.assertNotIn("Each seat&#x27;s share", page)
 
 
 class TestU3eArchetypeAndCycleOnThePage(unittest.TestCase):
@@ -3702,7 +3742,10 @@ class TestU6VoiceOnThePage(unittest.TestCase):
                 "seat": "advisor_bear", "judged": False, "warned": False,
                 "score": self.prose.measure("Net cash is $10M.", self.rules)}}
         body = R.build_page(run, NO_CLOCK_MOMENT).body()
-        self.assertIn("Writing score (advisory)", body)
+        # Unit READ-A (architect ruling 6): the advisory score is the writers' meter and stays in
+        # the run's record; the page no longer prints it.
+        self.assertNotIn("Writing score", body)
+        self.assertNotIn(self.prose.describe(run["prose_scores"]["advisor_bear"]["score"]), body)
 
     def test_a_heading_reanswer_that_moved_a_figure_is_noted_beside_the_seat(self):
         # Architect ruling closing P-U5a-3: the flag on the record also reads
@@ -3731,7 +3774,8 @@ class TestU6VoiceOnThePage(unittest.TestCase):
                 "warned": False,
                 "score": self.prose.measure("Net cash is $10M.", self.rules)}}
         body = R.build_page(run, NO_CLOCK_MOMENT).body()
-        self.assertIn("Writing score (advisory)", body)
+        # Unit READ-A (architect ruling 6): no advisory score beside the synthesis either.
+        self.assertNotIn("Writing score", body)
 
     def test_the_renderers_authored_text_passes_the_measure(self):
         # Owner ruling AC6, spec U6.3. The page's own framing sentences are
@@ -3783,83 +3827,90 @@ class TestTierStructure(unittest.TestCase):
     each; the navigation names about nine content tiers, not seventeen process steps."""
 
     def test_the_five_tiers_are_in_order(self):
-        found = re.findall(r'<h2 id="([a-z-]+)">', HTML)
-        self.assertEqual(found[:5],
-                         ["decision", "synthesis", "detail", "evidence", "appendices"], found)
+        # The eight numbered sections of unit READ-A (owner's finding 5), in the ruled order.
+        found = re.findall(r'<h2 id="([a-z-]+)" data-num="(\d)"', HTML)
+        self.assertEqual([anchor for anchor, _num in found], list(ANCHORS), found)
+        self.assertEqual([num for _anchor, num in found], [str(n) for n in range(1, 9)])
 
     def test_the_navigation_is_nine_content_tiers(self):
-        # The nine menu entries name content, never a process step ('the challenge round', 'the
-        # audit of the evidence', 'tripwires'): those folded into the tiers.
-        self.assertEqual(ANCHORS, ("decision", "synthesis", "detail", "evidence", "question",
-                                   "review", "advisors", "challenger", "atlas"))
+        # The menu names the eight numbered sections, never a process step ('the audit of the
+        # evidence', 'tripwires'): those folded into the sections (unit READ-A).
+        self.assertEqual(ANCHORS, ("decision", "synthesis", "advisors", "review", "challenge",
+                                   "detail", "evidence", "appendices"))
         menu = re.search(r'<div class="menucard">(.*?)</div></div></nav>', HTML, re.S).group(1)
-        for process in ("challenge", "evidence-audit", "tripwires", "warnings", "changes",
-                        "stamps"):
+        self.assertIn('<a href="#advisors">3  The five advisors</a>', menu)
+        for process in ("evidence-audit", "tripwires", "warnings", "changes", "stamps"):
             self.assertNotIn('href="#%s"' % process, menu, process)
 
     def test_the_decision_in_detail_tier_is_open(self):
         detail = _detail(HTML)
-        # The downside ladder, the outside auditor's objections and the challenge round are here,
-        # open - the tier itself carries no wrapping fold.
+        # The downside ladder and the evidence check are here, open - the tier itself carries no
+        # wrapping fold; the challenge round is its own section 5 (unit READ-A).
         self.assertIn("The downside ladder", detail)
-        self.assertIn("The outside auditor&#x27;s objections, and the answers", detail)
-        self.assertIn("The outside challenge round", detail)
+        self.assertIn("The evidence check: its points, and the answers", detail)
+        self.assertIn("The outside challenge round", _section(HTML, "challenge"))
         self.assertNotIn("<details><summary>The downside ladder", detail)
 
     def test_the_challenge_card_stays_open_in_the_detail_tier(self):
-        detail = _detail(HTML)
-        self.assertIn("The outside audit ran.", detail)
+        section = _section(HTML, "challenge")
+        self.assertIn("The outside challenge ran.", section)
         # The card's findings are not behind a fold (ruled open, audit C5).
-        card = detail[detail.index("The outside challenge round"):]
-        self.assertNotIn("<details>", card[:card.index("The challenger&#x27;s own words")])
+        card = section[section.index("The outside challenge round"):]
+        self.assertNotIn("<details>", card[:card.index("The outside model&#x27;s own words")])
 
     def test_the_non_blocking_audit_findings_fold_with_their_count(self):
         # The fixture's two points are both non-blocking: they fold behind one line with the count,
         # while the auditor's own paragraph stays open (owner ruling AC16, audit C4 tier 3).
         detail = _detail(HTML)
-        self.assertIn("The auditor&#x27;s reading of this evidence, in its own words", detail)
-        self.assertIn("<details><summary>2 non-blocking points the auditor raised, each with its "
-                      "answer on the record</summary>", detail)
+        self.assertIn("The outside model&#x27;s reading of this evidence, in its own words", detail)
+        self.assertIn("<details><summary>2 non-blocking points the evidence check raised, each "
+                      "with its answer on the record</summary>", detail)
 
     def test_the_evidence_opens_with_the_facts_the_verdict_rests_on(self):
-        evidence = HTML[HTML.index('<h2 id="evidence">'):HTML.index('<h2 id="appendices">')]
+        evidence = HTML[HTML.index('<h2 id="evidence"'):HTML.index('<h2 id="appendices"')]
         fold = evidence.index("<details><summary>Every figure on the record")
-        # The compact table and its five columns are open, above the fold.
+        # The compact table and its four columns are open, above the fold; the age check is one
+        # line under it instead of a column (unit READ-A).
         self.assertIn("The figures the verdict says its ruling rests on.", evidence)
         # The value column is not nowrap - it can hold a tier-2 sentence (design audit C5, B8).
         self.assertIn('<th>fact</th><th>value</th><th class="nowrap">as of</th>'
-                      '<th class="nowrap">freshness</th><th>source</th>', evidence)
+                      "<th>source</th>", evidence)
+        # The fixture's ten-year rate is stale: it keeps a STALE tag and the line counts it.
+        self.assertLess(evidence.index("1 figure here failed its age check and carries a STALE "
+                                       "tag."), fold)
+        self.assertLess(evidence.index('4.2% <span class="tag stale">STALE</span>'), fold)
         # A decisive fact is in the open compact table; the whole 10-fact pack is behind the fold.
-        self.assertLess(evidence.index("<code>last_price</code>"), fold)
+        self.assertLess(evidence.index("<tr><td>last price</td>"), fold)
         self.assertIn("all 10 frozen facts in the evidence pack", evidence)
 
     def test_the_tier_five_appendices_are_folded(self):
-        for summary in ("The owner&#x27;s question as he asked it, and the half the council "
-                        "answered",
+        for summary in ("The owner&#x27;s question as he asked it",
                         "The blind reviewer&#x27;s synopsis and full cross-examination of the "
                         "five advisors",
-                        "The machine hand-off to the portfolio system, Atlas"):
+                        "For Atlas, the portfolio system &mdash; no reading needed"):
             self.assertIn("<details><summary>%s" % summary, HTML)
 
     def test_the_challenge_diff_is_sentences_with_before_after_behind_a_second_fold(self):
         # Owner ruling AC16(8), audit B3: the diff is plain sentences now, not open JSON; the exact
         # text before and after is behind a second fold.
-        changes = HTML[HTML.index('<h2 id="changes">'):HTML.index('<h2 id="atlas">')]
-        self.assertIn("<details><summary>2 fields changed between the draft the challenger read "
-                      "and the final document</summary>", changes)
+        changes = HTML[HTML.index('<h3 id="changes">'):HTML.index('<h3 id="atlas">')]
+        self.assertIn("<details><summary>2 fields changed between the draft the outside challenge "
+                      "read and the final document</summary>", changes)
         self.assertIn("<details><summary>The exact text before and after, field by field"
                       "</summary>", changes)
-        self.assertRegex(changes, r"<li><code>[^<]+</code> &mdash; ")
+        # Each field in plain words (unit READ-A), never a code span.
+        self.assertRegex(changes, r"<li>[^<]+ &mdash; ")
+        self.assertNotRegex(changes, r"<li><code>")
 
     def test_the_run_stamps_are_a_folded_appendix_off_the_nav(self):
-        self.assertIn('<h2 id="stamps">About this sitting</h2>', HTML)
+        self.assertIn('<h3 id="stamps">About this sitting</h3>', HTML)
         self.assertNotIn('href="#stamps"', HTML)
         stamps = _stamps(HTML)
         self.assertIn("<details><summary>How long the sitting took, and what it cost</summary>",
                       stamps)
 
     def test_the_advisor_folds_carry_no_emoji(self):
-        advisors = HTML[HTML.index('<h2 id="advisors">'):HTML.index('<h2 id="challenger">')]
+        advisors = HTML[HTML.index('<h2 id="advisors"'):HTML.index('<h3 id="challenger">')]
         for emoji in ("\U0001F43B", "\U0001F402", "\U0001F4CA", "\U0001F3E6", "\U0001F6E1"):
             self.assertNotIn(emoji, advisors)
         self.assertIn("<details><summary>The bear case</summary>", advisors)
@@ -3880,7 +3931,7 @@ class TestSubjectShapeSectionsAreDecisionContent(unittest.TestCase):
     THEME_THESIS = "The theme&#x27;s thesis, frozen before the council sat"
 
     def _after_divider(self, page):
-        return page[page.index('<h2 id="appendices">'):]
+        return page[page.index('<h2 id="appendices"'):]
 
     def _cycle_page(self):
         cyc = {"name": "The AI capital-spending cycle",
@@ -4178,8 +4229,14 @@ class TestPriceChartAndTape(unittest.TestCase):
         for needle in ("http", "href", "<image", "url(", "<script", "@import"):
             self.assertNotIn(needle, chart)
         caption = chart[chart.index("<figcaption"):]
-        self.assertIn(E("INVENTED FIXTURE - broker price history for SPWK"), caption)
+        self.assertIn("SPWK", caption)
         self.assertIn(R.format_date(TAPE_END), caption)
+        # The series' own provenance sentence is in the closed fold directly under the chart
+        # (owner's finding 1), not in the caption.
+        self.assertNotIn(E("INVENTED FIXTURE - broker price history for SPWK"), caption)
+        fold = _between(page, "</figure>", "</details>")
+        self.assertIn("<details><summary>Where the price history comes from", fold)
+        self.assertIn(E("INVENTED FIXTURE - broker price history for SPWK"), fold)
 
     def test_the_chart_draws_every_price_trigger_level_with_its_label(self):
         extra = _price_trigger(EXTRA_LEVEL, "Reopen the case if the shares close above the "
@@ -4187,7 +4244,9 @@ class TestPriceChartAndTape(unittest.TestCase):
         chart = _chart(_taped_page(verdict_change=_add_triggers(extra)))
         self.assertEqual(chart.count(LEVEL_GROUP), 2)
         for level in ("72.00", EXTRA_LEVEL):
-            self.assertIn(E("%s %s" % (R.format_number(level, "USD"), R.chart.LEVEL_WORDS)),
+            # No key number names these invented levels, so each carries the plain fallback words
+            # (owner ruling AC41(4); the chairman's own names are checked on JPM).
+            self.assertIn(E("%s \u2014 %s" % (R.format_number(level, "USD"), R.chart.LEVEL_WORDS)),
                           chart)
         self.assertIn("<title>Reopen the case if the shares close at or under", chart)
         self.assertIn("<title>Reopen the case if the shares close above the invented ceiling",
@@ -4375,8 +4434,18 @@ class TestPriceChartAndTape(unittest.TestCase):
     def test_the_chart_opens_the_executive_summary(self):
         for page in (HTML, _taped_html()):
             front = _front(page)
-            opening = '<h2 id="decision">Executive summary</h2>'
-            self.assertTrue(front.startswith(opening + TAPE_HEADING), front[:200])
+            opening = ('<h2 id="decision" data-num="1" data-title="The answer"><span '
+                       'class="secnum">1</span>The answer</h2>')
+            # Since U5(b) the chairman's "What decided it" card comes first, and since READ-C1
+            # his one-line answer before it (owner ruling AC44(1)); the chart and the tape follow
+            # them directly.
+            decided = front[len(opening):front.index(TAPE_HEADING)]
+            self.assertTrue(front.startswith(opening), front[:200])
+            self.assertTrue(decided.startswith('<div class="card prominent"><span class="lead">'
+                                               "The answer to your question</span>"), front[:200])
+            self.assertIn('<div class="card prominent"><span class="lead">What decided it</span>',
+                          decided)
+            self.assertEqual(decided.count("<div class="), 2, decided)
 
     def test_the_price_at_the_ruling_is_marked_for_a_single_subject_only(self):
         chart = _chart(_taped_page(verdict_change=_lead_with({"pack_fact_id": "price_last"})))
@@ -4416,10 +4485,15 @@ class TestPriceChartAndTape(unittest.TestCase):
         self.assertIn("<title>The 52-week range of closes", chart)
 
     def test_every_run_on_record_still_renders_with_the_notice(self):
+        # A run whose pack carries no series renders the notice and no chart, as before. A run
+        # whose pack carries one (written under the current capture contract) renders its chart
+        # and no notice, and carries the decision of the page on record (unit READ-A: the pages
+        # on record are pinned by hash; a fresh render is a new renderer's page).
         runs = os.path.join(ROOT, "council", "runs")
         if not os.path.isdir(runs):
             self.skipTest("the runs on record are not in this copy of the repository")
         rendered = 0
+        series_less = 0
         for name in sorted(os.listdir(runs)):
             source = os.path.join(runs, name)
             if not os.path.isfile(os.path.join(source, "verdict.json")):
@@ -4430,11 +4504,19 @@ class TestPriceChartAndTape(unittest.TestCase):
                 page = R.render(copied)
                 with open(os.path.join(copied, "pack", "pack.json"), "rb") as fh:
                     capture = json.loads(fh.read().decode("utf-8"))["capture"]
-            self.assertEqual(page.count(E(pack_brief.tape_placeholder(capture))), 1, name)
             self.assertIn(TAPE_HEADING, _front(page), name)
-            self.assertNotIn(CHART_OPEN, page, name)
+            if capture.get("price_series"):
+                self.assertNotIn(E(pack_brief.tape_placeholder(capture)), page, name)
+                self.assertEqual(page.count(CHART_OPEN), 1, name)
+                with open(os.path.join(source, "report.html"), "rb") as fh:
+                    _same_decision(self, fh.read().decode("utf-8"), page, name)
+            else:
+                self.assertEqual(page.count(E(pack_brief.tape_placeholder(capture))), 1, name)
+                self.assertNotIn(CHART_OPEN, page, name)
+                series_less += 1
             rendered += 1
-        self.assertGreater(rendered, 0)
+        self.assertGreaterEqual(rendered, 9)
+        self.assertGreaterEqual(series_less, 8)
 
 
 # UPGRADE-2 FI-ARCHETYPE sub-charge (b), THE PAGE (owner rulings AC28, AC30 and AC32; register
@@ -4462,6 +4544,11 @@ def _fi_capture(name):
     capture["subject"] = subject
     capture["business_frame"] = {subject["ticker"]: frame}
     return capture
+
+
+def _fi_words(capture, fact_id):
+    """A fact's name as the page prints it (unit READ-A): its label, else the id in words."""
+    return R._fact_words({fact["id"]: fact for fact in capture["tier1"]}[fact_id])
 
 
 def _fi_page(name=FI_BANK, change=None, review=None, store=None):
@@ -4549,9 +4636,11 @@ class TestFIOnThePage(unittest.TestCase):
         self.assertIn(sentence, _visible_text(_front(page)))
         detail = _visible_text(_detail(page))
         self.assertIn("The net asset value, part by part", detail)
-        for part in _fi_frame(_fi_capture(FI_HOLDING))["nav_bridge"]["components"]:
+        capture = _fi_capture(FI_HOLDING)
+        for part in _fi_frame(capture)["nav_bridge"]["components"]:
             self.assertIn("%s %s %s" % (part["name"], pack_brief.FI_METHOD_WORDS[part["method"]],
-                                        part["value_fact"]), detail)
+                                        _fi_words(capture, part["value_fact"])), detail)
+        self.assertNotIn("<code>", _detail(page))
         self.assertIn(sentence, detail)
 
     def test_the_detail_carries_the_fi_frame(self):
@@ -4562,13 +4651,24 @@ class TestFIOnThePage(unittest.TestCase):
         text = _visible_text(detail)
         ratio, requirement = frame["fi_capital"]["ratio_facts"][0], \
             frame["fi_capital"]["requirement_facts"][0]
-        row = re.search(r"<tr><td>[^<]*<code>%s</code>.*?</tr>" % ratio, detail).group(0)
-        self.assertIn("<code>%s</code>" % requirement, row)
+        # Each fact by its plain name, never its id in a code span (unit READ-A); the ratio and
+        # its requirement on one row of the capital table, named as the brief's tables name them
+        # (unit READ-B1).
+        facts = {fact["id"]: fact for fact in capture["tier1"]}
+        row = re.search(r"<tr><td>%s</td>.*?</tr>"
+                        % re.escape(E(pack_brief._plain_name(facts, ratio))), detail).group(0)
+        self.assertIn(E(pack_brief._plain_name(facts, requirement)), row)
+        self.assertNotIn("<code>", detail)
         self.assertIn(pack_brief.FI_STRESS_HEADING, text)
-        self.assertIn("The risk-cost line: credit losses provision_for_credit_losses_q", text)
-        for line in frame["how_it_earns"]:
-            self.assertIn("%s %s %s" % (line["line"], pack_brief.FI_NATURE_WORDS[line["nature"]],
-                                        line["share_of_period"]), text)
+        risk = _card_rows(detail, "The risk-cost line: credit losses")
+        self.assertEqual(risk[1][0],
+                         pack_brief._plain_name(facts, "provision_for_credit_losses_q"))
+        earnings = _card_rows(detail, "How it earns")
+        for line, cells in zip(frame["how_it_earns"], earnings[1:]):
+            # The fixture's share figures are recorded as plain fractions, so they print as a
+            # percentage to one decimal (architect ruling, round 2 of READ-B1).
+            self.assertEqual(cells[:2], [line["line"], pack_brief.FI_NATURE_WORDS[line["nature"]]])
+            self.assertEqual(cells[3], "%.1f%%" % (float(line["share_of_period"]) * 100))
 
     def test_a_single_names_tailed_stress_fact_prints_on_the_report(self):
         """Audit round 6 of sub-charge b (r6-1, P-FIb-3): a single name keeps every stress fact,
@@ -4582,22 +4682,30 @@ class TestFIOnThePage(unittest.TestCase):
             for fact in capture["tier1"]:
                 if fact["id"] == "stress_capital_buffer":
                     fact["id"] = tailed
-        for page, fact_id in ((_fi_page(change=rename), tailed),
-                              (_fi_page(), "stress_capital_buffer")):
+        capture = _fi_capture(FI_BANK)
+        name = _fi_words(capture, "stress_capital_buffer")
+        for page in (_fi_page(change=rename), _fi_page()):
             text = _visible_text(_detail(page))
             self.assertIn(pack_brief.FI_STRESS_HEADING, text)
-            self.assertRegex(text, r"%s\W[^\n]*%s" % (re.escape(fact_id), re.escape(value)))
+            # The fact prints by its label with its value (unit READ-A: no id on the page).
+            self.assertRegex(text, r"%s\W[^\n]*%s" % (re.escape(name), re.escape(value)))
 
     def test_guidance_prints_first_then_revisions(self):
-        rows = _fi_frame(_fi_capture(FI_BANK))["management"]["guidance_vs_delivery"]
-        text = _visible_text(_detail(_fi_page()))
+        """Unit READ-B1: each period row a table - the first guide, each revision in its dated
+        column, then what was delivered; a row never revised says so under its table."""
+        capture = _fi_capture(FI_BANK)
+        facts = {fact["id"]: fact for fact in capture["tier1"]}
+        rows = _fi_frame(capture)["management"]["guidance_vs_delivery"]
+        detail = _detail(_fi_page())
         revision = rows[1]["revisions"][0]
-        first = text.index("first guided %s" % rows[1]["guided"][0])
-        revised = text.index("revised on %s to %s" % (revision["date"], revision["guided"][0]))
-        delivered = text.index("delivered %s" % rows[1]["delivered"])
-        self.assertLess(first, revised)
-        self.assertLess(revised, delivered)
-        self.assertIn("never revised; delivered %s" % rows[0]["delivered"], text)
+        table = _card_rows(detail, "Guidance for %s" % rows[1]["period"])
+        self.assertEqual(table[0][1:4], ["First guide", "Revised %s" % R.format_date(
+            revision["date"]), "Delivered"])
+        shown = [R.format_number(facts[fid]["value"], facts[fid]["unit"])
+                 for fid in (rows[1]["guided"][0], revision["guided"][0], rows[1]["delivered"])]
+        self.assertEqual(table[1][1:4], shown)
+        self.assertIn("The guidance for %s was never revised." % rows[0]["period"],
+                      _visible_text(detail))
 
     def test_the_free_cash_row_is_named_as_distributable_capital(self):
         self.assertIn(E(pack_brief.FI_FREE_CASH_WORDS), _fi_page())
@@ -4740,6 +4848,2396 @@ class TestFIOnThePage(unittest.TestCase):
 def _pack_question(run_id):
     with open(os.path.join(ROOT, "council", "runs", run_id, "pack", "pack.json"), "rb") as fh:
         return json.loads(fh.read().decode("utf-8"))["capture"]["question_verbatim"]
+
+
+# UPGRADE-2 U5(b), session 2 (owner rulings AC5, AC35(3), AC16(3), AC25(4); seed item 10): the
+# chairman's three fields on the page - what decided it at the head of the executive summary, the
+# business and the decisive numbers in his words at the top of the synthesis - and the codex
+# version in the model stamp. A verdict older than the contract that carries them renders exactly
+# as before: the new builders add nothing to it, byte for byte.
+
+def _synthesis(page):
+    """The synthesis tier's own HTML: from its heading to the decision in detail."""
+    return page[page.index('<h2 id="synthesis"'):page.index('<h2 id="advisors"')]
+
+
+def _fixture_verdict():
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        return json.loads(fh.read().decode("utf-8"))
+
+
+def _render_changed(change, source=None, events=()):
+    """The fixture rendered with its verdict changed and, where given, rows added to the copy's
+    run record after the first-render row."""
+    with tempfile.TemporaryDirectory() as tmp:
+        run_dir = _mutated_copy(tmp, lambda d: _rewrite_verdict(d, change), source)
+        work = os.path.join(tmp, "work")
+        shutil.copytree(run_dir, work)
+        _stamp_first_render(work, _pinned_now(run_dir))
+        for event, fields in events:
+            runrecord.append_event(work, event, fields)
+        return R.render(work)
+
+
+class TestTheChairmansFieldsOnThePage(unittest.TestCase):
+    # The three fields of U5(b); the fourth, the one-line answer (READ-C1), has its own class.
+    LABELS = {"decisive_argument": "What decided it",
+              "business_read": "The business, in the chairman's words",
+              "decisive_metrics_read": "The decisive numbers, as the chairman reads them"}
+
+    def test_the_decisive_argument_opens_the_executive_summary(self):
+        front = _front(HTML)
+        verdict = _fixture_verdict()
+        lead = '<span class="lead">%s</span>' % E(self.LABELS["decisive_argument"])
+        self.assertEqual(front.count(lead), 1)
+        # First in the tier: before the chart and the rationale; the thesis card is gone
+        # (owner ruling AC41(4)).
+        for later in (TAPE_HEADING, "Why this rating, in the chairman"):
+            self.assertLess(front.index(lead), front.index(later), later)
+        self.assertNotIn("The thesis</span>", front)
+        card = front[front.index(lead):front.index(TAPE_HEADING)]
+        seat = verdict["decisive_argument"]["seat"]
+        self.assertIn(E(briefs.LENS_TITLES[seat]), card)
+        self.assertIn(E(verdict["decisive_argument"]["why"][:40]), card)
+        self.assertEqual(R.chair_fields.labels(),
+                         dict(self.LABELS, answer_line="The answer to your question"))
+
+    def test_the_business_and_metrics_reads_open_the_synthesis(self):
+        synthesis = _synthesis(HTML)
+        verdict = _fixture_verdict()
+        business = '<span class="lead">%s</span>' % E(self.LABELS["business_read"])
+        numbers = '<span class="lead">%s</span>' % E(self.LABELS["decisive_metrics_read"])
+        prose_card = synthesis.index("final synthesis</h4>")
+        self.assertLess(synthesis.index(business), synthesis.index(numbers))
+        self.assertLess(synthesis.index(numbers), prose_card)
+        self.assertIn(E(verdict["business_read"][:40]), synthesis)
+        table = synthesis[synthesis.index(numbers):prose_card]
+        for row in verdict["decisive_metrics_read"]:
+            self.assertIn(E(row["metric"]), table)
+            self.assertIn(E(row["implies"]), table)
+        # No row names a constituent on this single name, so no such column.
+        self.assertNotIn("<th>constituent</th>", table)
+        # A basket's rows carry their constituent, and the column appears.
+        def per_member(doc):
+            doc["decisive_metrics_read"] = [
+                {"metric": "Support revenue", "constituent": "ACHP",
+                 "value": "one figure", "implies": "a reading"}]
+        table = _synthesis(_render_changed(per_member))
+        self.assertIn("<th>constituent</th>", table)
+        self.assertIn("<td>ACHP</td>", table)
+
+    def test_a_null_field_prints_its_muted_line(self):
+        def nulls(doc):
+            for key in self.LABELS:
+                doc[key] = None
+        page = _render_changed(nulls)
+        for key, line in R.CHAIR_FIELD_MISSING.items():
+            self.assertEqual(page.count('<div class="muted small">%s</div>' % E(line)), 1, key)
+        self.assertLess(page.index(E(R.CHAIR_FIELD_MISSING["decisive_argument"])),
+                        page.index(TAPE_HEADING))
+        # An empty list is an answer, not a gap: the subject has no table of decisive numbers.
+        def empty(doc):
+            doc["decisive_metrics_read"] = []
+        page = _render_changed(empty)
+        self.assertIn(E(R.NO_METRICS_TABLE), _synthesis(page))
+        self.assertNotIn(E(R.CHAIR_FIELD_MISSING["decisive_metrics_read"]), page)
+        # Where the case file DOES carry decisive metrics, an empty list that stood after the one
+        # re-ask is the chairman not reading them - never "this subject has no table".
+        def with_metrics(run_dir):
+            _rewrite_verdict(run_dir, empty)
+            _rewrite_pack(run_dir, lambda pack: pack["capture"].update(
+                {"business_frame": {"ACME": {"decisive_metrics": [
+                    {"name": "Support revenue", "answered_by": []}]}}}))
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _mutated_copy(tmp, with_metrics)
+            work = os.path.join(tmp, "work")
+            shutil.copytree(run_dir, work)
+            _stamp_first_render(work, _pinned_now(run_dir))
+            synthesis = _synthesis(R.render(work))
+        self.assertNotIn(E(R.NO_METRICS_TABLE), synthesis)
+        self.assertIn(E(R.CHAIR_FIELD_MISSING["decisive_metrics_read"]), synthesis)
+        # A fields re-ask that moved a figure gets one muted line under the synthesis.
+        moved = [("chair_fields_checked",
+                  {"seat": "chair_resolve", "number": "010", "outcome": "spliced",
+                   "problems": [], "figures_changed": True,
+                   "figures_differing": {"first": ["$279m"], "rewrite": ["$300m"]},
+                   "figures_by_field": {"business_read": {"first": ["$279m"],
+                                                          "rewrite": ["$300m"]}}})]
+
+        def resolve_wrote_it(run_dir):
+            path = os.path.join(run_dir, "rpc", "010-answer-chair_resolve.json")
+            with open(path, "rb") as fh:
+                doc = json.loads(fh.read().decode("utf-8"))
+            doc["final_verdict"]["business_read"] = _fixture_verdict()["business_read"]
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(doc, indent=2, sort_keys=True))
+        with tempfile.TemporaryDirectory() as tmp:
+            work = _mutated_copy(tmp, resolve_wrote_it)
+            _stamp_first_render(work, _pinned_now(FIXTURE))
+            for event, fields in moved:
+                runrecord.append_event(work, event, fields)
+            synthesis = _synthesis(R.render(work))
+        self.assertEqual(synthesis.count(R.FIELDS_FIGURE_NOTE_OPEN), 1)
+        self.assertIn("$279m", synthesis)
+        self.assertIn("$300m", synthesis)
+        self.assertNotIn(R.FIELDS_FIGURE_NOTE_OPEN, HTML)
+
+    def test_a_table_short_of_the_case_files_metrics_says_how_many_are_missing(self):
+        # Architect ruling on round 8's related gap: a table naming fewer rows than the case
+        # file's decisive metrics prints one muted line under it counting the missing ones, by
+        # name when three or fewer - never the "no table" line, never a refusal.
+        def one_row(doc):
+            doc["decisive_metrics_read"] = [
+                {"metric": "Support revenue", "constituent": None,
+                 "value": "one figure", "implies": "a reading"}]
+
+        def render(metrics):
+            def mutate(run_dir):
+                _rewrite_verdict(run_dir, one_row)
+                _rewrite_pack(run_dir, lambda pack: pack["capture"].update(
+                    {"business_frame": {"ACME": {"decisive_metrics": [
+                        {"name": name, "answered_by": []} for name in metrics]}}}))
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = _mutated_copy(tmp, mutate)
+                work = os.path.join(tmp, "work")
+                shutil.copytree(run_dir, work)
+                _stamp_first_render(work, _pinned_now(run_dir))
+                return _synthesis(R.render(work))
+        short = render(["Support revenue", "Operating margin"])
+        line = ('<div class="muted small">1 of the case file\'s decisive metrics was not read '
+                'out by the chairman: &quot;Operating margin&quot;.</div>')
+        self.assertIn(line.replace("\'", "&#x27;"), short)
+        self.assertLess(short.index("</table>"), short.index("Operating margin&quot;."))
+        self.assertNotIn(E(R.NO_METRICS_TABLE), short)
+        # A complete table prints no such line.
+        complete = render(["Support revenue"])
+        self.assertNotIn("decisive metrics was not read out", complete)
+        self.assertNotIn("decisive metrics were not read out", complete)
+        self.assertNotIn("not read out by the chairman", HTML)
+
+    def test_the_rows_missing_note_marks_a_metric_names_untraced_figures(self):
+        # Round 9 (r9-1, P-U5b-12): a metric name the note prints goes through the frame's
+        # prose marker first, as every other metric name on the page does (AC19).
+        from council.evidence import trace
+
+        def one_row(doc):
+            doc["decisive_metrics_read"] = [
+                {"metric": "Support revenue", "constituent": None,
+                 "value": "one figure", "implies": "a reading"}]
+
+        def render(omitted):
+            def mutate(run_dir):
+                _rewrite_verdict(run_dir, one_row)
+                _rewrite_pack(run_dir, lambda pack: pack["capture"].update(
+                    {"business_frame": {"ACME": {"decisive_metrics": [
+                        {"name": name, "answered_by": []}
+                        for name in ("Support revenue", omitted)]}}}))
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = _mutated_copy(tmp, mutate)
+                work = os.path.join(tmp, "work")
+                shutil.copytree(run_dir, work)
+                _stamp_first_render(work, _pinned_now(run_dir))
+                return _synthesis(R.render(work))
+        marked = render("Operating margin 4242%")
+        self.assertIn("Operating margin 4242%% %s&quot;." % E(trace.MARKER), marked)
+        # Positive control: a plain name prints without the marker.
+        plain = render("Operating margin")
+        self.assertIn("not read out by the chairman: &quot;Operating margin&quot;.", plain)
+        self.assertNotIn(E(trace.MARKER), plain.split("not read out by the chairman")[1])
+
+    def test_a_draft_fields_figure_flag_shows_while_its_field_survives(self):
+        # Audit round 1 (r1-4): the draft's fields re-answer moved a figure and the resolve kept
+        # that field as it stood, with no re-ask of its own; the note still shows.
+        verdict = _fixture_verdict()
+
+        def draft_carries(value):
+            def mutate(run_dir):
+                path = os.path.join(run_dir, "rpc", "009-answer-chair_draft.json")
+                with open(path, "rb") as fh:
+                    doc = json.loads(fh.read().decode("utf-8"))
+                doc["draft_verdict"]["business_read"] = value
+                with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(json.dumps(doc, indent=2, sort_keys=True))
+            return mutate
+
+        events = [("chair_fields_checked",
+                   {"seat": "chair_draft", "number": "009", "outcome": "reasked",
+                    "problems": [{"key": "business_read", "problem": "it is missing"}]}),
+                  ("chair_fields_checked",
+                   {"seat": "chair_draft", "number": "009", "outcome": "spliced",
+                    "problems": [], "figures_changed": True,
+                    "figures_differing": {"first": ["$279m"], "rewrite": ["$300m"]},
+                    "figures_by_field": {"business_read": {"first": ["$279m"],
+                                                           "rewrite": ["$300m"]}}}),
+                  ("chair_fields_checked",
+                   {"seat": "chair_resolve", "number": "010", "outcome": "present",
+                    "problems": []})]
+
+        def render(value):
+            with tempfile.TemporaryDirectory() as tmp:
+                work = _mutated_copy(tmp, draft_carries(value))
+                _stamp_first_render(work, _pinned_now(FIXTURE))
+                for event, fields in events:
+                    runrecord.append_event(work, event, fields)
+                return _synthesis(R.render(work))
+
+        survived = render(verdict["business_read"])
+        self.assertEqual(survived.count(R.FIELDS_FIGURE_NOTE_OPEN), 1)
+        self.assertIn("$300m", survived)
+        # The resolve rewrote the field after the draft: the draft's note no longer describes the
+        # published text, and the change is listed among the post-audit changes instead.
+        replaced = render("An invented business read the resolve later rewrote.")
+        self.assertNotIn(R.FIELDS_FIGURE_NOTE_OPEN, replaced)
+
+    def _draft_asked(self, draft_fields, marked_row=False):
+        """The synthesis of the fixture with the draft's fields re-ask of business_read and
+        decisive_metrics_read, each moving a figure, the draft carrying DRAFT_FIELDS and the
+        published table's first row, where MARKED_ROW, carrying the host's mark (P-U5b-5)."""
+        def mutate(run_dir):
+            path = os.path.join(run_dir, "rpc", "009-answer-chair_draft.json")
+            with open(path, "rb") as fh:
+                doc = json.loads(fh.read().decode("utf-8"))
+            doc["draft_verdict"].update(draft_fields)
+            with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(doc, indent=2, sort_keys=True))
+            if marked_row:
+                _rewrite_verdict(run_dir, lambda v: v["decisive_metrics_read"][0].update(
+                    mark=R.chair_fields.ROW_MARK))
+        asked = ["business_read", "decisive_metrics_read"]
+        events = [("chair_fields_checked",
+                   {"seat": "chair_draft", "number": "009", "outcome": "reasked",
+                    "problems": [{"key": key, "problem": "it is missing"} for key in asked]}),
+                  ("chair_fields_checked",
+                   {"seat": "chair_draft", "number": "009", "outcome": "spliced",
+                    "problems": [], "figures_changed": True,
+                    "figures_differing": {"first": ["$279m", "$11m"],
+                                          "rewrite": ["$300m", "$12m"]},
+                    "figures_by_field": {
+                        "business_read": {"first": ["$279m"], "rewrite": ["$300m"]},
+                        "decisive_metrics_read": {"first": ["$11m"], "rewrite": ["$12m"]}}})]
+        with tempfile.TemporaryDirectory() as tmp:
+            work = _mutated_copy(tmp, mutate)
+            _stamp_first_render(work, _pinned_now(FIXTURE))
+            for event, fields in events:
+                runrecord.append_event(work, event, fields)
+            return _synthesis(R.render(work))
+
+    def test_a_surviving_table_keeps_its_figure_note_when_a_row_is_marked(self):
+        # P-U5b-5: the host's row mark is not the chairman's writing; the table he wrote is the
+        # published one, so its figure note shows.
+        verdict = _fixture_verdict()
+        synthesis = self._draft_asked(
+            {"business_read": "A business read the resolve later rewrote.",
+             "decisive_metrics_read": verdict["decisive_metrics_read"]}, marked_row=True)
+        self.assertEqual(synthesis.count(R.FIELDS_FIGURE_NOTE_OPEN), 1)
+        self.assertIn("$12m", synthesis)
+
+    def test_a_replaced_fields_figures_never_print_as_shown_above(self):
+        # P-U5b-5: the note names only the figures of a field that still stands as re-answered.
+        verdict = _fixture_verdict()
+        synthesis = self._draft_asked({"business_read": verdict["business_read"],
+                                       "decisive_metrics_read": []})
+        self.assertEqual(synthesis.count(R.FIELDS_FIGURE_NOTE_OPEN), 1)
+        self.assertIn("$300m", synthesis)
+        self.assertNotIn("$12m", synthesis)
+        self.assertNotIn("$11m", synthesis)
+
+    def test_an_older_verdict_renders_unchanged_but_for_the_stamp(self):
+        # The stamp line itself is unchanged too while no codex version is recorded, which is
+        # every sitting on record written before the current verdict contract: the new builders
+        # add nothing to an older verdict.
+        def older(doc):
+            doc["schema_version"] = "1.4.0"
+            for key in self.LABELS:
+                doc.pop(key, None)
+            doc["provenance"].pop("codex_version", None)
+        page = _render_changed(older)
+        for label in self.LABELS.values():
+            self.assertNotIn(E(label), page)
+        for line in list(R.CHAIR_FIELD_MISSING.values()) + [R.NO_METRICS_TABLE]:
+            self.assertNotIn(E(line), page)
+        runs = os.path.join(ROOT, "council", "runs")
+        if not os.path.isdir(runs):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        builders = ("_front_decisive_argument", "_synthesis_chair_fields", "_codex_stamp",
+                    "_fields_figure_note")
+        # A run on record whose verdict carries the chairman's fields and the codex version
+        # (written under the current verdict contract) is no older verdict: it must carry all of
+        # them, its page carries the decision of the page on record (unit READ-A), and it carries
+        # the codex version and every chairman's label.
+        current_keys = tuple(self.LABELS)
+        compared = 0
+        older = 0
+        for name in sorted(os.listdir(runs)):
+            if not os.path.isfile(os.path.join(runs, name, "verdict.json")):
+                continue
+            with open(os.path.join(runs, name, "verdict.json"), "rb") as fh:
+                verdict = json.loads(fh.read().decode("utf-8"))
+            current = (any(key in verdict for key in current_keys)
+                       or "codex_version" in verdict["provenance"])
+            with tempfile.TemporaryDirectory() as tmp:
+                copied = os.path.join(tmp, "run")
+                shutil.copytree(os.path.join(runs, name), copied)
+                page = R.render(copied)
+                saved = {builder: getattr(R, builder) for builder in builders}
+                try:
+                    for builder in builders:
+                        setattr(R, builder, lambda *args: "")
+                    without = R.render(copied)
+                finally:
+                    for builder, function in saved.items():
+                        setattr(R, builder, function)
+            if current:
+                for key in current_keys:
+                    self.assertIn(key, verdict, name)
+                self.assertTrue(verdict["provenance"]["codex_version"], name)
+                with open(os.path.join(runs, name, "report.html"), "rb") as fh:
+                    _same_decision(self, fh.read().decode("utf-8"), page, name)
+                self.assertIn("ran through codex-cli", _stamps(page), name)
+                for label in self.LABELS.values():
+                    self.assertIn(E(label), page, name)
+                self.assertNotEqual(page, without, name)
+            else:
+                self.assertEqual(page, without, name)
+                older += 1
+            compared += 1
+        self.assertGreaterEqual(compared, 9)
+        self.assertGreaterEqual(older, 8)
+
+    def test_the_stamp_names_the_codex_version_or_says_not_recorded(self):
+        # The stamp names the models in plain words; the codex version is one line in About this
+        # sitting (unit READ-A, architect ruling 8), and says "not recorded" by printing nothing.
+        plain = ('<div class="stamp muted small">Advisors and chairman: <strong>Claude Opus 4.6'
+                 "</strong> &middot; outside challenge: <strong>OpenAI GPT-5.6 Sol</strong></div>")
+        self.assertIn(plain, _masthead(HTML))
+        self.assertNotIn("codex", _masthead(HTML).lower())
+        self.assertNotIn("codex", _stamps(HTML).lower())
+
+        def stamped(challenge, evidence):
+            def change(doc):
+                doc["provenance"]["codex_version"] = {"challenge": challenge,
+                                                      "evidence_audit": evidence}
+            page = _render_changed(change)
+            self.assertNotIn("codex", _masthead(page).lower())
+            return _stamps(page)
+        same = stamped("codex-cli fixture-a", "codex-cli fixture-a")
+        self.assertIn("The outside model ran through codex-cli fixture-a.", same)
+        self.assertNotIn("evidence check through", same)
+        both = stamped("codex-cli fixture-a", "codex-cli fixture-b")
+        self.assertIn("The outside challenge ran through codex-cli fixture-a; the evidence check "
+                      "through codex-cli fixture-b.", both)
+        audit_only = stamped(None, "codex-cli fixture-b")
+        self.assertIn("The outside model ran through codex-cli fixture-b.", audit_only)
+
+    def test_the_rationale_still_prints_in_full(self):
+        front = _front(HTML)
+        rationale = _fixture_verdict()["conviction_rationale"]
+        card = front[front.index("Why this rating, in the chairman"):]
+        for paragraph in [p for p in rationale.split("\n\n") if p.strip()]:
+            words = _visible_text(markdown_free(paragraph))
+            self.assertIn(words[:60], _visible_text(card))
+
+
+def markdown_free(text):
+    """A rationale paragraph as a reader sees its words: emphasis marks dropped."""
+    return text.replace("**", "").replace("*", "")
+
+
+# ---------------------------------------------------------------------------------------------
+# THE FULL EVIDENCE DOCUMENT AS A WEB PAGE (owner ruling AC40(2b); unit UPGRADE2-APPROVAL-PAGE)
+# ---------------------------------------------------------------------------------------------
+
+RUNS_ON_RECORD = os.path.join(ROOT, "council", "runs")
+JPM_RUN = os.path.join(RUNS_ON_RECORD, "council-jpm-2026-09-24")
+ENGINE_PACK = os.path.join(ROOT, "council", "tests", "fixtures", "engine", "pack.json")
+
+
+def _evidence_page():
+    """The page module, imported here so that only these tests fail where it does not exist."""
+    from council.report import evidence_page
+    return evidence_page
+
+
+def _one(value):
+    return " ".join(str(value if value is not None else "").split())
+
+
+def _read_json_file(path):
+    with open(path, "rb") as fh:
+        return json.loads(fh.read().decode("utf-8"))
+
+
+def _full_document_of_run(run_dir):
+    """A run's full evidence document, rendered from its own frozen pack and cost sidecar."""
+    pack_path = os.path.join(run_dir, "pack", "pack.json")
+    with open(pack_path, "rb") as fh:
+        pack_sha = hashlib.sha256(fh.read()).hexdigest()
+    usage_path = os.path.join(run_dir, "pack", "capture-usage.json")
+    usage = _read_json_file(usage_path) if os.path.isfile(usage_path) else None
+    return _read_json_file(pack_path), pack_brief.render_full(
+        _read_json_file(pack_path), pack_sha, usage)
+
+
+# The Markdown as a reader sees it, read here on its own terms (a regular expression, left to
+# right), not through the page module: a back-slash before a punctuation mark is the mark, a
+# back-tick pair is its literal inside, the three entities are their characters, a bold mark
+# is not text.
+_MD_TOKEN = re.compile(r"\\[!-/:-@\[-`{-~]|`[^`]*`|&amp;|&lt;|&gt;|\*\*|.", re.S)
+
+
+def _md_visible(text):
+    out = []
+    for match in _MD_TOKEN.finditer(text):
+        token = match.group()
+        if len(token) == 2 and token[0] == "\\":
+            out.append(token[1])
+        elif len(token) >= 2 and token[0] == "`" and token[-1] == "`":
+            out.append(token[1:-1])
+        elif token in ("&amp;", "&lt;", "&gt;"):
+            out.append(html_lib.unescape(token))
+        elif token != "**":
+            out.append(token)
+    return "".join(out).strip()
+
+
+def _md_cells(row):
+    body = row.strip()[1:]
+    cells, current = [], ""
+    for match in re.finditer(r"\\.|\||[^\\|]+|\\", body):
+        if match.group() == "|":
+            cells.append(current)
+            current = ""
+        else:
+            current += match.group()
+    if current.strip():
+        cells.append(current)
+    return tuple(_md_visible(cell) for cell in cells)
+
+
+def _markdown_blocks(text):
+    """(kind, ...) per block of the Markdown, in order: headings by level, list items with their
+    depth, table rows with their cells, the document's own separator (the one `---` line followed
+    by a blank line and the full evidence's heading) as a rule, paragraphs (their lines joined by
+    a newline; a line of dashes anywhere else is paragraph text)."""
+    blocks, paragraph = [], []
+    lines = text.split("\n")
+
+    def flush():
+        if paragraph:
+            blocks.append(("p", "\n".join(paragraph)))
+            del paragraph[:]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        heading = re.match(r"(#{1,6}) (.*)$", line)
+        item = re.match(r"( *)- (.*)$", line)
+        if not line.strip():
+            flush()
+        elif heading:
+            flush()
+            blocks.append(("h%d" % len(heading.group(1)), _md_visible(heading.group(2))))
+        elif line == "---" and lines[i + 1:i + 3] == [
+                "", "# The full evidence - the document approved in reviewed mode"]:
+            flush()
+            blocks.append(("hr", ""))
+        elif item:
+            flush()
+            blocks.append(("li", len(item.group(1)) // 2, _md_visible(item.group(2))))
+        elif (line.startswith("|") and i + 1 < len(lines)
+              and re.fullmatch(r"\|( *-+ *\|)+", lines[i + 1])):
+            flush()
+            blocks.append(("row", _md_cells(line)))
+            i += 2
+            while i < len(lines) and lines[i].startswith("|"):
+                blocks.append(("row", _md_cells(lines[i])))
+                i += 1
+            continue
+        else:
+            paragraph.append(_md_visible(line))
+        i += 1
+    flush()
+    return blocks
+
+
+class _PageReader(html_lib_parser.HTMLParser):
+    """The page walked with the standard library's parser: every element and attribute, the
+    style and script text, and the document's blocks in order (the column only, the foot and
+    the menu left out; a section title's number, the page's own since unit READ-B2, left out of
+    its block)."""
+
+    BLOCKS = ("h1", "h2", "h3", "h4", "h5", "h6", "p", "li")
+
+    def __init__(self):
+        html_lib_parser.HTMLParser.__init__(self, convert_charrefs=True)
+        self.tags, self.attrs, self.styles, self.scripts = [], [], [], []
+        self.blocks, self.open, self.lists = [], [], 0
+        self.row = None
+        self.in_column = self.in_foot = False
+        self.raw = None
+        self.strong, self.bold = [], []
+        self.text = []
+        self.number = False
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+        self.attrs.extend(attrs)
+        attributes = dict(attrs)
+        if tag in ("style", "script"):
+            self.raw = [tag, []]
+        if tag == "div" and "wrap" in (attributes.get("class") or "").split():
+            self.in_column = True
+        if tag == "span" and attributes.get("class") == "secnum":
+            self.number = True
+        if tag == "div" and attributes.get("class") == "foot":
+            self.in_foot = True
+        if not self.in_column or self.in_foot:
+            return
+        if tag == "ul":
+            self.lists += 1
+        elif tag == "tr":
+            self.row = []
+            self.blocks.append(("row", self.row))
+        elif tag in ("th", "td"):
+            self.open.append([tag, []])
+        elif tag in self.BLOCKS:
+            entry = [tag, [], self.lists - 1]
+            self.open.append(entry)
+            self.blocks.append(entry)
+        elif tag == "br" and self.open:
+            self.open[-1][1].append("\n")
+        elif tag == "hr":
+            self.blocks.append(("hr", ""))
+        elif tag == "strong":
+            self.bold.append([])
+        if tag != "span":
+            # A hover note's term (unit READ-B2) sits inside its line.
+            self.text.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in ("style", "script") and self.raw:
+            (self.styles if tag == "style" else self.scripts).append("".join(self.raw[1]))
+            self.raw = None
+        if not self.in_column or self.in_foot:
+            return
+        if tag == "ul":
+            self.lists -= 1
+        elif tag in ("th", "td"):
+            self.row.append("".join(self.open.pop()[1]).strip())
+        elif tag == "tr":
+            self.blocks[-1] = ("row", tuple(self.row))
+        elif tag in self.BLOCKS:
+            self.open.pop()
+        elif tag == "strong":
+            self.strong.append("".join(self.bold.pop()))
+
+    def handle_data(self, data):
+        if self.raw is not None:
+            self.raw[1].append(data)
+            return
+        if not self.in_column or self.in_foot:
+            return
+        if self.number:
+            self.number = False
+            self.text.append(data)
+            return
+        if self.open:
+            self.open[-1][1].append(data)
+        for bold in self.bold:
+            bold.append(data)
+        self.text.append(data)
+
+    def page_blocks(self):
+        out = []
+        for block in self.blocks:
+            if block[0] in ("row", "hr"):
+                out.append(tuple(block))
+            elif block[0] == "li":
+                out.append(("li", block[2], "".join(block[1]).strip()))
+            else:
+                out.append((block[0], "".join(block[1]).strip()))
+        return out
+
+    def visible_text(self):
+        return "".join(self.text)
+
+
+def _read_page(page_text):
+    reader = _PageReader()
+    reader.feed(page_text)
+    reader.close()
+    return reader
+
+
+def _first_difference(expected, actual):
+    for index, (want, got) in enumerate(zip(expected, actual)):
+        if want != got:
+            return "block %d: the Markdown has %r, the page %r" % (index, want, got)
+    return "the Markdown has %d blocks, the page %d" % (len(expected), len(actual))
+
+
+def _pack_expectations(capture):
+    """Every fact, passage and gap of a capture as the full document states it, built from the
+    capture alone - never from the Markdown or the page."""
+    wanted = []
+    for fact in capture.get("tier1") or []:
+        label = _one(fact.get("label"))
+        wanted.append(label or _one(fact.get("id")))
+        unit = _one(fact.get("unit"))
+        wanted.append("Value: %s%s (as of %s)" % (_one(fact.get("value")),
+                                                  (" " + unit) if unit else "",
+                                                  _one(fact.get("as_of"))))
+        wanted.append("Source: %s" % _one(fact.get("source")))
+    for passage in capture.get("tier2") or []:
+        wanted.append("%s (as of %s)" % (_one(passage.get("id")), _one(passage.get("as_of"))))
+        wanted.append("Source: %s" % _one(passage.get("source")))
+        text = _one(passage.get("text"))
+        # A known limit of the seed: a passage opening with a list mark reads as a list item.
+        if text[:2] in ("- ", "+ "):
+            text = text[2:]
+        if text.strip("-"):
+            wanted.append(text)
+    for gap in capture.get("gaps") or []:
+        wanted.append("%s: %s (weakens %s)" % (_one(gap.get("fact_class")),
+                                               _one(gap.get("reason")),
+                                               _one(gap.get("weakened_test"))))
+    return wanted
+
+
+def _fresh_expectations(capture):
+    """Every fact, passage and gap of a capture as TODAY'S full document states it (unit
+    READ-B2), built from the capture alone: each fact by its plain name (its label, or its key
+    read as words), its exact recorded value and its whole source; each passage by its title
+    in words, its source and its text; each gap by its reason and its class. The recorded
+    documents on record keep the older wording and are read by _pack_expectations."""
+    wanted = []
+    for fact in capture.get("tier1") or []:
+        label = _one(fact.get("label"))
+        if not label:
+            words = _one(_one(fact.get("id")).replace("_", " "))
+            label = words[:1].upper() + words[1:]
+        wanted.append(label)
+        wanted.append(_one(fact.get("value")))
+        wanted.append(_one(fact.get("source")))
+    for passage in capture.get("tier2") or []:
+        words = _one(passage.get("id"))
+        if words.startswith("t2_"):
+            words = words[len("t2_"):]
+        words = _one(words.replace("_", " "))
+        wanted.append(words[:1].upper() + words[1:])
+        wanted.append("Source: %s" % _one(passage.get("source")))
+        text = _one(passage.get("text"))
+        # A known limit of the seed: a passage opening with a list mark reads as a list item.
+        if text[:2] in ("- ", "+ "):
+            text = text[2:]
+        if text.strip("-"):
+            wanted.append(text)
+    for gap in capture.get("gaps") or []:
+        wanted.append("%s (%s; weakens %s)" % (_one(gap.get("reason")),
+                                               _one(gap.get("fact_class")),
+                                               _one(gap.get("weakened_test"))))
+    return wanted
+
+
+def _missing_from(page_text, capture, fresh=True):
+    """What of the capture the page does not show: a FRESH rendering is read against today's
+    wording, a recorded document (fresh=False) against the wording it was written in."""
+    visible = _read_page(page_text).visible_text()
+    expected = _fresh_expectations(capture) if fresh else _pack_expectations(capture)
+    return [item for item in expected if item not in visible]
+
+
+# The full evidence documents on record, pinned by their bytes (architect ruling 1 of READ-B):
+# they are the record of what was approved, rendered by the code of their day. A fresh
+# rendering of the same pack is compared by content, never by bytes.
+RECORDED_EVIDENCE_DOCUMENTS = {
+    "council-jpm-2026-09-24":
+        "5493a38729b32fa04878bda127aa9d6381d9f7bed5e68b97da09d4b26c4d0ea4",
+}
+
+
+HOSTILE = (
+    "<script>alert(1)</script>",
+    "</style><b>bold by markup</b>",
+    '<img src=x onerror="alert(1)">',
+    "[a link](https://example.invalid/x)",
+    "![an image](https://example.invalid/i.png)",
+    "**not bold**",
+    "`not code`",
+    "a \\| b",
+    "# not a heading",
+    "&amp; stays &lt; itself",
+)
+
+
+def _hostile_pack():
+    """The engine fixture's invented pack with every hostile string written where a capture
+    session writes text: a fact's label, value, unit and source, a passage's text and source,
+    a gap's reason, and a cycle series (its name, its source, and every point's value - the
+    cells of a table)."""
+    pack = copy.deepcopy(_read_json_file(ENGINE_PACK))
+    capture = pack["capture"]
+    for index, text in enumerate(HOSTILE):
+        capture["tier1"].append({"id": "hostile_fact_%d" % index, "label": text,
+                                 "value": text, "unit": text, "as_of": "2026-08-28",
+                                 "source": "invented: " + text, "derived": None,
+                                 "freshness_rule_days": 30})
+        capture["tier2"].append({"id": "hostile_passage_%d" % index, "as_of": "2026-08-01",
+                                 "category": "business", "figures": [],
+                                 "source": "invented: " + text, "text": text})
+    capture["gaps"].append({"fact_class": "hostile_gap", "reason": " / ".join(HOSTILE),
+                            "reason_kind": "other", "weakened_test": HOSTILE[0]})
+    capture["cycle"] = {"name": HOSTILE[5], "why_it_matters": HOSTILE[3],
+                        "series": [{"id": "hostile_series", "unit": HOSTILE[6],
+                                    "as_of": "2026-08-28", "source": HOSTILE[2],
+                                    "refetch_url_or_source_line": HOSTILE[4],
+                                    "points": [{"date": "2026-08-%02d" % (index + 1),
+                                                "value": text}
+                                               for index, text in enumerate(HOSTILE)]}]}
+    return pack
+
+
+class TestEvidencePage(unittest.TestCase):
+    """The full evidence document the owner approves, as the page he reads it on (owner ruling
+    AC40(2b)): the same text, the report's look, one file that fetches nothing, and a pure
+    function of the Markdown whose hash the go is recorded against."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.jpm_markdown = None
+
+    def jpm(self):
+        if not os.path.isdir(JPM_RUN):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        if TestEvidencePage.jpm_markdown is None:
+            with open(os.path.join(JPM_RUN, "pack", "EVIDENCE-FULL.md"), "rb") as fh:
+                TestEvidencePage.jpm_markdown = fh.read().decode("utf-8")
+        return TestEvidencePage.jpm_markdown
+
+    def test_the_jpm_page_carries_the_markdown_text_block_by_block(self):
+        markdown = self.jpm()
+        expected = _markdown_blocks(markdown)
+        actual = _read_page(_evidence_page().render_page(markdown)).page_blocks()
+        self.assertEqual(expected, actual, _first_difference(expected, actual))
+        kinds = [block[0] for block in expected]
+        for kind in ("h1", "h2", "h3", "h4", "li", "row", "p", "hr"):
+            self.assertIn(kind, kinds)
+        self.assertTrue(any(block[0] == "li" and block[1] == 1 for block in expected),
+                        "a nested list item is part of what this test compares")
+
+    def test_the_jpm_page_carries_every_fact_passage_and_gap_as_captured(self):
+        self.jpm()
+        capture = _read_json_file(os.path.join(JPM_RUN, "pack", "pack.json"))["capture"]
+        self.assertTrue(capture["tier1"] and capture["tier2"] and capture["gaps"])
+        missing = _missing_from(_evidence_page().render_page(self.jpm()), capture,
+                                fresh=False)
+        self.assertEqual(missing, [])
+
+    def test_every_run_on_record_renders_a_page(self):
+        if not os.path.isdir(RUNS_ON_RECORD):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        page_module = _evidence_page()
+        runs = sorted(name for name in os.listdir(RUNS_ON_RECORD)
+                      if os.path.isfile(os.path.join(RUNS_ON_RECORD, name, "pack", "pack.json")))
+        # The floor is the runs on record when this test was written; a new run only adds.
+        self.assertGreaterEqual(len(runs), 10)
+        with_record = []
+        for name in runs:
+            run_dir = os.path.join(RUNS_ON_RECORD, name)
+            pack, markdown = _full_document_of_run(run_dir)
+            recorded = os.path.join(run_dir, "pack", "EVIDENCE-FULL.md")
+            if os.path.isfile(recorded):
+                # The recorded document is the record of what was approved: its bytes are
+                # pinned, it still converts block for block and carries every fact, passage
+                # and gap in the wording of its day (unit READ-B2 replaced the byte comparison
+                # with today's rendering, which reads differently by design).
+                with_record.append(name)
+                with open(recorded, "rb") as fh:
+                    data = fh.read()
+                self.assertEqual(hashlib.sha256(data).hexdigest(),
+                                 RECORDED_EVIDENCE_DOCUMENTS.get(name), name)
+                approval = os.path.join(run_dir, "pack", "approval.json")
+                if os.path.isfile(approval):
+                    self.assertEqual(_read_json_file(approval)["document_sha256"],
+                                     RECORDED_EVIDENCE_DOCUMENTS[name], name)
+                old = page_module.render_page(data.decode("utf-8"))
+                self.assertEqual(_markdown_blocks(data.decode("utf-8")),
+                                 _read_page(old).page_blocks(), name)
+                self.assertEqual(_missing_from(old, pack["capture"], fresh=False), [], name)
+                self.assertNotEqual(data, markdown.encode("utf-8"), name)
+            page = page_module.render_page(markdown)
+            expected = _markdown_blocks(markdown)
+            actual = _read_page(page).page_blocks()
+            self.assertEqual(expected, actual,
+                             "%s: %s" % (name, _first_difference(expected, actual)))
+            self.assertEqual(_missing_from(page, pack["capture"]), [], name)
+            # Today's rendering is deterministic.
+            self.assertEqual(markdown, _full_document_of_run(run_dir)[1], name)
+        self.assertEqual(sorted(with_record), sorted(RECORDED_EVIDENCE_DOCUMENTS))
+        # The hand rendering the JPM host made is a record: it is not a page this renderer
+        # wrote, so the brief command's guard would refuse to overwrite it.
+        hand = os.path.join(JPM_RUN, "evidence", "EVIDENCE-FULL-jpm.html")
+        self.assertTrue(os.path.isfile(hand))
+        self.assertFalse(page_module.is_own_page(hand))
+        self.assertNotEqual(page_module.page_path(
+            os.path.join(JPM_RUN, "evidence", "EVIDENCE-FULL.md")), hand)
+
+    def assert_fetches_nothing(self, page):
+        reader = _read_page(page)
+        for forbidden in ("link", "img", "iframe", "object", "embed", "base", "form",
+                          "audio", "video", "source", "frame"):
+            self.assertNotIn(forbidden, reader.tags)
+        for name, value in reader.attrs:
+            self.assertNotEqual(name, "src")
+            self.assertFalse(name.startswith("on"), name)
+            if name == "href":
+                self.assertTrue(value.startswith("#"), value)
+        self.assertEqual(reader.tags.count("script"), 1)
+        self.assertEqual(reader.scripts, [R.SCRIPT])
+        self.assertEqual(reader.tags.count("style"), 1)
+        for style in reader.styles:
+            self.assertNotIn("url(", style)
+            self.assertNotIn("@import", style)
+        return reader
+
+    def test_the_page_fetches_nothing(self):
+        page = _evidence_page().render_page(self.jpm())
+        self.assertTrue(page.startswith(R.PREAMBLE.decode("ascii")))
+        self.assert_fetches_nothing(page)
+
+    def test_hostile_capture_text_renders_as_text(self):
+        pack = _hostile_pack()
+        markdown = pack_brief.render_full(pack, "0" * 64, None)
+        page = _evidence_page().render_page(markdown)
+        reader = self.assert_fetches_nothing(page)
+        self.assertNotIn("b", reader.tags)
+        visible = reader.visible_text()
+        for text in HOSTILE:
+            self.assertIn(text, visible)
+            self.assertIn("Value: %s %s (as of" % (text, text), visible)
+        # No mark written by the capture became structure: the only bold is the renderer's,
+        # no heading carries the hostile text's own words as a heading of its own, and every
+        # row of the cycle table keeps exactly its two cells.
+        self.assertNotIn("not bold", reader.strong)
+        self.assertNotIn(("h1", "not a heading"), reader.page_blocks())
+        rows = [block[1] for block in reader.page_blocks() if block[0] == "row"]
+        # The cycle's table of dated points (the one-page summary's table of the numbers that
+        # decide comes first since unit READ-B2).
+        start = rows.index(("Date", "Value"))
+        cycle = rows[start:start + 1 + len(HOSTILE)]
+        self.assertEqual([cells[1] for cells in cycle[1:]], list(HOSTILE))
+        self.assertTrue(all(len(cells) == 2 for cells in cycle))
+        self.assertEqual(_missing_from(page, pack["capture"]), [])
+
+    def test_an_escaped_pipe_stays_inside_its_cell(self):
+        markdown = "| Date | Value |\n| --- | --- |\n| one \\| two | three \\\\| four |\n"
+        rows = [block[1] for block in _read_page(_evidence_page().render_page(markdown))
+                .page_blocks() if block[0] == "row"]
+        self.assertEqual(rows, [("Date", "Value"), ("one | two", "three \\", "four")])
+
+    def test_an_escaped_star_opens_no_emphasis(self):
+        page = _evidence_page().render_page("A \\*\\*plain\\*\\* word and **a bold one**.\n")
+        reader = _read_page(page)
+        self.assertEqual(reader.page_blocks(), [("p", "A **plain** word and a bold one.")])
+        self.assertEqual(reader.strong, ["a bold one"])
+        self.assertEqual(_evidence_page().render_page("An unpaired ** mark.\n").count(
+            "<strong>"), 0)
+
+    def test_a_code_span_is_literal(self):
+        page = _evidence_page().render_page("An id `a\\*b&amp;c<d>` and \\`not code\\`.\n")
+        self.assertIn("<code>a\\*b&amp;amp;c&lt;d&gt;</code>", page)
+        self.assertEqual(_read_page(page).page_blocks(),
+                         [("p", "An id a\\*b&amp;c<d> and `not code`.")])
+
+    def test_a_passage_of_dashes_prints_as_text_and_only_the_separator_is_a_rule(self):
+        # Round 1 of the audit (r1-1): a passage whose whole text is dashes drew a line where its
+        # text stands. Only the document's own separator - the one line the full renderer writes
+        # between the one-page summary and the full evidence - is a rule; every other line, dashes
+        # included, prints as its text.
+        pack = copy.deepcopy(_read_json_file(ENGINE_PACK))
+        for index, text in enumerate(("---", "-----")):
+            pack["capture"]["tier2"].append({
+                "id": "dash_passage_%d" % index, "as_of": "2026-08-01",
+                "category": "business", "figures": [], "source": "invented: dashes",
+                "text": text})
+        markdown = pack_brief.render_full(pack, "0" * 64, None)
+        page = _evidence_page().render_page(markdown)
+        self.assertEqual(page.count("<hr>"), 1)
+        blocks = _read_page(page).page_blocks()
+        self.assertEqual([block for block in blocks if block[0] == "hr"], [("hr", "")])
+        self.assertIn(("p", "---"), blocks)
+        self.assertIn(("p", "-----"), blocks)
+        self.assertEqual(blocks, _markdown_blocks(markdown))
+        separator = blocks.index(("hr", ""))
+        self.assertEqual(blocks[separator + 1][0], "h1")
+        self.assertTrue(blocks[separator + 1][1].startswith("The full evidence"))
+        self.assertEqual(_missing_from(page, pack["capture"]), [])
+        # The JPM run's page keeps its one rule and every block it had.
+        jpm = self.jpm()
+        jpm_page = _evidence_page().render_page(jpm)
+        self.assertEqual(jpm_page.count("<hr>"), 1)
+        jpm_blocks = _read_page(jpm_page).page_blocks()
+        counts = {}
+        for block in jpm_blocks:
+            counts[block[0]] = counts.get(block[0], 0) + 1
+        expected = {}
+        for block in _markdown_blocks(jpm):
+            expected[block[0]] = expected.get(block[0], 0) + 1
+        self.assertEqual(counts, expected)
+        self.assertEqual(counts["hr"], 1)
+
+    def test_the_same_markdown_renders_the_same_bytes(self):
+        markdown = self.jpm()
+        first = _evidence_page().render_page(markdown)
+        self.assertEqual(first, _evidence_page().render_page(markdown))
+        self.assertNotEqual(first, _evidence_page().render_page(markdown + "One more line.\n"))
+
+    def test_the_foot_names_the_markdowns_sha256(self):
+        markdown = self.jpm()
+        page = _evidence_page().render_page(markdown)
+        digest = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+        with open(os.path.join(JPM_RUN, "pack", "approval.json"), "rb") as fh:
+            approved = json.loads(fh.read().decode("utf-8"))["document_sha256"]
+        self.assertEqual(digest, approved)
+        foot = page[page.index('<div class="foot">'):]
+        self.assertIn("<code>%s</code>" % digest, foot)
+        self.assertIn("EVIDENCE-FULL.md", foot)
+        self.assertIn("council/report/evidence_page.py", foot)
+        self.assertEqual(page.count(digest), 1)
+
+
+
+# ---------------------------------------------------------------------------------------------
+# UPGRADE-2 READ-A - THE REPORT PAGE READS PLAINLY (owner rulings AC16, AC40(2c), AC41; the
+# readability register and the owner's five findings)
+# ---------------------------------------------------------------------------------------------
+
+# Every recorded page and evidence document on record, by the sha256 of its bytes (criterion 6(a)).
+# A render changes the renderer, never a record: a hash that moves means a unit wrote under
+# council/runs/.
+RECORDED_PAGES = (
+    ("council-aapl-2026-08-31-acceptance-2/report.html",
+     "785b694f3e416d90d71a279f4fc6957d3cca174cd74b77c3562f45076c1dcada"),
+    ("council-btc-2026-08-31/report.html",
+     "d49cf64357a5610837c0ae527c60332d43648690c26992101dd89723ae73b727"),
+    ("council-btc-2026-09-01/report.html",
+     "04981b7338a132e0e64709cc6f1a60eeff9b0ba5a3d508739788d1c83f0112da"),
+    ("council-coin-2026-09-04/report.html",
+     "fc1370d7c53561f41b2c2006390e298336cfed783c5c49547287ef3f3b23fece"),
+    ("council-goog-2026-08-31/report.html",
+     "17a82e5a2c2823c782e05c9c716c8e9ca3bc80e81fcca89a01f7982abf289d9d"),
+    ("council-jpm-2026-09-24/report.html",
+     "e2af4304b76711c86eae87b5c2e25f8afafbe836836f9843fbe1ec8d174313fd"),
+    ("council-lulu-2026-09-05/report.html",
+     "937acd398c2196aa8b1a85dd5e291bba2d2da55787ca001dae718e90b6d05dd5"),
+    ("council-theme-eusov-2026-09-01/report.html",
+     "71047691d57527daad7028f7396692540f8573fa72015fafe99b66ff70e0ea30"),
+    ("council-wulf-2026-09-09/report.html",
+     "8ddc934f63eb12316e3685f1772d6e7ca746ab88ea009f37ac6b16000bbbbcb0"),
+    ("council-jpm-2026-09-24/pack/EVIDENCE-FULL.md",
+     "5493a38729b32fa04878bda127aa9d6381d9f7bed5e68b97da09d4b26c4d0ea4"),
+    ("council-jpm-2026-09-24/evidence/EVIDENCE-FULL.md",
+     "5493a38729b32fa04878bda127aa9d6381d9f7bed5e68b97da09d4b26c4d0ea4"),
+    ("council-jpm-2026-09-24/evidence/EVIDENCE-FULL-jpm.html",
+     "39a5a3c7bcac54a762210397beaa151282ca7f31a2351c9574179f31d3e5f1b2"),
+)
+JPM_SEAT_TABLES = 12
+CAPTION_MAX_WORDS = 30
+JPM_LEVEL_WORDS = ("$412.50 — Buy level", "$396.25 — Level to add more")
+JPM_SECTIONS = (("decision", "1"), ("synthesis", "2"), ("advisors", "3"), ("review", "4"),
+                ("challenge", "5"), ("detail", "6"), ("evidence", "7"), ("appendices", "8"))
+_JPM_PAGE = []
+
+
+def _jpm_page(test):
+    """A fresh render of a scratch copy of the JPM sitting, once per suite; skipped where the
+    runs on record are not in this copy of the repository."""
+    if not os.path.isdir(JPM_RUN):
+        test.skipTest("the runs on record are not in this copy of the repository")
+    if not _JPM_PAGE:
+        with tempfile.TemporaryDirectory() as tmp:
+            copied = os.path.join(tmp, "run")
+            shutil.copytree(JPM_RUN, copied)
+            _JPM_PAGE.append(R.render(copied))
+            _JPM_PAGE.append(R.render(copied))
+    return _JPM_PAGE[0]
+
+
+def _between(page, start, end):
+    """The page from the first `start` to the next `end` after it (or to the page's end)."""
+    begin = page.index(start)
+    stop = page.find(end, begin + len(start))
+    return page[begin:stop if stop != -1 else len(page)]
+
+
+def _section(page, anchor):
+    """One numbered section's own HTML, from its heading to the next section heading."""
+    begin = page.index('<h2 id="%s"' % anchor)
+    stop = page.find("<h2 ", begin + 4)
+    return page[begin:stop if stop != -1 else len(page)]
+
+
+def _without_folds(fragment):
+    """A fragment with every closed fold cut out, nested ones included."""
+    while True:
+        cut = re.sub(r"<details>(?:(?!<details>).)*?</details>", "", fragment, flags=re.S)
+        if cut == fragment:
+            return fragment
+        fragment = cut
+
+
+_NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?")
+
+
+def _norm(text):
+    """Visible text with every figure spelt one way (commas out, trailing zeros off), so two
+    pages that print one value with and without a trailing zero read the same decision."""
+    text = re.sub(r"\s+", " ", html_lib.unescape(TAG.sub("", text))).strip()
+    return _NUMBER.sub(lambda m: format(decimal.Decimal(m.group(0).replace(",", "")).normalize(),
+                                        "f"), text)
+
+
+def _decision(page):
+    """What a page decided, read the same way from a recorded page and a fresh one (the
+    reconciliation of criterion 6(b)): the rating word, the rating box's price and date, the
+    key-number strip's name and value pairs, the chart's dashed levels, the warning cards, the
+    chairman's rationale and three fields, and the counts in the evidence folds."""
+    head = _between(page, '<header class="masthead">', "<h2 ")
+    box = _between(head, '<div class="ratingbox">', '<div class="stamp')
+    strip = _between(head, '<dl class="keydata">', "</dl>")
+    rationale = re.search(r"Why this rating, in the chairman(?:&#x27;|')s own words</span>(.*?)"
+                          r"</div>", page, re.S)
+    decided = re.search(r'<div class="card prominent"><span class="lead">What decided it</span>'
+                        r"(.*?)</div>", page, re.S)
+    business = re.search(r"The business, in the chairman(?:&#x27;|')s words</span>(.*?)</div>",
+                         page, re.S)
+    metrics = re.search(r"<th>metric</th>.*?</table>", page, re.S)
+    facts = re.search(r"all (\d+) frozen fact", page)
+    return {
+        "rating": _visible_text(_between(box, '<div class="rating-word">', "</div>")),
+        "price": _norm(_between(box, '<dl class="rating-price">', "</dl>")),
+        "strip": [(_norm(name), _norm(value)) for name, value in
+                  re.findall(r"<dt>(.*?)</dt><dd>(.*?)</dd>", strip, re.S)],
+        "levels": [_norm(text).split()[0] for text in
+                   re.findall(r'<text class="ch-leveltxt"[^>]*>(.*?)</text>', page)],
+        "warnings": head.count('<div class="card alarm">'),
+        "rationale": _norm(rationale.group(1)) if rationale else None,
+        "chair": [_norm(match.group(1)) if match else None for match in (decided, business)]
+        + [_norm(metrics.group(0)) if metrics else None],
+        "facts": facts.group(1) if facts else None,
+        "passages": _between(page, "<h3>The narrative record</h3>", "<h3>").count(
+            '<div class="card') if "<h3>The narrative record</h3>" in page else 0,
+        "gaps": _between(page, "<h3>Declared gaps</h3>", "<h3>").count("<li>")
+        if "<h3>Declared gaps</h3>" in page else 0,
+    }
+
+
+def _same_decision(test, recorded, fresh, name):
+    """Criterion 6(b): the fresh render carries the decision the recorded page carries."""
+    expected, actual = _decision(recorded), _decision(fresh)
+    for key in expected:
+        test.assertEqual(expected[key], actual[key], "%s: %s differs" % (name, key))
+
+
+class TestReadablePage(unittest.TestCase):
+    """UPGRADE-2 READ-A: the report page reads plainly. Every test failed against the base code
+    for the reason its name gives, except the two guards, which cannot fail there:
+    test_no_recorded_page_is_rewritten and test_a_render_is_deterministic."""
+
+    # --- Part 1: tables and figures ------------------------------------------------------------
+
+    def test_a_pipe_table_renders_as_a_table(self):
+        html = R.markdown("Before.\n\n| Price | Multiple |\n| --- | :-: |\n| $412.50 | 1.85x |\n")
+        self.assertIn('<table class="md"><tr><th>Price</th><th>Multiple</th></tr>'
+                      "<tr><td>$412.50</td><td>1.85x</td></tr></table>", html)
+        self.assertNotIn("| ---", html)
+        self.assertIn("<p>Before.</p>", html)
+
+    def test_a_malformed_table_stays_text(self):
+        ragged = R.markdown("| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n\n| c |\n| - |\n| 4 |\n")
+        self.assertEqual(ragged.count("<table"), 1)
+        self.assertIn('<table class="md"><tr><th>c</th></tr><tr><td>4</td></tr></table>', ragged)
+        self.assertIn("<p>| a | b | | --- | --- | | 1 | 2 | 3 |</p>", ragged)
+        headless = R.markdown("| a | b |\n| 1 | 2 |\n")
+        self.assertNotIn("<table", headless)
+        self.assertIn("<p>| a | b | | 1 | 2 |</p>", headless)
+
+    def test_an_escaped_pipe_stays_in_its_cell(self):
+        html = R.markdown("| a \\| b | c |\n|---|---|\n| 1 | 2 |\n")
+        self.assertIn("<th>a | b</th><th>c</th>", html)
+        self.assertIn("<td>1</td><td>2</td>", html)
+
+    def test_table_cells_are_respelt_like_prose(self):
+        log = []
+        text = R.reformat_prose("| Line | Revenue |\n|---|---|\n| Cards | 47,636 thousand "
+                                "dollars |\n", "a seat's table", log)
+        self.assertIn("<td>Cards</td><td>$47.6M</td>", R.markdown(text))
+        self.assertEqual([row["replacement"] for row in log], ["$47.6M"])
+
+    def test_the_jpm_page_prints_every_seat_table_as_a_table(self):
+        page = _jpm_page(self)
+        self.assertEqual(page.count('<table class="md">'), JPM_SEAT_TABLES)
+        self.assertEqual(_section(page, "synthesis").count('<table class="md">'), 1)
+        self.assertIsNone(re.search(r"<p>[^<]*\|\s*-{3,}", page))
+
+    def test_million_and_billion_units_read_in_the_market_form(self):
+        self.assertEqual(R.format_number("25511", "USD_million"), "$25.5B")
+        self.assertEqual(R.format_number("2515", "USD_million"), "$2.52B")
+        self.assertEqual(R.format_number("94", "USD_billion"), "$94.0B")
+        self.assertEqual(R.format_number("640", "USD_millions"), "$640M")
+        self.assertNotIn("USD million", _jpm_page(self))
+
+    def test_a_count_reads_as_a_number(self):
+        self.assertEqual(R.format_number("318512", "count"), "318,512")
+
+    def test_percentage_points_read_one_decimal_points(self):
+        self.assertEqual(R.format_number("-5.8604126179", "percentage_points"), "-5.9 points")
+        self.assertEqual(R.format_number("2", "percentage_points"), "2.0 points")
+
+    def test_trading_days_not_bars(self):
+        self.assertEqual(R.format_number("209", "bars"), "209 trading days")
+
+    def test_a_whole_percentage_keeps_its_decimal(self):
+        self.assertEqual(R.format_number("11", "percent"), "11.0%")
+        self.assertEqual(R.format_number("0.2", "fraction"), "20.0%")
+        log = []
+        self.assertEqual(R.reformat_prose("11% at Wells Fargo, 10.6% at Bank of America",
+                                          "prose", log),
+                         "11.0% at Wells Fargo, 10.6% at Bank of America")
+        self.assertEqual(log, [{"location": "prose", "original": "11%",
+                                "replacement": "11.0%"}])
+
+    # --- Labels and machine text off the reading path -------------------------------------------
+
+    def test_no_fact_id_in_the_open_tiers_of_the_jpm_page(self):
+        page = _jpm_page(self)
+        with open(os.path.join(JPM_RUN, "pack", "pack.json"), "rb") as fh:
+            ids = {fact["id"] for fact in json.loads(fh.read().decode("utf-8"))["capture"]["tier1"]}
+        evidence = _section(page, "evidence")
+        opened = (_section(page, "decision") + _section(page, "synthesis")
+                  + _section(page, "detail") + evidence[:evidence.index("<details>")])
+        coded = set(re.findall(r"<code>([^<]*)</code>", opened))
+        self.assertEqual(coded & ids, set())
+
+    def test_no_raw_machine_text_on_the_jpm_page(self):
+        page = _jpm_page(self)
+        # The exact before-and-after text of the challenge diff stays behind its second fold by
+        # design; everything else on the page is read for machine text.
+        kept = _between(page, "<summary>The exact text before and after", "</details>")
+        text = _visible_text(re.sub(r"<(style|script)>.*?</\1>", "", page.replace(kept, ""),
+                                    flags=re.S))
+        for machine in ('{"', '[{"', "USD_million", "USD million", "council/report",
+                        "Deterministic transform", "The raw findings", "spec U5.5", "AC8"):
+            self.assertNotIn(machine, text, machine)
+        foot = _between(page, '<div class="foot">', "</div>")
+        self.assertNotIn("hash", foot)
+        self.assertNotIn("contract version", foot)
+        handoff = _between(page, '<h3 id="atlas">', "</details>").lower()
+        self.assertIn(R.RATING_WORDS["hold"].lower(), handoff)
+        self.assertIn("publication hash", handoff)
+        self.assertIn("contract version", handoff)
+
+    def test_no_writing_score_line_and_the_ac6_alarm_still_renders(self):
+        self.assertNotIn("Writing score", _jpm_page(self))
+        run = R.load_run(FIXTURE)
+        rules = prose.load_rules()
+        score = prose.measure("It is not cheap, it is a trap.", rules)
+        run["prose_scores"] = {
+            "advisor_bear": {"seat": "advisor_bear", "judged": False, "warned": False,
+                             "score": score},
+            "chair_resolve": {"seat": "chair_resolve", "judged": True, "warned": True,
+                              "over_threshold": True, "score": score}}
+        body = R.build_page(run, NO_CLOCK_MOMENT).body()
+        self.assertNotIn("Writing score", body)
+        self.assertIn("did not meet the council", body)
+        self.assertIn(E(prose.describe(score)), body)
+
+    # --- The chart and the tape -----------------------------------------------------------------
+
+    def test_the_chart_drawing_is_unchanged_but_its_level_words(self):
+        page = _jpm_page(self)
+        with open(os.path.join(JPM_RUN, "report.html"), "rb") as fh:
+            recorded = fh.read().decode("utf-8")
+        words = re.compile(r'(<text class="ch-leveltxt"[^>]*>)[^<]*(</text>)')
+
+        def drawing(html):
+            return words.sub(r"\1\2", _between(html, "<svg viewBox", "</svg>"))
+        self.assertEqual(drawing(recorded), drawing(page))
+        self.assertEqual([html_lib.unescape(text) for text in re.findall(
+            r'<text class="ch-leveltxt"[^>]*>([^<]*)</text>', page)], list(JPM_LEVEL_WORDS))
+        self.assertIn("A price level the chairman named", _between(page, CHART_OPEN, "</figure>"))
+
+    def test_the_caption_is_one_short_sentence(self):
+        caption = _visible_text(_between(_jpm_page(self), "<figcaption>", "</figcaption>"))
+        self.assertLessEqual(len(caption.split()), CAPTION_MAX_WORDS)
+        self.assertEqual(len(re.findall(r"[.;!?](?:\s|$)", caption)), 2, caption)
+        for part in ("the broker", "23 Sep 2026", "SPY", "S&P 500"):
+            self.assertIn(part, caption)
+        self.assertEqual(_visible_text(_between(_taped_html(), "<figcaption>", "</figcaption>")),
+                         "Daily closes of SPWK to 28 Aug 2026; SPY is the S&P 500 fund, rebased.")
+
+    def test_the_provenance_text_is_folded_under_the_chart_once(self):
+        page = _jpm_page(self)
+        with open(os.path.join(JPM_RUN, "pack", "pack.json"), "rb") as fh:
+            source = json.loads(fh.read().decode("utf-8"))["capture"]["price_series"]["source"]
+        sentence = E("Daily closes from %s, as of" % source)
+        self.assertEqual(page.count(sentence), 1)
+        fold = _between(page, "</figure>", "</details>")
+        self.assertIn("<details><summary>Where the price history comes from", fold)
+        self.assertIn(sentence, fold)
+
+    def test_the_tape_reads_months_and_names_its_close(self):
+        table = _between(_jpm_page(self), TABLE_OPEN, "</table>")
+        text = _visible_text(table)
+        self.assertIn("at the 23 Sep close", text)
+        for words in ("Return over 1 month", "Return over 3 months", "Return over 6 months",
+                      "Return over 1 year", "209 of the last 252 trading days", "-5.9 points"):
+            self.assertIn(words, text)
+        self.assertNotIn("bars", text)
+        self.assertNotIn("21 trading days", text)
+
+    # --- Owner's finding 2: a hover note on every term ------------------------------------------
+
+    def test_every_tape_row_key_number_and_metric_name_carries_a_hover_note(self):
+        page = _jpm_page(self)
+        rows = re.findall(r'<tr class="taperow"><td>(.*?)</td>', page)
+        self.assertEqual(len(rows), 15)
+        strip = _between(page, '<dl class="keydata">', "</dl>")
+        names = re.findall(r"<dt>(.*?)</dt>", strip)
+        metrics = re.findall(r"<tr><td>(.*?)</td>", _between(page, "<th>metric</th>", "</table>"))
+        self.assertEqual(len(metrics), 4)
+        for cell in rows + names + metrics:
+            self.assertRegex(cell, r'<span class="gl" tabindex="0" data-note="[^"]+"', cell)
+        slope = [cell for cell in rows if "Slope of the 200-day average" in cell][0]
+        self.assertIn("60 trading days ago", slope)
+        self.assertIn(".gl:focus::before", R.CSS)
+        self.assertIn(".gl:hover::before", R.CSS)
+
+    # --- The advisors' letters, the evidence check, the challenge -------------------------------
+
+    def test_the_advisors_letters_are_keyed_to_their_names(self):
+        line = ("Response A is the Bull, B the Base Rate Skeptic, C the Market Structure "
+                "Analyst, D the Bear, E the Risk Analyst.")
+        page = _jpm_page(self)
+        self.assertIn(line, _visible_text(_section(page, "decision")))
+        self.assertIn(line, _visible_text(_section(page, "review")))
+        self.assertNotIn("Response A is", HTML)
+
+    def test_a_fact_change_reads_its_old_and_new_values_and_a_frame_change_reads_as_words(self):
+        changes = _between(_jpm_page(self), "moved after the evidence check", "</details>")
+        text = _visible_text(changes)
+        self.assertIn("Quarterly dividend declared 10 March 2026", text)
+        self.assertIn("$0.85", text)
+        self.assertIn("CET1 above regulatory minimum, before management's own buffer", text)
+        self.assertIn("$23.9B", text)
+        self.assertIn("The business description (how it earns) — revised after the "
+                      "evidence check", text)
+        self.assertNotIn("[{", text)
+        self.assertNotIn("distributable_capital_excess_cet1_q", text)
+
+    def test_the_challenge_diff_names_fields_in_words_and_tables_the_rating_and_key_numbers(self):
+        fold = _visible_text(_between(_jpm_page(self), "fields changed between the draft",
+                                      "</details></div></details>"))
+        for words in ("the chairman's rationale", "how far off the price is",
+                      "Rating Buy Hold", "Buy level, 1.85x June tangible book — $412.50",
+                      "Cap on the buy level, 1.95x June tangible book $431.10 —"):
+            self.assertIn(words, fold)
+        self.assertNotIn("conviction_rationale", fold.split("The exact text before")[0])
+
+    # --- The foot, About this sitting, the order of the page ------------------------------------
+
+    def test_the_footer_carries_no_hash_or_path(self):
+        foot = _visible_text(_between(HTML, '<div class="foot">', "</div>"))
+        self.assertNotIn("hash", foot)
+        self.assertNotIn("council/report", foot)
+        self.assertNotIn(VERDICT_SHA, foot)
+        self.assertIn("Not investment advice.", foot)
+        self.assertIn("Published 30 Aug 2026, 10:26 UTC.", foot)
+        self.assertIn('<meta name="generator" content="council/report/render_report.py">', HTML)
+        self.assertIn(VERDICT_SHA, _between(HTML, '<h3 id="atlas">', "</details>"))
+
+    def test_about_this_sitting_reads_plainly(self):
+        about = _visible_text(_between(_jpm_page(self), '<h3 id="stamps">', '<div class="foot">'))
+        self.assertIn("41 minutes sitting, plus 19 minutes gathering the evidence", about)
+        self.assertIn("Estimated cost, at list prices", about)
+        self.assertIn("Council (Claude)", about)
+        self.assertIn("Outside model (OpenAI)", about)
+        self.assertIn("they are not a bill", about)
+        self.assertIn("The Base Rate Skeptic", about)
+        self.assertIn("codex-cli 0.156.0", about)
+        for gone in ("spec U5.5", "AC8", "Input tokens", "advisor_base_rate"):
+            self.assertNotIn(gone, about)
+
+    def test_the_page_order_and_numbered_sections(self):
+        page = _jpm_page(self)
+        found = re.findall(r'<h2 id="([a-z]+)" data-num="(\d)"', page)
+        self.assertEqual(tuple(found), JPM_SECTIONS)
+        self.assertIn('<span class="sb-sec" id="sb-section"></span>', page)
+        self.assertIn("<summary>The bear case &mdash; hold; buy at about $396</summary>",
+                      _section(page, "advisors"))
+        self.assertIn("What all five missed", _without_folds(_section(page, "review")))
+        self.assertIn("The outside challenge round", _section(page, "challenge"))
+        for folded in ("question", "atlas", "stamps"):
+            self.assertIn('<h3 id="%s">' % folded, _section(page, "appendices"))
+
+    def test_cards_share_the_section_width(self):
+        # Unit READ-D removed the reading-measure cap on cards and prose outright, so the rule
+        # that undid it on the report went with it; nothing may cap them again.
+        self.assertNotRegex(R.CSS, r"\.(?:wrap|report)>[^{]*\{[^}]*max-width:var\(--measure\)")
+        self.assertIn(".cols{column-width", R.CSS)
+        self.assertIn('<div class="card cols"><span class="lead">Why this rating',
+                      _section(_jpm_page(self), "decision"))
+
+    def test_the_cycle_series_daily_rows_are_folded(self):
+        detail = _section(_jpm_page(self), "detail")
+        opened = _without_folds(detail)
+        self.assertIn("Fed funds rate", opened)
+        self.assertIn("<th>Series</th>", opened)
+        self.assertNotIn("t10y2y", opened)
+        self.assertNotIn("2026-09-08", opened)
+        self.assertIn("2026-09-08", detail)
+
+    def test_the_price_read_and_its_arithmetic(self):
+        page = _jpm_page(self)
+        read = _visible_text(_section(page, "decision"))
+        self.assertIn("The price read: Fair, at the top of the range", read)
+        self.assertNotIn("reads the price as fair", read)
+        self.assertNotIn("Price to tangible book equals", read)
+        self.assertIn("Price to tangible book equals", _visible_text(_section(page, "synthesis")))
+        self.assertNotIn("The thesis", read)
+
+    # --- Audit round 1 of READ-A: regression tests, each failed against the pre-fix code ------
+
+    @staticmethod
+    def _cost_rows(run):
+        page = R.Page()
+        R._cost_estimate(page, run)
+        return _visible_text("".join(page.parts))
+
+    def test_an_uncounted_call_is_never_priced_as_zero(self):
+        run = {"verdict": {"provenance": {
+            "seat_cost": {"per_seat": {"frame": {"tokens": 1000000}}},
+            "evidence": {"capture": {"tokens": 1000000, "estimated": False,
+                                     "evidence_challenge_tokens": 200000}}}},
+            "challenge_result": {"usage_tokens": None}}
+        text = self._cost_rows(run)
+        self.assertIn("not counted: the outside challenge", text)
+        self.assertIn("at least $1.00", text)
+        self.assertIn("about $10.00", text)
+        run["verdict"]["provenance"]["seat_cost"] = {}
+        text = self._cost_rows(run)
+        self.assertIn("at least $5.00", text)
+        self.assertIn("not counted: the advisors' and chairman's sessions", text)
+
+    def test_a_small_cost_keeps_its_cents(self):
+        run = {"verdict": {"provenance": {
+            "seat_cost": {"per_seat": {"frame": {"tokens": 90000}}},
+            "evidence": {"capture": {"tokens": 0, "evidence_challenge_tokens": 1000}}}},
+            "challenge_result": {"usage_tokens": 1000}}
+        text = self._cost_rows(run)
+        self.assertIn("about $0.45", text)
+        self.assertIn("about $0.01", text)
+        self.assertNotIn("about $0 ", text)
+
+    def test_a_key_number_moved_within_its_rounding_is_listed(self):
+        def change(value):
+            return json.dumps([{"name": "Net income", "as_of": "2026-06-30", "value": value,
+                                "unit": "USD_million"},
+                               {"name": "Last price", "as_of": "2026-09-01", "value": "100",
+                                "unit": "USD_per_share"},
+                               {"name": "Last price", "as_of": "2026-09-02", "value": "101",
+                                "unit": "USD_per_share"}])
+        before = json.loads(change("1001"))
+        after = json.loads(change("1002"))
+        after[2]["value"] = "102"
+        rows = R._moved_numbers([{"field": "key_numbers", "before": json.dumps(before),
+                                  "after": json.dumps(after)}])
+        self.assertEqual(rows[0][0], "Net income")
+        self.assertIn("moved within the rounding", rows[0][2])
+        self.assertEqual([row[0] for row in rows[1:]], ["Last price (2 Sep 2026)"])
+        self.assertEqual(rows[1][1:], ("$101.00", "$102.00"))
+
+    def test_a_level_two_key_numbers_share_takes_no_name(self):
+        from council.report import chart
+        verdict = {"atlas_envelope": {"key_numbers": [
+            {"name": "Last price", "value": "100", "unit": "USD_per_share"},
+            {"name": "Buy level, 2.6x book", "value": "100.00", "unit": "USD_per_share"},
+            {"name": "Level to add more", "value": "90", "unit": "USD_per_share"}]}}
+        self.assertIsNone(chart._level_name(verdict, decimal.Decimal("100"), "USD_per_share"))
+        self.assertEqual(chart._level_name(verdict, decimal.Decimal("90"), "USD_per_share"),
+                         "Level to add more")
+
+    def test_what_all_five_missed_written_as_a_label_is_shown_open(self):
+        for text in ("Cross.\n\n**What all five missed:** nobody priced the gap.\n\nWriting: none.",
+                     "Cross.\n\nWhat all five missed: nobody priced the gap.\n\nWriting: none."):
+            part = R._missed_part(text)
+            self.assertIn("nobody priced the gap.", part)
+            self.assertNotIn("Writing", part)
+            self.assertNotIn("Cross", part)
+        with open(os.path.join(FIXTURE, "rpc", "008-answer-reviewer.json"),
+                  encoding="utf-8") as fh:
+            review = json.load(fh)["markdown"]
+        self.assertIn("risk-free rate reading", R._missed_part(review))
+
+    # --- Round 3 of READ-A: the three rules replaced whole (r2-1, r2-2, r2-3), each failed first -
+
+    def test_a_repeated_name_and_date_is_paired_in_order(self):
+        def row(value):
+            return {"name": "Last price", "as_of": "2026-09-01", "value": value,
+                    "unit": "USD_per_share"}
+        rows = R._moved_numbers([{"field": "key_numbers",
+                                  "before": json.dumps([row("100"), row("200")]),
+                                  "after": json.dumps([row("101"), row("200")])}])
+        self.assertEqual(rows, [("Last price (1 Sep 2026)", "$100.00", "$101.00")])
+        rows = R._moved_numbers([{"field": "key_numbers",
+                                  "before": json.dumps([row("100"), row("200")]),
+                                  "after": json.dumps([row("100")])}])
+        self.assertEqual(rows, [("Last price (1 Sep 2026)", "$200.00", "\u2014")])
+
+    def test_an_uncounted_part_never_reads_under_a_cent(self):
+        for tokens, shown in ((1000, "at least $0.00"), (3000, "at least $0.01")):
+            run = {"verdict": {"provenance": {
+                "seat_cost": {"per_seat": {"frame": {"tokens": tokens}}},
+                "evidence": {"capture": {"tokens": None, "evidence_challenge_tokens": 0}}}},
+                "challenge_result": {"usage_tokens": 1000000}}
+            text = self._cost_rows(run)
+            self.assertIn(shown, text)
+            self.assertIn("not counted: the evidence gathering", text)
+            self.assertNotIn("under $0.01", text)
+        run["verdict"]["provenance"]["seat_cost"] = {}
+        self.assertIn("at least $0.00", self._cost_rows(run))
+
+    def test_what_all_five_missed_as_a_label_paragraph_takes_the_next_paragraph(self):
+        for label in ("**What all five missed:**", "What all five missed:",
+                      "**What all five missed**"):
+            part = R._missed_part("Cross.\n\n%s\n\nNobody priced the gap.\n\nWriting: none."
+                                  % label)
+            self.assertIn(label, part)
+            self.assertIn("Nobody priced the gap.", part)
+            self.assertNotIn("Writing", part)
+        part = R._missed_part("Cross.\n\n**What all five missed:**\n\n## Response A\n\nText.")
+        self.assertIn("What all five missed", part)
+        self.assertIn("no text follows", part)
+        self.assertNotIn("Response A", part)
+
+    # --- Round 5 of READ-A, Step 0: the cost estimate replaced whole (r4-2), each failed first --
+
+    def test_the_jpm_council_row_prices_the_estimated_gathering_apart(self):
+        about = _visible_text(_between(_jpm_page(self), '<h3 id="stamps">', "<h4>"))
+        council = _between(about, "Council (Claude)", "Outside model")
+        self.assertIn("about $12.40, of which $4.05 rests on an estimate", council)
+        self.assertIn("1,650,000 counted; 810,000 estimated", council)
+        self.assertNotIn("2,460,000", about)
+        outside = _between(about, "Outside model (OpenAI)", "never a bill")
+        self.assertIn("about $0.92", outside)
+        self.assertIn("184,000 counted", outside)
+        self.assertNotIn("estimate", outside.split("the outside model's input rate")[0])
+
+    def test_an_uncounted_part_prices_only_the_counted_bin(self):
+        run = {"verdict": {"provenance": {
+            "seat_cost": {"per_seat": {"frame": {"tokens": 1000000},
+                                       "reviewer": {"tokens": None}}},
+            "evidence": {"capture": {"tokens": 2000000, "estimated": True,
+                                     "evidence_challenge_tokens": 0}}}},
+            "challenge_result": {"usage_tokens": 0}}
+        text = self._cost_rows(run)
+        self.assertIn("at least $5.00", text)
+        self.assertIn("1,000,000 counted; 2,000,000 estimated", text)
+        self.assertIn("not counted: the advisors' and chairman's sessions", text)
+        self.assertNotIn("at least $15.00", text)
+
+    def test_a_fully_counted_row_reads_about(self):
+        run = {"verdict": {"provenance": {
+            "seat_cost": {"per_seat": {"frame": {"tokens": 1000000}}},
+            "evidence": {"capture": {"tokens": 1000000, "estimated": False,
+                                     "evidence_challenge_tokens": 1000}}}},
+            "challenge_result": {"usage_tokens": 0}}
+        text = self._cost_rows(run)
+        self.assertIn("about $10.00", text)
+        self.assertIn("2,000,000 counted", text)
+        self.assertIn("under $0.01", text)
+        self.assertIn("1,000 counted", text)
+        self.assertNotIn("rests on an estimate", text)
+        self.assertNotIn("estimated", text.split("never a bill")[0].replace(
+            "Estimated cost", ""))
+
+    def test_an_estimated_figure_is_never_summed_into_a_counted_one(self):
+        for flag in ({"estimated": True}, {}):
+            capture = {"tokens": 2000000, "evidence_challenge_tokens": 1000000}
+            capture.update(flag)
+            run = {"verdict": {"provenance": {
+                "seat_cost": {"per_seat": {"frame": {"tokens": 1000000}}},
+                "evidence": {"capture": capture}}},
+                "challenge_result": {"usage_tokens": 1000000}}
+            text = self._cost_rows(run)
+            self.assertIn("1,000,000 counted; 2,000,000 estimated", text)
+            self.assertIn("about $15.00, of which $10.00 rests on an estimate", text)
+            self.assertNotIn("3,000,000", text)
+            self.assertNotIn("tokens counted", text)
+            self.assertIn("2,000,000 counted", text.split("Outside model (OpenAI)")[1])
+
+    # --- The records ---------------------------------------------------------------------------
+
+    def test_no_recorded_page_is_rewritten(self):
+        runs = os.path.join(ROOT, "council", "runs")
+        if not os.path.isdir(runs):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        for relative, digest in RECORDED_PAGES:
+            with open(os.path.join(runs, relative), "rb") as fh:
+                self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), digest, relative)
+        on_disk = sorted(os.path.relpath(path, runs) for path in
+                         [os.path.join(base, name) for base, _dirs, names in os.walk(runs)
+                          for name in names]
+                         if os.path.basename(path) == "report.html"
+                         or os.path.basename(path).startswith("EVIDENCE-FULL"))
+        self.assertEqual(on_disk, sorted(relative for relative, _digest in RECORDED_PAGES))
+
+    def test_a_render_is_deterministic(self):
+        self.assertEqual(HTML, _render(FIXTURE))
+        page = _jpm_page(self)
+        self.assertEqual(page, _JPM_PAGE[1])
+        with open(os.path.join(JPM_RUN, "report.html"), "rb") as fh:
+            _same_decision(self, fh.read().decode("utf-8"), page, "council-jpm-2026-09-24")
+
+
+
+# UPGRADE-2 READ-D THE LOOK AND FEEL (owner rulings AC42, AC43): the stylesheet and the page frame
+# change; no word, figure, note, fold default or line of the chart drawing moves. The constants
+# below were measured on the base render (main after READ-B2) of a scratch copy of the JPM sitting
+# and of `render_page` of its approved document. READ-B1 (rebased onto READ-D) re-measured the
+# report page's fingerprint only: its business sections print as tables, so the page's words move
+# by that unit's design; the value equals the READ-B1 head's own render before READ-D, so READ-D's
+# look moves no word on top of it (was 6a268617...ab35 on main after READ-B2).
+JPM_REPORT_WORDS_AND_NOTES = "ba0599ef8e05992db0dc2e4da3ac366ad2ed55d22823bc6778f002ebbb7f4ca6"
+JPM_APPROVAL_WORDS_AND_NOTES = "feea118bfd0c806209d981647aabed024c830d8a05b9d51d9be4c22481e098fb"
+JPM_CHART_DRAWING = "165a3e6c8166c7dbb8efdc69c1a6efa639a52586b09bcb02f85fc23cd5124f86"
+JPM_REPORT_BASE_BYTES = 615393
+JPM_APPROVAL_BASE_BYTES = 333194
+JPM_REPORT_TERMS = 31
+JPM_APPROVAL_TERMS = 54
+# The chart's colours are its own settings (READ-D bracket 1), fixed at the values the page's
+# palette gave them before this unit, in each of the three sets: dark screen, light screen, print.
+CHART_COLOURS = {
+    "dark": {"ch-ink": "#E8E6E0", "ch-muted": "#94918A", "ch-hair": "rgba(255,255,255,0.13)",
+             "ch-axis": "rgba(255,255,255,0.09)", "ch-up": "#7F9468", "ch-down": "#A85C50",
+             "ch-avg": "#DD8B5A", "ch-level": "#D2603F", "ch-paper": "#161616"},
+    "light": {"ch-ink": "#1F1E1B", "ch-muted": "#615D55", "ch-hair": "rgba(0,0,0,0.17)",
+              "ch-axis": "rgba(0,0,0,0.14)", "ch-up": "#4B6837", "ch-down": "#8C3B2F",
+              "ch-avg": "#A8571B", "ch-level": "#992D14", "ch-paper": "#FAF8F3"},
+    "print": {"ch-ink": "#101010", "ch-muted": "#4A4A4A", "ch-hair": "#DEDEDE",
+              "ch-axis": "#C9C9C9", "ch-up": "#4B6837", "ch-down": "#8C3B2F",
+              "ch-avg": "#A8571B", "ch-level": "#992D14", "ch-paper": "#FFFFFF"},
+}
+NARROW_SCREEN = "@media (max-width:600px){"
+
+
+def _words_and_notes(page):
+    """A fingerprint of what a reader can read on a page: its visible text (script and style
+    cut, tags stripped, entities resolved, spaces collapsed) and every hover note in order."""
+    body = re.sub(r"<(script|style)>.*?</\1>", " ", page[page.index("<body>"):], flags=re.S)
+    notes = [html_lib.unescape(note) for note in
+             re.findall(r'<span class="gl" tabindex="0" data-note="([^"]*)"', page)]
+    return hashlib.sha256("\n".join([_visible_text(body)] + notes).encode("utf-8")).hexdigest()
+
+
+def _jpm_approval_page(test):
+    """`render_page` of the JPM sitting's approved evidence document, from the record."""
+    if not os.path.isdir(JPM_RUN):
+        test.skipTest("the runs on record are not in this copy of the repository")
+    with open(os.path.join(JPM_RUN, "evidence", "EVIDENCE-FULL.md"), "rb") as fh:
+        return _evidence_page().render_page(fh.read().decode("utf-8"))
+
+
+def _token_set(css, opening):
+    """One set of colour tokens: the block that `opening` starts, to its first closing brace."""
+    start = css.index(opening) + len(opening)
+    return css[start:css.index("}", start)]
+
+
+def _narrow_block(css):
+    """The narrow-screen rules, from the media line to the brace that closes it."""
+    start = css.index(NARROW_SCREEN) + len(NARROW_SCREEN)
+    depth, at = 1, start
+    while depth:
+        depth += {"{": 1, "}": -1}.get(css[at], 0)
+        at += 1
+    return css[start:at - 1]
+
+
+class TestLookAndFeel(unittest.TestCase):
+    """UPGRADE-2 READ-D. Against the base code the marker test, the note test, the phone test and
+    the chart-colour test failed for the reasons their names give. The other five are GUARDS: the
+    words, the notes, the chart drawing, the size and the light print are what the base already
+    had, pinned so the restyle cannot move them."""
+
+    def both_stylesheets(self):
+        return R.CSS + _evidence_page().PAGE_CSS
+
+    def test_no_marker_after_a_term(self):
+        css = self.both_stylesheets()
+        self.assertEqual(css.count('content:"?"'), 0)
+        self.assertNotIn(".gl::after", css)
+        self.assertNotIn(".gl:after", css)
+        # The dotted underline alone marks the term (owner ruling AC43).
+        rule = _between(css, ".gl{", "}")
+        self.assertIn("dotted", rule)
+
+    def test_every_term_keeps_its_note_on_both_pages(self):
+        # GUARD: the base already carried every note; the restyle may lose none.
+        for page, count in ((_jpm_page(self), JPM_REPORT_TERMS),
+                            (_jpm_approval_page(self), JPM_APPROVAL_TERMS)):
+            spans = re.findall(r'<span class="gl"[^>]*>', page)
+            self.assertEqual(len(spans), count)
+            for span in spans:
+                self.assertRegex(span, r'^<span class="gl" tabindex="0" data-note="[^"]+">$')
+        self.assertIn(".gl:hover::before,.gl:focus::before{display:block}", R.CSS)
+
+    def test_the_note_stays_on_the_screen(self):
+        # On a phone the note is a sheet pinned inside the screen's edges, whatever the term's
+        # place in the line; it can never widen the page. On a desktop it hangs under its term
+        # and is capped to the window.
+        pin = "pos" + "ition"
+        narrow = _narrow_block(R.CSS)
+        self.assertIn(".gl::before{", narrow)
+        note = _between(narrow, ".gl::before{", "}")
+        self.assertIn("%s:fixed" % pin, note)
+        self.assertIn("left:16px", note)
+        self.assertIn("right:16px", note)
+        self.assertIn("max-width:none", note)
+        desktop = _between(R.CSS, ".gl::before{", "}")
+        self.assertIn("max-width:min(360px,calc(100vw - 32px))", desktop)
+
+    def test_a_phone_screen_scrolls_tables_not_the_page(self):
+        narrow = _narrow_block(R.CSS)
+        self.assertIn("table{display:block;overflow-x:auto", narrow)
+        gutter = _between(narrow, ".wrap{", "}")
+        self.assertRegex(gutter, r"padding:\d+px 16px")
+
+    def test_the_look_changed_and_the_words_did_not(self):
+        # GUARD (criterion 2): one changed word, figure or note on either page moves this. Unit
+        # READ-C1 adds exactly one line to the JPM page - the muted note that its verdict, written
+        # before the chairman was asked for a one-line answer, carries none (owner ruling
+        # AC44(1)) - so that one line is cut before the fingerprint is taken.
+        note = '<div class="muted small">%s</div>' % E(R.ANSWER_LINE_BEFORE)
+        self.assertEqual(_jpm_page(self).count(note), 1)
+        self.assertEqual(_words_and_notes(_jpm_page(self).replace(note, "")),
+                         JPM_REPORT_WORDS_AND_NOTES)
+        self.assertEqual(_words_and_notes(_jpm_approval_page(self)),
+                         JPM_APPROVAL_WORDS_AND_NOTES)
+
+    def test_the_chart_drawing_is_the_base_drawing(self):
+        # GUARD (criterion 10): the SVG bytes inside the chart figure are the base render's.
+        chart = _chart(_jpm_page(self))
+        svg = chart[chart.index("<svg"):chart.index("</svg>") + len("</svg>")]
+        self.assertEqual(hashlib.sha256(svg.encode("utf-8")).hexdigest(), JPM_CHART_DRAWING)
+
+    def test_the_pages_are_no_larger_than_a_tenth_over_the_base(self):
+        # GUARD (criterion 7).
+        self.assertLessEqual(len(_jpm_page(self).encode("utf-8")),
+                             JPM_REPORT_BASE_BYTES * 11 // 10)
+        self.assertLessEqual(len(_jpm_approval_page(self).encode("utf-8")),
+                             JPM_APPROVAL_BASE_BYTES * 11 // 10)
+
+    def test_the_approval_page_prints_light(self):
+        # GUARD (criterion 5): the approval page prints as the report does - white paper, dark
+        # ink, A4 - and the chart's print colours are in the print set.
+        page = _jpm_approval_page(self)
+        style = _between(page, "<style>", "</style>")
+        self.assertIn("@page{size:A4", style)
+        printed = style[style.index("@media print{"):]
+        self.assertIn("--base:#FFFFFF", printed)
+        self.assertIn("--text:#101010", printed)
+        self.assertIn("break-inside:avoid", printed)
+        self.assertNotIn("prefers-color-scheme", style)
+        self.assertIn('<html lang="en" data-theme="dark">', page[:120])
+
+    def test_the_chart_colours_are_its_own_settings(self):
+        # Bracket 1: every chart rule takes only the chart's own tokens, and those tokens carry
+        # the values the page's palette gave the chart before this unit, in all three sets.
+        css = R.CSS
+        chart = _chart(_jpm_page(self))
+        for name in sorted(set(re.findall(r'class="(ch-[a-z0-9]+)"', chart))):
+            rule = re.search(r"\.%s\{([^}]*)\}" % re.escape(name), css).group(1)
+            tokens = re.findall(r"var\(--([a-z-]+)\)", rule)
+            self.assertTrue(tokens or "fill:none" in rule, name)
+            for token in tokens:
+                self.assertTrue(token.startswith("ch-"), (name, token))
+        sets = {"dark": _token_set(css, ":root{"),
+                "light": _token_set(css, ':root[data-theme="light"]{'),
+                "print": _token_set(css[css.index("@media print{"):], "{")}
+        for which, colours in CHART_COLOURS.items():
+            for token, value in colours.items():
+                self.assertIn("--%s:%s;" % (token, value), sets[which], (which, token))
+
+
+# ---------------------------------------------------------------------------------------------
+# UPGRADE-2 READ-B1, THE BUSINESS SECTIONS AS TABLES (owner rulings AC40(2c), AC16(4), AC41; the
+# seed's rulings 2 to 7): on the report page the financial institution's business sections read
+# as small tables of figures in the market form, the same rows the full evidence document prints.
+# Each test FAILED against the base.
+# ---------------------------------------------------------------------------------------------
+
+def _card_rows(fragment, lead):
+    """The first table after the card lead that starts with `lead`, as rows of each cell's
+    visible text (header row first)."""
+    marker = '<span class="lead">%s' % R.esc(lead)
+    if marker not in fragment:
+        raise AssertionError("no card lead starts with %r" % lead)
+    start = fragment.index(marker)
+    table = fragment[fragment.index("<table", start):fragment.index("</table>", start)]
+    return [[_visible_text(cell) for cell in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
+            for row in re.findall(r"<tr>(.*?)</tr>", table, re.S)]
+
+
+def _md_rows(text, lead):
+    """The Markdown table after the first line starting with `lead`, each cell unescaped to the
+    words a reader sees (the delimiter row left out)."""
+    lines = text.splitlines()
+    at = [index for index, line in enumerate(lines) if line.startswith(lead)][0]
+    rows = []
+    for line in lines[at + 1:]:
+        if line.startswith("|"):
+            cells = [html_lib.unescape(re.sub(r"\\(.)", r"\1", cell.strip()))
+                     for cell in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+            if not all(set(cell) <= set("-: ") for cell in cells):
+                rows.append(cells)
+        elif rows or line.strip():
+            break
+    return rows
+
+
+_JPM_DOCUMENT = []
+
+
+def _jpm_full_document():
+    if not _JPM_DOCUMENT:
+        _JPM_DOCUMENT.append(_full_document(JPM_RUN))
+    return _JPM_DOCUMENT[0]
+
+
+class TestBusinessTables(unittest.TestCase):
+    """The JPM report's business sections as tables (fresh render of a scratch copy)."""
+
+    def detail(self):
+        return _section(_jpm_page(self), "detail")
+
+    def pack(self):
+        if not os.path.isdir(JPM_RUN):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        with open(os.path.join(JPM_RUN, "pack", "pack.json"), "rb") as fh:
+            return json.loads(fh.read().decode("utf-8"))
+
+    def test_the_earnings_table_reads_revenue_share_and_change(self):
+        capture = self.pack()["capture"]
+        facts = {fact["id"]: fact for fact in capture["tier1"]}
+        total = decimal.Decimal(facts["segment_revenue_firmwide_managed_q"]["value"])
+        rows = _card_rows(self.detail(), "How it earns")
+        self.assertEqual(rows[0], ["Business", "Kind of earnings", "Revenue, latest quarter",
+                                   "Share of the firm (calculated)",
+                                   "Change on a year ago (calculated)"])
+        lines = capture["business_frame"]["JPM"]["how_it_earns"]
+        for line, row in zip(lines, rows[1:]):
+            own, prior = (decimal.Decimal(facts[fid]["value"]) for fid in line["facts"][:2])
+            share = (own / total * 100).quantize(decimal.Decimal("0.1"),
+                                                  rounding=decimal.ROUND_HALF_UP)
+            change = (own / prior * 100 - 100).quantize(decimal.Decimal("0.1"),
+                                                         rounding=decimal.ROUND_HALF_UP)
+            self.assertEqual(row, [re.split(r"[:;]", line["line"])[0],
+                                   pack_brief.FI_NATURE_WORDS[line["nature"]],
+                                   R.format_number(facts[line["facts"][0]]["value"], "USD_million"),
+                                   "%s%%" % share, "%s%s%%" % ("+" if change > 0 else "", change)])
+        self.assertEqual(len(rows), 1 + len(lines))
+        self.assertNotIn("20272", " ".join(" ".join(row) for row in rows))
+
+    def test_the_guidance_table_reads_first_revisions_delivered_and_the_difference(self):
+        capture = self.pack()["capture"]
+        row = capture["business_frame"]["JPM"]["management"]["guidance_vs_delivery"][0]
+        rows = _card_rows(self.detail(), "Guidance for %s" % row["period"])
+        self.assertEqual(rows[0], ["Metric", "First guide"]
+                         + ["Revised %s" % R.format_date(item["date"]) for item in row["revisions"]]
+                         + ["Delivered", "Delivered minus first guide (calculated)"])
+        self.assertEqual(len(rows), 1 + len(row["guided"]))
+        ids = [fact["id"] for fact in capture["tier1"]]
+        for cells in rows[1:]:
+            self.assertNotIn("not reported yet", cells)
+            self.assertFalse([fid for fid in ids if fid in " ".join(cells)])
+
+    def test_capital_stress_and_credit_read_as_tables(self):
+        detail = self.detail()
+        capital = _card_rows(detail, "Capital beside its requirement")
+        self.assertEqual(capital[0], ["Capital ratio", "Level", "Its requirement", "Required",
+                                      "Cushion (calculated)"])
+        self.assertEqual([row[-1] for row in capital[1:]], ["2.7 points", "2.7 points"])
+        stress = _card_rows(detail, pack_brief.FI_STRESS_HEADING)
+        self.assertEqual(stress[0], ["Figure", "Value", "As of"])
+        credit = _card_rows(detail, "The risk-cost line: credit losses")
+        self.assertEqual(credit[0], ["Figure", "Latest", "A year ago", "As of"])
+
+    def test_the_cycle_reads_first_and_latest_in_plain_names(self):
+        opened = _without_folds(self.detail())
+        start = opened.index("<th>Series</th>")
+        table = opened[opened.rindex("<table", 0, start):opened.index("</table>", start)]
+        rows = [[_visible_text(cell) for cell in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
+                for row in re.findall(r"<tr>(.*?)</tr>", table, re.S)]
+        self.assertEqual(rows[0], ["Series", "First reading", "Latest reading", "Change"])
+        self.assertEqual(rows[2][0], "Fed funds rate")
+        self.assertTrue(rows[2][3].startswith("+") and rows[2][3].endswith(" points"), rows[2])
+
+    def test_the_report_and_the_full_document_print_the_same_rows(self):
+        detail, document = self.detail(), _jpm_full_document()
+        for lead, md_lead in (("How it earns", "**How it earns.**"),
+                              ("Guidance for FY2025", "**Guidance for FY2025"),
+                              ("Capital beside its requirement",
+                               "**Capital beside its requirement.**"),
+                              (pack_brief.FI_STRESS_HEADING,
+                               "**%s." % pack_brief.FI_STRESS_HEADING),
+                              ("The risk-cost line", "**The risk-cost line")):
+            with self.subTest(table=lead):
+                self.assertEqual(_card_rows(detail, lead), _md_rows(document, md_lead))
+
+
+# UPGRADE-2 READ-C1 (owner rulings AC44(1), AC44(2)): the chairman's one-line answer leads the
+# answer section, and the three lists he writes read as one scorecard grouped by measure. A
+# verdict older than the contract keeps its three tables and says, in one muted line, that it
+# carries no one-line answer - the page never writes one for him.
+ANSWER_LABEL = '<span class="lead">The answer to your question</span>'
+
+
+def _measured(doc):
+    """The fixture verdict with measures named: the invalidation level tests the share price, the
+    falsifier and the event trigger test full-year revenue; the price trigger names none."""
+    tripwires = doc["tripwires"]
+    tripwires["invalidation_levels"][0]["measure"] = "Share price"
+    for trigger in tripwires["reopening_triggers"]:
+        if trigger["kind"] == "event":
+            trigger["measure"] = "Full-year revenue"
+    tripwires["falsifiers"][0]["measure"] = "Full-year revenue"
+
+
+def _measured_verdict():
+    doc = _fixture_verdict()
+    _measured(doc)
+    return doc
+
+
+def _older(doc):
+    """The fixture verdict as a 1.5.0 verdict: no answer line, no measure anywhere."""
+    doc["schema_version"] = "1.5.0"
+    doc.pop("answer_line", None)
+    for entries in doc["tripwires"].values():
+        for entry in entries:
+            entry.pop("measure", None)
+
+
+class TestAnswerAndScorecardOnThePage(unittest.TestCase):
+
+    def test_the_answer_line_leads_the_answer_section(self):
+        front = _front(HTML)
+        verdict = _fixture_verdict()
+        self.assertEqual(front.count(ANSWER_LABEL), 1)
+        # Above everything else in section 1: before "What decided it", the chart and the
+        # rationale.
+        for later in ('<span class="lead">What decided it</span>', TAPE_HEADING,
+                      "Why this rating, in the chairman"):
+            self.assertLess(front.index(ANSWER_LABEL), front.index(later), later)
+        self.assertLess(front.index('<h2 id="decision"'), front.index(ANSWER_LABEL))
+        card = front[front.index(ANSWER_LABEL):front.index('<span class="lead">What decided it')]
+        self.assertIn(E(verdict["answer_line"][:30]), card)
+        # Its traced figures carry no mark.
+        self.assertNotIn(E(trace.MARKER), card)
+        self.assertNotIn(E(R.ANSWER_LINE_BEFORE), HTML)
+
+    def test_an_untraced_figure_in_the_answer_line_is_marked_in_the_text(self):
+        def untraced(doc):
+            doc["answer_line"] = "Not cheap at 88.40; buy at 77.70 after the results."
+        front = _front(_render_changed(untraced))
+        card = front[front.index(ANSWER_LABEL):front.index('<span class="lead">What decided it')]
+        self.assertIn("77.70 %s" % E(trace.MARKER), card)
+        self.assertNotIn("88.40 %s" % E(trace.MARKER), card)
+        self.assertEqual(card.count(E(trace.MARKER)), 1)
+
+    def test_a_verdict_without_the_line_says_so_and_invents_nothing(self):
+        page = _render_changed(_older)
+        front = _front(page)
+        self.assertNotIn(ANSWER_LABEL, page)
+        self.assertEqual(front.count(E(R.ANSWER_LINE_BEFORE)), 1)
+        self.assertLess(front.index(E(R.ANSWER_LINE_BEFORE)),
+                        front.index('<span class="lead">What decided it'))
+        self.assertNotIn(E(_fixture_verdict()["answer_line"]), page)
+        # A verdict of the new contract whose line did not stand after the one re-ask.
+        def null(doc):
+            doc["answer_line"] = None
+        page = _render_changed(null)
+        self.assertNotIn(ANSWER_LABEL, page)
+        self.assertEqual(_front(page).count(E(R.ANSWER_LINE_MISSING)), 1)
+        self.assertNotIn(E(R.ANSWER_LINE_BEFORE), page)
+
+    def test_the_scorecard_merges_the_three_lists_by_measure(self):
+        page = _render_changed(_measured)
+        front = _front(page)
+        tripwires = _measured_verdict()["tripwires"]
+        heading = "<h3>The 4 Feb 2027 scorecard</h3>"
+        self.assertEqual(front.count(heading), 1)
+        card = _between(front, heading, "<h3>")
+        rows = re.findall(r"<tr>(.*?)</tr>", card, re.S)[1:]
+        self.assertEqual([_visible_text(re.findall(r"<td>(.*?)</td>", row, re.S)[0])
+                          for row in rows], ["Share price", "Full-year revenue"])
+        # Every measured entry is on its measure's row, with what happens there.
+        measured = [entry for entries in tripwires.values() for entry in entries
+                    if entry.get("measure")]
+        self.assertEqual(len(measured), 3)
+        for entry in measured:
+            text = entry.get("meaning") or entry.get("detail") or entry.get("statement")
+            row = next(row for row in rows if E(entry["measure"]) in row)
+            self.assertIn(E(text[:30]), row)
+        # The entry without a measure keeps its place below, in the old table.
+        below = _between(front, "<h3>What changes this rating</h3>", "<h3>")
+        unmeasured = [t for t in tripwires["reopening_triggers"] if not t.get("measure")]
+        self.assertEqual(len(unmeasured), 1)
+        self.assertIn(E(unmeasured[0]["detail"]), below)
+        self.assertNotIn(E(measured[0].get("statement") or "none"), below)
+        # The measured invalidation level left the downside ladder for the scorecard.
+        self.assertNotIn(E(tripwires["invalidation_levels"][0]["meaning"]), _detail(page))
+        self.assertNotIn(R.SCORECARD_CONFLICT_OPEN, card)
+        # The fixture itself names no measure, so its page keeps the three tables.
+        self.assertNotIn("scorecard</h3>", HTML)
+
+    def test_a_measure_given_two_numbers_is_flagged_on_its_row(self):
+        def conflict(doc):
+            _measured(doc)
+            levels = doc["tripwires"]["invalidation_levels"]
+            second = copy.deepcopy(levels[0])
+            second.update(level="72.00", measure="share price",
+                          meaning="A close under the lower level breaks the case.")
+            levels.append(second)
+        card = _between(_front(_render_changed(conflict)), "scorecard</h3>", "<h3>")
+        rows = re.findall(r"<tr>(.*?)</tr>", card, re.S)[1:]
+        share = next(row for row in rows if "Share price" in row)
+        self.assertIn(R.SCORECARD_CONFLICT_OPEN, share)
+        self.assertIn("84.50 and 72.00", _visible_text(share))
+        other = next(row for row in rows if "Full-year revenue" in row)
+        self.assertNotIn(R.SCORECARD_CONFLICT_OPEN, other)
+
+    def test_the_chairmans_price_steps_are_not_flagged_on_the_page(self):
+        # The architect's mechanism call (audit UPGRADE2-READ-C1 r1-6): a price trigger is a step
+        # of the one price measure, never a second number for it.
+        def steps(doc):
+            _measured(doc)
+            for trigger in doc["tripwires"]["reopening_triggers"]:
+                if trigger["kind"] == "price":
+                    trigger["measure"] = "share price"
+        card = _between(_front(_render_changed(steps)), "scorecard</h3>", "<h3>")
+        rows = re.findall(r"<tr>(.*?)</tr>", card, re.S)[1:]
+        share = next(row for row in rows if "Share price" in row)
+        self.assertIn("72.00", _visible_text(share))
+        self.assertNotIn(R.SCORECARD_CONFLICT_OPEN, share)
+
+    def test_a_verdict_older_than_the_contract_keeps_its_three_tables(self):
+        page = _render_changed(_older)
+        front = _front(page)
+        self.assertNotIn("scorecard</h3>", page)
+        table = _between(front, "<h3>What changes this rating</h3>", "<h3>")
+        tripwires = _fixture_verdict()["tripwires"]
+        for trigger in tripwires["reopening_triggers"]:
+            self.assertIn(E(trigger["detail"]), table)
+        for row in tripwires["falsifiers"]:
+            self.assertIn(E(row["statement"][:30]), table)
+        self.assertIn(E(tripwires["invalidation_levels"][0]["meaning"]), _detail(page))
+        # A measure a newer contract allows changes nothing on an older verdict's page.
+        def older_with_measure(doc):
+            _older(doc)
+            doc["tripwires"]["falsifiers"][0]["measure"] = "Full-year revenue"
+        # (The page prints the verdict's own hash, so the tiers are compared, not the bytes.)
+        changed = _render_changed(older_with_measure)
+        self.assertEqual(_front(changed), front)
+        self.assertEqual(_detail(changed), _detail(page))
+
+    def test_the_jpm_page_renders_without_the_line_and_keeps_its_decision(self):
+        page = _jpm_page(self)
+        front = _front(page)
+        self.assertNotIn(ANSWER_LABEL, page)
+        self.assertEqual(front.count(E(R.ANSWER_LINE_BEFORE)), 1)
+        self.assertNotIn("scorecard</h3>", page)
+        self.assertIn("<h3>What changes this rating</h3>", front)
+        with open(os.path.join(JPM_RUN, "report.html"), "rb") as fh:
+            _same_decision(self, fh.read().decode("utf-8"), page, "jpm")
+
+
+class TestInsiderEvidenceNotConsideredOnThePage(unittest.TestCase):
+    """Owner ruling AC47(3), unit INSIDER-DEPTH (architect ruling on the report page): where what
+    officers and directors own cannot be established, the page says once, in section 1 beneath
+    the rating box and before the reasoning, that the insider evidence was not considered; an
+    ordinary page is unchanged."""
+
+    STATEMENT = ("Insider information was not available and was not considered in the "
+                 "council's ruling: what the company's officers and directors own could not "
+                 "be established from the record.")
+
+    def render(self, mutate=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            return _render(_mutated_copy(tmp, mutate))
+
+    @staticmethod
+    def ownership_unknown(run_dir):
+        def change(doc):
+            doc["capture"]["gaps"].append({
+                "fact_class": "insider_ownership_pct",
+                "reason": "INVENTED FIXTURE - the proxy publishes no group figure",
+                "reason_kind": "absent_by_design",
+                "weakened_test": "INVENTED FIXTURE - what management owns"})
+        _rewrite_pack(run_dir, change)
+
+    def test_the_answer_section_says_once_that_insider_evidence_was_not_considered(self):
+        page = self.render(self.ownership_unknown)
+        shown = E(self.STATEMENT)
+        self.assertEqual(page.count(shown), 1)
+        box = page.index('<div class="ratingbox">')
+        answer = page.index('<h2 id="decision"')
+        reasoning = page.index('<h2 id="synthesis"')
+        self.assertLess(box, answer)
+        self.assertLess(answer, page.index(shown))
+        self.assertLess(page.index(shown), reasoning)
+        self.assertLess(page.index(shown), page.index(E(R.chair_fields.labels()["answer_line"])))
+        # The same run with nothing unknown: no statement anywhere on the page.
+        self.assertNotIn("Insider information was not available", HTML)
+        self.assertNotIn("Insider information was not available", self.render())
+
+
+
+# UPGRADE-2 GROWTH-ARCHETYPE sub-charge (c), THE PAGES AND THE BRIEFS (owner rulings AC49(1) and
+# AC50): what the owner's page shows of a growth company. The invented run's pack is replaced by
+# the evidence suite's invented grower, frozen and re-keyed to the run's own subject; every figure
+# is one of that suite's constants.
+from council.tests import test_evidence  # noqa: E402
+
+GROWER_SECTION = "What kind of growth company this is"
+# Every run on record, rendered by the renderer at the base of this sub-charge (main 2a9f4a7):
+# the report page of each run, and the page of the full evidence document of each pack (a pack
+# hash of "f" * 64) - a non-grower page does not move by one byte.
+GROWER_BASE_REPORTS = {
+    "council-aapl-2026-08-31-acceptance-2":
+        "0a58d15a85f934e39c78cf0696999f7352d9ccb59e0aa6f7ec0deabdf55f823b",
+    "council-btc-2026-08-31": "8351b92f107f9ebb4df3831a3ff2bb9877f1d598788ea91cfae6393a1bd23b68",
+    "council-btc-2026-09-01": "312619e10712ff4055ca497aa18a0bff62d3d688e264d9a77bc70c5a309041a7",
+    "council-coin-2026-09-04": "2afb6241761b8a25529367d3a61b31bed9a031d05833d13999c6f6e7222d76bb",
+    "council-goog-2026-08-31": "108bbb245d4d486bd7ed2ef90d52f29a7b211f54e12446290a3107aeba8647ac",
+    "council-jpm-2026-09-24": "398e5c4168ab03579c58d67d51f9ad9e869e974a96608cf96b150d3a6426a502",
+    "council-lulu-2026-09-05": "e51ad189ce8db6c72ae43ebc4fd5ec00f96566b0d4c760828e03a856c7582390",
+    "council-theme-eusov-2026-09-01":
+        "096c4adbacf8d56909cf2ef6b8ab4c359dd8ce0f07688b71ac21f1cea6fad3eb",
+    "council-wulf-2026-09-09": "7008693f56f5c6ee7c1ac1cb15dbba4180970b2ba93166b72705daa9c1e680aa",
+}
+GROWER_BASE_DOCUMENT_PAGES = {
+    "council-aapl-2026-08-31-acceptance":
+        "3c5841aa304124f3bcea306bba560f9313558ac96e5e517885fb61c45d2eea7d",
+    "council-aapl-2026-08-31-acceptance-2":
+        "3c5841aa304124f3bcea306bba560f9313558ac96e5e517885fb61c45d2eea7d",
+    "council-btc-2026-08-31": "cf48acf840fc661e2e1ea34379d164ca90276ee31a4cc5e4a078a15dedeb83b5",
+    "council-btc-2026-09-01": "f2022fd04c172467556e4ca58c67a06671115b45c5d05b617d7eacf847eb6710",
+    "council-coin-2026-09-04": "2ecb0004b5f6d71bf90cb910a52500792138ac2040121f5785ea0c8411cf0241",
+    "council-goog-2026-08-31": "8398924d9a735e692a58ba7e1668ffbb24fb58940249cd33caea46b58940278e",
+    "council-jpm-2026-09-24": "e561bb51a74ab7104b9b07ed51ef5ac002c4af5b643ce70ed321f5391fd08dc3",
+    "council-lulu-2026-09-05": "83653aa365fea243de6fe36d496af6793517f15c7ac0d12d0ebfbaa8a0652e71",
+    "council-theme-eusov-2026-09-01":
+        "505e407d0386e1c5271caa08cc20a436461d78c5d0b4140fc5857c4aedc66ef1",
+    "council-wulf-2026-09-09": "2c84142e2663e1dbbca27344c1023ea4a5736ea92e806620ba49c98c58c4f440",
+}
+GROWER_BASE_APPROVAL = ("council-jpm-2026-09-24/evidence/EVIDENCE-FULL.md",
+                        "cbb5f2ae4d129f401be5984ca7b9eba11cf80e85efef54759bd4d3bdb18ede5d")
+
+
+def _grower_page(cash=test_evidence.GROWER_CASH_BELOW, change=None):
+    """The invented run rendered over the invented grower's frozen pack; `cash` sets its cash
+    fact, `change` edits the capture before it is frozen."""
+    capture = test_evidence.grower_capture()
+    if cash is not None:
+        test_evidence.grower_cash(capture, cash)
+    if change:
+        change(capture)
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        subject = json.loads(fh.read().decode("utf-8"))["subject"]
+    frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+    capture["subject"] = subject
+    capture["business_frame"] = {subject["ticker"]: frame}
+    tmp = tempfile.mkdtemp(prefix="report-grower-")
+    try:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _grower_text(fragment):
+    """What a reader sees, a hover note's closing tag not leaving a space before the stop."""
+    return re.sub(r" ([,.:;])", r"\1", _visible_text(fragment))
+
+
+def _grower_note(page, term):
+    """The hover note the page carries on `term`, or None."""
+    found = re.search(r'<span class="gl" tabindex="0" data-note="([^"]*)">%s</span>'
+                      % re.escape(term), page)
+    return html_lib.unescape(found.group(1)) if found else None
+
+
+class TestGrowerOnThePage(unittest.TestCase):
+    """What the owner's page shows of a growth company. Every test FAILS against the pre-change
+    report renderer; the guard and the negative control are marked."""
+
+    def test_the_front_names_the_kind_measure_and_cash(self):
+        page = _grower_page()
+        front = _grower_text(_front(page))
+        self.assertIn("%s - %s — rated on %s" % (
+            test_evidence.GROWER_KIND, test_evidence.GROWER_KIND_WORDS["recurring_revenue"],
+            test_evidence.GROWER_MEASURE_WORDS), front)
+        self.assertIn(test_evidence.GROWER_MONTHS_WORDS % (test_evidence.GROWER_MONTHS_BELOW,
+                                                           test_evidence.GROWER_LINE), front)
+        for term in ("Months of cash left", "enterprise value against gross profit",
+                     "sales growth", "cash burn"):
+            self.assertIn(term.lower(), {row["term"].lower(): row
+                                         for row in R.GLOSSARY["terms"]})
+            self.assertIsNotNone(_grower_note(_front(page), term), term)
+
+    def test_the_front_shows_an_undrawn_facility_as_not_counted(self):
+        """Audit finding r1-4: the front prints the months of cash left, so it shows each
+        undrawn credit line beside them, marked not counted; none named, no such line."""
+        def undrawn(capture):
+            test_evidence.grower_fact(capture, test_evidence.GROWER_UNDRAWN_ID,
+                                      test_evidence.GROWER_UNDRAWN)
+            test_evidence.frame_of(capture)["growth_runway"]["undrawn_facility_facts"] = [
+                test_evidence.GROWER_UNDRAWN_ID]
+        front = _grower_text(_front(_grower_page(change=undrawn)))
+        capture = test_evidence.grower_capture()
+        undrawn(capture)
+        self.assertIn("Undrawn credit lines, shown and not counted: %s %s" % (
+            test_evidence.name_of(capture, test_evidence.GROWER_UNDRAWN_ID),
+            test_evidence.shown_value(test_evidence.fact_in(
+                capture, test_evidence.GROWER_UNDRAWN_ID))), front)
+        self.assertNotIn("Undrawn credit lines", _grower_text(_front(_grower_page())))
+
+    def test_the_front_carries_the_cap_sentence_below_the_line(self):
+        sentence = test_evidence.GROWER_CAP_WORDS % test_evidence.GROWER_LINE
+        page = _grower_page()
+        self.assertIn('<div class="card prominent"><p>%s</p></div>' % E(sentence), _front(page))
+        self.assertIn(E(sentence), _detail(page))
+        for cash in (test_evidence.GROWER_CASH_AT_LINE, None):
+            self.assertNotIn(E(sentence), _grower_page(cash=cash))
+
+    def test_the_report_and_brief_word_tables_agree(self):
+        self.assertEqual(R.ARCHETYPE_WORDS, pack_brief._ARCHETYPE_WORDS)
+        self.assertEqual(R.MEASURE_WORDS, pack_brief._MEASURE_WORDS)
+        self.assertEqual(R.ARCHETYPE_WORDS["reinvesting_grower"], test_evidence.GROWER_KIND)
+        self.assertEqual(R.MEASURE_WORDS[test_evidence.GROWER_MEASURE],
+                         test_evidence.GROWER_MEASURE_WORDS)
+
+    def test_the_detail_carries_the_grower_frame(self):
+        detail = _detail(_grower_page())
+        self.assertIn("<h3>%s</h3>" % GROWER_SECTION, detail)
+        yardstick = _card_rows(detail, "The yardstick, and what stands beside it")
+        self.assertEqual([re.sub(r" ([,.:;])", r"\1", row[0]) for row in yardstick[3:7]], [
+            test_evidence.GROWER_MULTIPLE_ROW, test_evidence.GROWER_GROWTH_ROW,
+            test_evidence.GROWER_PAY_ROW, test_evidence.GROWER_DILUTION_ROW])
+        self.assertEqual(yardstick[3][1], test_evidence.grower_multiple(
+            test_evidence.GROWER_EV, test_evidence.GROWER_GROSS_PROFIT_TTM))
+        quarters = _card_rows(detail, "The latest quarters, oldest first")
+        self.assertEqual([row[0] for row in quarters[1:]],
+                         [" ".join(slug.split("_")).upper()
+                          for slug in test_evidence.GROWER_QUARTERS])
+        cash = _card_rows(detail, "The cash, and how long it lasts")
+        self.assertIn(["Months of cash left", "%s months" % test_evidence.GROWER_MONTHS_BELOW,
+                       "calculated"], cash)
+        earnings = _card_rows(detail, "How it earns")
+        self.assertEqual({row[1] for row in earnings[1:]},
+                         {test_evidence.GROWER_NATURE_SHOWN["subscription"]})
+        self.assertNotIn("<code>", detail)
+
+    def test_a_capture_authored_funding_reason_is_escaped(self):
+        def forge(capture):
+            test_evidence.frame_of(capture)["growth_runway"]["funding_because"] = \
+                test_evidence.GROWER_FORGED
+        page = _grower_page(change=forge)
+        self.assertIn(E("<img src=x onerror=alert(1)>"), _detail(page))
+        self.assertNotIn("<img src=x", page)
+
+    def test_a_non_grower_page_carries_no_grower_line(self):
+        """NEGATIVE control: the invented run and the invented bank."""
+        for page in (HTML, _fi_page()):
+            self.assertNotIn(GROWER_SECTION, page)
+            self.assertNotIn("Months of cash left", page)
+
+    def test_every_run_on_record_renders_unchanged(self):
+        """A GUARD, passing on the base by design: every run on record renders to the bytes the
+        base renderer gave it - its report page, the page of its pack's full evidence document,
+        and the approval page of the one recorded evidence document."""
+        runs = os.path.join(ROOT, "council", "runs")
+        if not os.path.isdir(runs):
+            self.skipTest("the runs on record are not in this copy of the repository")
+        for run_id, digest in GROWER_BASE_REPORTS.items():
+            with self.subTest(report=run_id):
+                self.assertEqual(hashlib.sha256(_render_on_record(run_id).encode(
+                    "utf-8")).hexdigest(), digest)
+        for run_id, digest in GROWER_BASE_DOCUMENT_PAGES.items():
+            with self.subTest(document=run_id):
+                with open(os.path.join(runs, run_id, "pack", "pack.json"), "rb") as fh:
+                    pack = json.loads(fh.read().decode("utf-8"))
+                page = _evidence_page().render_page(pack_brief.render_full(pack, "f" * 64))
+                self.assertEqual(hashlib.sha256(page.encode("utf-8")).hexdigest(), digest)
+        relative, digest = GROWER_BASE_APPROVAL
+        with open(os.path.join(runs, relative), "rb") as fh:
+            page = _evidence_page().render_page(fh.read().decode("utf-8"))
+        self.assertEqual(hashlib.sha256(page.encode("utf-8")).hexdigest(), digest)
+
+
+
+# UPGRADE-2 RESOURCE-ARCHETYPE sub-charge (c), THE PAGES AND THE BRIEFS (owner rulings
+# AC51-AC56): what the owner's page shows of a producer. The invented run's pack is replaced by
+# the evidence suite's invented producer, frozen and re-keyed to the run's own subject.
+PRODUCER_SECTION = "What kind of producer this is"
+
+
+def _producer_page(subtype="miner", change=None):
+    """The invented run rendered over the invented producer's frozen pack; `change` edits the
+    capture before it is frozen."""
+    capture = test_evidence.producer_capture(subtype)
+    if change:
+        change(capture)
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        subject = json.loads(fh.read().decode("utf-8"))["subject"]
+    frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+    capture["subject"] = subject
+    capture["business_frame"] = {subject["ticker"]: frame}
+    tmp = tempfile.mkdtemp(prefix="report-producer-")
+    try:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+class TestProducerOnThePage(unittest.TestCase):
+    """What the owner's page shows of a producer. Every test FAILS against the pre-change report
+    renderer; the guard and the negative control are marked."""
+
+    def test_the_front_names_the_kind_measure_and_reserve_life(self):
+        front = _front(_producer_page())
+        self.assertIn("%s - %s — rated on %s" % (
+            test_evidence.PRODUCER_KIND_SHOWN, test_evidence.PRODUCER_SUBTYPE_SHOWN["miner"],
+            test_evidence.PRODUCER_MEASURE_SHOWN), _grower_text(front))
+        self.assertIn(test_evidence.PRODUCER_LIFE_SHOWN, _grower_text(front))
+        self.assertIsNotNone(_grower_note(front, "Reserve life"))
+
+    def test_the_front_sets_the_kind_and_the_reserve_life_apart(self):
+        """The architect's ruling on the front's two lines: the measure ends in a full stop, so the
+        reserve life never runs into it."""
+        text = _grower_text(_front(_producer_page()))
+        self.assertIn("%s. %s" % (test_evidence.PRODUCER_MEASURE_SHOWN,
+                                  test_evidence.PRODUCER_LIFE_SHOWN), text)
+        self.assertNotIn("rests on Reserve life", text)
+
+    def test_a_positive_value_per_unit_never_prints_zero(self):
+        """The architect's ruling on P-RESOURCEc-1 (owner ruling AC16): an enterprise value in
+        millions over reserves in single barrels is a live figure on the page."""
+        def scaled(capture):
+            test_evidence.producer_value(capture, "enterprise_value", "14110", unit="USD_m")
+            test_evidence.producer_value(capture, "reserves_proved_boe", "1000000000")
+        yardstick = _card_rows(_detail(_producer_page("oil_and_gas_producer", change=scaled)),
+                               "The yardstick, and what stands beside it")
+        self.assertIn([test_evidence.PRODUCER_PER_UNIT_ROW["boe"], "$14.10", "calculated"],
+                      yardstick)
+
+    def test_the_front_carries_the_sentence_below_the_reserve_price(self):
+        sentence = '<div class="card prominent"><p>%s</p></div>' % E(
+            test_evidence.PRODUCER_SENTENCE)
+        page = _producer_page()
+        self.assertIn(sentence, _front(page))
+        self.assertIn(E(test_evidence.PRODUCER_SENTENCE), _detail(page))
+        for today in (test_evidence.PRODUCER_RESERVE_PRICE, "80"):
+            page = _producer_page(change=lambda capture: test_evidence.producer_value(
+                capture, "reference_price_gold", today))
+            self.assertNotIn(E(test_evidence.PRODUCER_SENTENCE), page)
+
+    def test_the_report_and_brief_word_tables_agree(self):
+        self.assertEqual(R.ARCHETYPE_WORDS, pack_brief._ARCHETYPE_WORDS)
+        self.assertEqual(R.MEASURE_WORDS, pack_brief._MEASURE_WORDS)
+        self.assertEqual(R.ARCHETYPE_WORDS["resource_producer"],
+                         test_evidence.PRODUCER_KIND_SHOWN)
+        self.assertEqual(R.MEASURE_WORDS[test_evidence.PRODUCER_MEASURE],
+                         test_evidence.PRODUCER_MEASURE_SHOWN)
+
+    def test_the_detail_carries_the_producer_frame(self):
+        def label(capture):
+            test_evidence.fact_in(capture, "unit_cost_gold")["label"] = (
+                "All-in sustaining cost per ounce (INVENTED)")
+        detail = _detail(_producer_page(change=label))
+        self.assertIn("<h3>%s</h3>" % PRODUCER_SECTION, detail)
+        self.assertEqual(_card_rows(detail, "The reserves, each beside the ")[1], [
+            "Proven and probable reserves", "850 oz", "the US SEC's mining rules (S-K 1300)",
+            "20 Feb 2026", "76 USD per ounce", "70 USD per ounce"])
+        yardstick = _card_rows(detail, "The yardstick, and what stands beside it")
+        self.assertIn([test_evidence.PRODUCER_PER_UNIT_ROW["oz"], R.format_number(
+            "14.11", "USD_m"), "calculated"], yardstick)
+        quarters = _card_rows(detail, "Output and the price received")
+        self.assertEqual([row[0] for row in quarters[1:5]],
+                         [" ".join(slug.split("_")).upper()
+                          for slug in test_evidence.GROWER_QUARTERS])
+        costs = _card_rows(detail, "What each unit costs")
+        self.assertIn(["Hedges", "none - the company does not hedge", "recorded"], costs)
+        for term in ("Proven and probable reserves", "price the reserves were counted at",
+                     "Asset retirement obligation", "Reserve life", "All-in sustaining cost"):
+            self.assertIsNotNone(_grower_note(detail, term), term)
+        oil = _detail(_producer_page("oil_and_gas_producer"))
+        for term in ("Proved reserves", "barrel of oil equivalent", "Standardized measure"):
+            self.assertIsNotNone(_grower_note(oil, term), term)
+        stream = _detail(_producer_page("royalty_and_streaming"))
+        self.assertIsNotNone(_grower_note(stream, "Stream payment"))
+        self.assertNotIn("<code>", detail)
+
+    def test_a_capture_authored_string_is_escaped(self):
+        def forge(capture):
+            for fact_id in ("reference_price_gold", "unit_cost_gold"):
+                test_evidence.fact_in(capture, fact_id)["label"] = test_evidence.GROWER_FORGED
+            test_evidence.producer_block(capture)["reserves_standard"] = \
+                test_evidence.GROWER_FORGED
+        page = _producer_page(change=forge)
+        self.assertIn(E("<img src=x onerror=alert(1)>"), _detail(page))
+        self.assertNotIn("<img src=x", page)
+
+    def test_an_integrated_major_front_shows_reserves_and_todays_price(self):
+        """Owner ruling AC52(1), register item P-RESOURCEa-4: beside the ordinary profit
+        yardstick on the front."""
+        capture = test_evidence.integrated_major_capture()
+        with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+            subject = json.loads(fh.read().decode("utf-8"))["subject"]
+        frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+        capture["subject"] = subject
+        capture["business_frame"] = {subject["ticker"]: frame}
+        tmp = tempfile.mkdtemp(prefix="report-major-")
+        try:
+            run_dir = _mutated_copy(tmp)
+            _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+            page = R.render(run_dir)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        # The architect's ruling on the front's lines: the measure ends before the line below.
+        self.assertIn(". Its reserves and today's price", _grower_text(_front(page)))
+        self.assertIn("Its reserves and today's price, shown beside: Reserves proved boe 850 "
+                      "boe; Reference price crude oil 70 USD per barrel", _visible_text(
+                          _front(page)))
+
+    def test_a_non_producer_page_carries_no_producer_line(self):
+        """NEGATIVE control: the invented run, the invented bank and the invented grower."""
+        for page in (HTML, _fi_page(), _grower_page()):
+            for needle in (PRODUCER_SECTION, "Reserve life", "Its reserves and today",
+                           test_evidence.PRODUCER_KIND_SHOWN):
+                self.assertNotIn(needle, page)
+
+    def test_every_run_on_record_renders_unchanged(self):
+        """A GUARD, passing on the base by design: every run on record renders to the bytes the
+        base renderer gave it (the growth unit's pins, unmoved since main 2a9f4a7)."""
+        TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
 
 
 if __name__ == "__main__":

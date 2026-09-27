@@ -38,7 +38,8 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.lib import canonical, subjects, validate  # noqa: E402
-from council.engine import briefs, ladder, runrecord  # noqa: E402
+from council.engine import briefs, chair_fields, ladder, runrecord  # noqa: E402
+from council.evidence import sufficiency, trace  # noqa: E402
 from council.ledger import ledger  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -59,6 +60,13 @@ DIFF_FIELDS = (
     ("constituent_notes", "constituent_notes"),
     ("evidence_dependencies", "evidence_dependencies"),
     ("key_numbers", "key_numbers"),
+    # The chairman's fields (UPGRADE-2 U5(b); the one-line answer, READ-C1):
+    # a change between the challenged draft and the final document is
+    # listed like any other.
+    ("answer_line", "answer_line"),
+    ("decisive_argument", "decisive_argument"),
+    ("business_read", "business_read"),
+    ("decisive_metrics_read", "decisive_metrics_read"),
 )
 
 SEAT_ORDER = ["frame"] + briefs.ADVISOR_SEATS + [
@@ -72,8 +80,12 @@ SEAT_ORDER = ["frame"] + briefs.ADVISOR_SEATS + [
 # figure does (audit finding r4-3). No new seat row: per_seat is keyed by
 # SEAT_ORDER, which the prose seats are deliberately not in. The names mirror
 # host._PROSE_REASK_SEATS - host imports publisher, so this cannot import back.
+# The chairman's ONE fields re-ask (UPGRADE-2 U5(b)) is folded the same way:
+# its seats mirror host._FIELDS_REASK_SEATS.
 _PROSE_REASK_CHAIR = {"chair_draft_prose": "chair_draft",
-                      "chair_resolve_prose": "chair_resolve"}
+                      "chair_resolve_prose": "chair_resolve",
+                      "chair_draft_fields": "chair_draft",
+                      "chair_resolve_fields": "chair_resolve"}
 
 
 class PublishRefusal(Exception):
@@ -112,6 +124,42 @@ def _is_raise(before, after):
 
 def _rating_words(rating):
     return str(rating).replace("_", " ")
+
+
+# The gate that bites (owner ruling AC50(8), architect ruling A7): the one
+# warning a capped growth company's verdict carries, naming the months, the
+# line and the ruling.
+RUNWAY_CAP_WARNING = (
+    "The company's cash covers %s months of its last four quarters' cash "
+    "burn, under the %s-month line the owner ruled (owner ruling AC50(8)): "
+    "nothing stronger than hold publishes, so the chairman's %s is "
+    "published as hold.")
+# Audit finding r1-2 of sub-charge (b): the chairman's one-line answer
+# (owner ruling AC44(1)) is his own and is never rewritten; where he gave
+# one, the warning says which rating it was written for.
+RUNWAY_CAP_ANSWER_LINE = (
+    " His one-line answer to the question was written for %s, not for the "
+    "published hold.")
+
+
+def runway_cap(rating, runway, answer_line=None):
+    """(the change-appendix row, the warning) where a growth company whose
+    cash covers fewer months than the ruled line was rated buy or strong
+    buy - the published rating becomes hold (owner ruling AC50(8), the
+    degradation_cap precedent) - else (None, None). `runway` is
+    sufficiency.growth_runway's reading; hold, sell and monitor are never
+    touched. Where the chairman gave a one-line answer, the warning says
+    it was written for the rating before the cap."""
+    if not runway or not runway.get("below") or rating not in ("buy",
+                                                               "strong_buy"):
+        return None, None
+    warning = RUNWAY_CAP_WARNING % (runway["months"],
+                                    runway["threshold_months"],
+                                    _rating_words(rating))
+    if isinstance(answer_line, str) and answer_line.strip():
+        warning += RUNWAY_CAP_ANSWER_LINE % _rating_words(rating)
+    return ({"field": "rating", "before": rating, "after": "hold",
+             "label": "runway_cap"}, warning)
 
 
 def build_change_appendix(challenged, final, endorsement):
@@ -226,7 +274,30 @@ def _challenge_record(run_dir, events):
     return {"status": status, "failure_reason": failure_reason,
             "model_requested": request["model"], "findings": findings,
             "endorsement": endorsement, "summary": summary,
-            "challenger_tokens": challenger_tokens}
+            "challenger_tokens": challenger_tokens,
+            "codex_version": _version_or_none(result.get("codex_version"))}
+
+
+def _version_or_none(value):
+    """A recorded codex version (owner ruling AC25(4)): the bridge's own
+    string, or None where it recorded none - never a guess."""
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _codex_versions(events, challenge_version):
+    """The codex version that ran each outside call of this sitting: the
+    challenge's from its bridge result, the evidence audit's from the
+    record the host copied at init. None where nothing was recorded, which
+    is every sitting before this contract."""
+    usage = {}
+    for event in events:
+        if event["event"] == "capture_usage_recorded":
+            usage = event
+    return {"challenge": challenge_version,
+            "evidence_audit": _version_or_none(
+                usage.get("evidence_audit_codex_version"))}
 
 
 def _usage_by_request(run_dir, events):
@@ -354,7 +425,7 @@ def _seat_cost(run_dir, events):
 
 
 def _provenance(run_dir, events, invocation, challenger_tokens,
-                challenger_model):
+                challenger_model, challenge_version=None):
     accepted = {}
     seat_numbers = {}
     for event in events:
@@ -386,6 +457,7 @@ def _provenance(run_dir, events, invocation, challenger_tokens,
             "ledger_row_id": invocation["run_id"],
             "models_per_seat": models,
             "challenger_model_requested": challenger_model,
+            "codex_version": _codex_versions(events, challenge_version),
             "timestamps": {"run_started": run_started,
                            "published": _now_utc()},
             "tokens": {"per_seat": per_seat, "seats_total": seats_total,
@@ -567,16 +639,66 @@ def assemble_and_publish(run_dir):
                              "before": challenged["rating"],
                              "after": "hold",
                              "label": "degradation_cap"})
-        warnings.append(
+        warning = (
             "The outside audit did not run (%s). Nothing stronger than "
             "hold publishes on a failed audit; this document was not "
             "challenged by the cross-model auditor."
             % (challenge["failure_reason"] or challenge["status"]))
+        # Sub-charge GROWTH-ARCHETYPE (c), architect ruling 3: where this
+        # cap lowered the rating, the chairman's one-line answer is his own
+        # and never rewritten - the warning says which rating it was
+        # written for, in the runway cap's own sentence.
+        answer_line = challenged.get("answer_line")
+        if (degraded_from is not None and isinstance(answer_line, str)
+                and answer_line.strip()):
+            warning += RUNWAY_CAP_ANSWER_LINE % _rating_words(degraded_from)
+        warnings.append(warning)
+    # Owner ruling AC50(8), architect ruling A7: a growth company with fewer
+    # months of cash left than the ruled line publishes at most hold - the
+    # chairman was told so in his contract; this is the backstop, read from
+    # the one helper that works the months out.
+    runway_row, runway_warning = runway_cap(
+        final["rating"], sufficiency.growth_runway(
+            canonical.read_json(pack_path), canonical.read_json(FLOORS_PATH)),
+        final.get("answer_line"))
+    if runway_row:
+        final = dict(final)
+        final["rating"] = "hold"
+        appendix.append(runway_row)
+        warnings.append(runway_warning)
     warnings.extend(endorsement_note(final["rating"],
                                      challenge["endorsement"]))
+    # The chairman's price-level mark (UPGRADE-2 U5(b), the architect's
+    # ruling 5; the tolerance and the plain words, owner ruling AC44(4)): a
+    # line in the warnings, never a refusal.
+    level_warning = chair_fields.price_level_warning(
+        final, (canonical.read_json(pack_path).get("capture") or {}),
+        (_accepted_answer(run_dir, events, "advisor_market_structure")
+         .get("markdown") or ""))
+    if level_warning:
+        warnings.append(level_warning)
+    # One threshold per measure on the scorecard (owner ruling AC44(2)): a
+    # measure given two numbers draws one plain line, never a refusal.
+    scorecard_line = chair_fields.scorecard_warning(
+        chair_fields.conflicting_measures(
+            final["tripwires"],
+            trace.config(canonical.read_json(FLOORS_PATH))))
+    if scorecard_line:
+        warnings.append(scorecard_line)
+    # Each decisive-numbers row traced to its metric's recorded facts or
+    # MARKED (architect ruling closing P-U5b-2, AC13(1) and AC19): a mark on
+    # the row and one line in the warnings, never a refusal.
+    metric_rows, marked = chair_fields.mark_rows(
+        chair_fields.published_value(
+            "decisive_metrics_read", final.get("decisive_metrics_read")),
+        canonical.read_json(pack_path).get("capture") or {},
+        trace.config(canonical.read_json(FLOORS_PATH)))
+    if marked:
+        warnings.append(chair_fields.rows_warning(marked))
     provenance = _provenance(run_dir, events, invocation,
                              challenge["challenger_tokens"],
-                             challenge["model_requested"])
+                             challenge["model_requested"],
+                             challenge["codex_version"])
     subject = invocation["subject"]
     pack = canonical.read_json(pack_path)
     tier1_by_id = {fact["id"]: fact
@@ -590,7 +712,7 @@ def assemble_and_publish(run_dir):
         verdict_scenario_rating = degrade_scenario_rating(
             verdict_scenario_rating, degraded_from, final["rating"])
     verdict = {
-        "schema_version": "1.4.0",
+        "schema_version": "1.7.0",
         "run_id": invocation["run_id"],
         "subject": subject,
         "question_verbatim": invocation["question_verbatim"],
@@ -618,7 +740,10 @@ def assemble_and_publish(run_dir):
             "rating": final["rating"],
             "key_numbers": _tag_rows(final["key_numbers"],
                                      "pack_fact_id", tier1_by_id),
-            "tripwires": final["tripwires"],
+            # The hand-off reads the three lists as it always has: the
+            # measure a scorecard line names stays on the owner's page
+            # (owner ruling AC44(2)).
+            "tripwires": chair_fields.without_measures(final["tripwires"]),
             "sizing_inputs": _tag_rows(final["sizing_inputs"],
                                        "pack_fact_ids", tier1_by_id),
             "scenario_rating": verdict_scenario_rating,
@@ -658,6 +783,13 @@ def assemble_and_publish(run_dir):
         },
         "provenance": provenance,
     }
+    # The chairman's fields (UPGRADE-2 U5(b); the one-line answer, READ-C1):
+    # each as he wrote it where it is in the published shape, else null -
+    # the host asked once for anything missing or malformed, and his answer
+    # then stands. None of them travels in the Atlas envelope.
+    for key in chair_fields.keys():
+        verdict[key] = chair_fields.published_value(key, final.get(key))
+    verdict["decisive_metrics_read"] = metric_rows
     schema_path = os.path.join(SCHEMA_DIR, "verdict_schema.json")
     with open(schema_path, "rb") as handle:
         schema = json.loads(handle.read().decode("utf-8"))

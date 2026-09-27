@@ -117,6 +117,11 @@ def config(floors):
                              (block.get("month_words") or ())),
         "percent_units": frozenset(block.get("percent_units") or ()),
         "fraction_units": frozenset(block.get("fraction_units") or ()),
+        # Every fraction unit the floors allow a capture to use: the
+        # chairman's scorecard reads each one's prose form (READ-C1).
+        "allowed_fraction_units": frozenset(
+            unit for unit in (floors or {}).get("allowed_units") or ()
+            if str(unit).startswith("fraction_")),
         "currency_scale_units": {k: int(v) for k, v in
                                  (block.get("currency_scale_units")
                                   or {}).items()},
@@ -174,6 +179,15 @@ def _fact_bases(capture, ticker, cfg):
         fact_id = fact.get("id")
         if suffix and gate._id_suffix(fact_id) not in ("", suffix):
             continue
+        bases.extend(facts_bases([fact], cfg))
+    return bases
+
+
+def facts_bases(facts, cfg):
+    """FACTS as (scaled, face, is_percent) bases, each read at its unit as
+    _fact_bases reads it; a value the gate cannot read is skipped."""
+    bases = []
+    for fact in facts:
         value = _decimal(fact.get("value"))
         if value is None:
             continue
@@ -187,6 +201,91 @@ def _fact_bases(capture, ticker, cfg):
             scaled = value.scaleb(exponent) if exponent is not None else value
             bases.append((scaled, value, False))
     return bases
+
+
+def figures_bases(figures, cfg, text=""):
+    """A tier-2 passage's declared FIGURES as bases. A passage's figures are
+    the prose marker's OWN figure tokens (architect ruling closing P-U5b-9):
+    every token _classify reads in the passage's TEXT as a figure, not
+    exempt, is read with its sign, currency, scale and percent words exactly
+    as the marker reads it. A declared figure counts only where ONE number
+    reads the whole string (P-U5b-7), and binds to every such token whose
+    SIGNED number equals its own signed number (P-U5b-10) and whose KIND -
+    percent, plain number or currency amount - is its own (P-U5b-11);
+    nothing is re-derived here."""
+    text = str(text or "")
+    tokens = [_TOKEN.match(text, token.start)
+              for token in _classify(text, [], cfg)
+              if token.status != "exempt"]
+    bases = []
+    for figure in figures or []:
+        figure = str(figure).strip()
+        match = _TOKEN.match(figure)
+        number = _decimal(match.group("digits")) if match else None
+        if number is None:
+            continue
+        rest = figure[_read_after(figure, match, cfg)[1]:].strip().lower()
+        if rest and rest not in cfg["percent_words"] and rest != "per cent":
+            continue
+        if (match.group("sign_pre") or match.group("sign")) == "-":
+            number = -number
+        kind = _kind(figure, match, cfg)
+        for found in tokens:
+            if _kind(text, found, cfg) != kind:
+                continue
+            face = -_decimal(found.group("digits")) if (
+                found.group("sign_pre") or found.group("sign")) == "-" \
+                else _decimal(found.group("digits"))
+            if face != number:
+                continue
+            exponent, _end, is_percent = _read_after(text, found, cfg)[:3]
+            bases.append((face.scaleb(exponent) if exponent is not None
+                          else face, face, is_percent))
+    return bases
+
+
+def _kind(text, match, cfg):
+    """A numeric token's kind as the marker reads it: a percent, a currency
+    amount, or a plain number (P-U5b-11)."""
+    if _read_after(text, match, cfg)[2]:
+        return "percent"
+    return "amount" if match.group("currency") else "plain"
+
+
+def _read_after(text, match, cfg):
+    """(exponent, end, is_percent, following, after_number) for a numeric
+    token MATCH of TEXT - the marker's one reader of the ruled scale word
+    or letter right after a figure and of a percent sign or percent word."""
+    after_number = (match.end("percent") if match.group("percent")
+                    else match.end("digits"))
+    exponent = None
+    end = after_number
+    scale_match = _SCALE_AFTER.match(text, after_number)
+    if scale_match:
+        candidate = scale_match.group("scale")
+        if len(candidate) == 1 and candidate in cfg["scale_words"]:
+            exponent = cfg["scale_words"][candidate]
+            end = scale_match.end()
+        elif candidate.lower() in cfg["scale_words_ci"]:
+            exponent = cfg["scale_words_ci"][candidate.lower()]
+            end = scale_match.end()
+    is_percent = bool(match.group("percent"))
+    following = _following_words(text, after_number)
+    if not is_percent and following:
+        if following[0] in cfg["percent_words"]:
+            is_percent = True
+        elif (len(following) >= 2 and following[0] == "per"
+              and following[1] == "cent"):
+            is_percent = True
+    return exponent, end, is_percent, following, after_number
+
+
+def untraced(text, bases, cfg):
+    """Whether TEXT writes a number that traces to none of BASES - the
+    marker's own rule (_classify), so a figure the prose marker would mark
+    is the figure this reports."""
+    return any(token.status == "untraced"
+               for token in _classify(str(text or ""), bases, cfg))
 
 
 def _close(a, b, sig, tolerance):
@@ -264,32 +363,12 @@ def _classify(text, bases, cfg):
     for match in _TOKEN.finditer(text):
         start = match.start()
         digits = match.group("digits")
-        after_number = (match.end("percent") if match.group("percent")
-                        else match.end("digits"))
         # A scale word or letter right after the figure, if the ruled data
         # says it is one. Anything else (a unit word, a preposition) is not
         # part of the token and the marker lands after the figure.
-        exponent = None
-        end = after_number
-        scale_match = _SCALE_AFTER.match(text, after_number)
-        if scale_match:
-            candidate = scale_match.group("scale")
-            if len(candidate) == 1 and candidate in cfg["scale_words"]:
-                exponent = cfg["scale_words"][candidate]
-                end = scale_match.end()
-            elif candidate.lower() in cfg["scale_words_ci"]:
-                exponent = cfg["scale_words_ci"][candidate.lower()]
-                end = scale_match.end()
+        exponent, end, is_percent, following, after_number = _read_after(
+            text, match, cfg)
         token_text = text[start:end]
-
-        is_percent = bool(match.group("percent"))
-        following = _following_words(text, after_number)
-        if not is_percent and following:
-            if following[0] in cfg["percent_words"]:
-                is_percent = True
-            elif (len(following) >= 2 and following[0] == "per"
-                  and following[1] == "cent"):
-                is_percent = True
 
         if _is_exempt(match, digits, exponent, is_percent, start,
                       after_number, following, zones, cfg, text):

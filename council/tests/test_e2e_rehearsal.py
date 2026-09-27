@@ -61,6 +61,27 @@ def assert_headings_present(test, run_dir):
         (seat, "present") for seat in host.ADVISOR_SEATS))
 
 
+def assert_chair_fields_present(test, run_dir):
+    """UPGRADE-2 U5(b): the canned chair answers carry the chairman's
+    fields - since READ-C1 the one-line answer too - so every rehearsal
+    takes the happy path: one check per chair document, each `present`, and
+    no fields re-ask."""
+    checks = [(e["seat"], e["outcome"]) for e in runrecord.read_events(run_dir)
+              if e["event"] == "chair_fields_checked"]
+    seats = [e["seat"] for e in runrecord.read_events(run_dir)
+             if e["event"] == "answer_accepted"
+             and e["seat"] in ("chair_draft", "chair_resolve")]
+    test.assertTrue(seats)
+    test.assertEqual(sorted(checks), sorted(
+        (seat, "present") for seat in dict.fromkeys(seats)))
+    verdict = canonical.read_json(os.path.join(run_dir, "verdict.json"))
+    for key in ("answer_line", "decisive_argument", "business_read",
+                "decisive_metrics_read"):
+        test.assertIsNotNone(verdict[key], key)
+    test.assertEqual(sorted(verdict["provenance"]["codex_version"]),
+                     ["challenge", "evidence_audit"])
+
+
 class TestEndToEndRehearsal(unittest.TestCase):
     """One test class, one story, asserted stage by stage."""
 
@@ -120,8 +141,8 @@ class TestEndToEndRehearsal(unittest.TestCase):
         with open(brief_path, "rb") as handle:
             brief_page = handle.read().decode("utf-8")
         self.assertIn("## The numbers that decide this question", brief_page)
-        self.assertIn("The capture: 38.5 minutes, 412000 tokens",
-                      brief_page)
+        self.assertIn("38.5 minutes; about $", brief_page)
+        self.assertIn("tokens: 412,000 ", brief_page)
         # The full document a person actually approves (owner ruling AC15,
         # P6), rendered by the real command.
         full_path = os.path.join(evidence_dir, "EVIDENCE-FULL.md")
@@ -249,6 +270,7 @@ class TestEndToEndRehearsal(unittest.TestCase):
         self.assertIn("challenge_requested", events)
         self.assertIn("published", events)
         assert_headings_present(self, run_dir)
+        assert_chair_fields_present(self, run_dir)
         self.assertEqual(events[-1], "run_finished")
 
         # Stage 6 - the report, rendered by the real renderer over this
@@ -274,18 +296,18 @@ class TestEndToEndRehearsal(unittest.TestCase):
         # Owner ruling AC2: the outside auditor read this evidence
         # before any seat was paid, and its two points and their answers
         # travelled the WHOLE chain - into the frozen pack, into every
-        # seat's case file, and onto the page. The auditor's objections sit
-        # on the decision-in-detail tier now (owner ruling AC16, audit C4).
-        self.assertIn("The outside auditor&#x27;s objections, and the answers", page)
-        self.assertIn("An outside auditor read this evidence before the "
-                      "council sat and raised 2 points, none of them "
+        # seat's case file, and onto the page. The evidence check's points
+        # sit on the decision-in-detail tier (owner ruling AC16, audit C4),
+        # under the name ruled in AC41(4).
+        self.assertIn("The evidence check: its points, and the answers", page)
+        self.assertIn("The evidence check: an outside model read this evidence "
+                      "before the council sat and raised 2 points, none of them "
                       "blocking", page)
-        self.assertIn("The auditor&#x27;s reading of this evidence, in its "
+        self.assertIn("The outside model&#x27;s reading of this evidence, in its "
                       "own words", page)
         self.assertIn("gathered, and it is in the evidence below "
                       "(segment_revenue_service_q)", page)
-        self.assertNotIn("The outside auditor did not check the evidence.",
-                         page)
+        self.assertNotIn("No evidence check ran", page)
         pack_capture = canonical.read_json(
             os.path.join(run_dir, "pack", "pack.json"))["capture"]
         self.assertEqual(pack_capture["evidence_challenge"]["status"],
@@ -295,15 +317,17 @@ class TestEndToEndRehearsal(unittest.TestCase):
             {"result": "pass"}, "x", pack_capture["subject"])
         self.assertIn("## What the outside auditor asked for before the "
                       "council sat", casefile)
-        # The footer carries the same hash the envelope recorded.
-        self.assertIn(envelope["verdict_hash"], page)
+        # The hand-off fold carries the same hash the envelope recorded
+        # (unit READ-A moved it there from the footer).
+        self.assertIn(envelope["verdict_hash"], page[page.index('<h3 id="atlas">'):])
+        self.assertNotIn(envelope["verdict_hash"], page[page.index('<div class="foot">'):])
 
         # Owner ruling AB23: the standalone package stands alone. It
         # names its own subject and sitting, states the audit outcome
         # and the auditor's ceiling, carries the whole warnings list,
         # tags every row for bounds, and flags any sizing id the
         # council's own list does not pin.
-        self.assertEqual(verdict["schema_version"], "1.4.0")
+        self.assertEqual(verdict["schema_version"], "1.7.0")
         subject = verdict["subject"]
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
@@ -322,9 +346,9 @@ class TestEndToEndRehearsal(unittest.TestCase):
             if row["value"] is not None:
                 self.assertEqual(row["unit"], pinned, row["id"])
         # And the page shows the package as it travels.
-        atlas = page[page.index('<h2 id="atlas">'):]
+        atlas = page[page.index('<h3 id="atlas">'):]
         self.assertIn(html.escape(subject["name"], quote=True), atlas)
-        self.assertIn("The outside audit ran, and the package says so.",
+        self.assertIn("The outside challenge ran, and the package says so.",
                       atlas)
 
 
@@ -434,6 +458,7 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertEqual(host.status(run_dir)["state"], "DONE")
         self.assertEqual(readback.check(run_dir), 0)
         assert_headings_present(self, run_dir)
+        assert_chair_fields_present(self, run_dir)
         verdict = canonical.read_json(os.path.join(run_dir,
                                                    "verdict.json"))
         with open(os.path.join(ROOT, "council", "schemas",
@@ -456,7 +481,7 @@ class TestKindRehearsals(unittest.TestCase):
         envelope = canonical.read_json(
             os.path.join(self.last_run_dir, "atlas-envelope.json"))
         subject = verdict["subject"]
-        self.assertEqual(verdict["schema_version"], "1.4.0")
+        self.assertEqual(verdict["schema_version"], "1.7.0")
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
         self.assertEqual(envelope["run_id"], run_id)
@@ -474,7 +499,7 @@ class TestKindRehearsals(unittest.TestCase):
                 self.assertEqual(row["unit"],
                                  briefs.pinned_sizing_unit(row["id"]),
                                  row["id"])
-        atlas = page[page.index('<h2 id="atlas">'):]
+        atlas = page[page.index('<h3 id="atlas">'):]
         self.assertIn(html.escape(subject["name"], quote=True), atlas)
         self.assertEqual(readback.check(self.last_run_dir), 0)
         return envelope

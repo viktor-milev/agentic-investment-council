@@ -15,6 +15,50 @@
    }
   ],
   "conviction_rationale": "INVENTED FIXTURE - the pair earns a buy on this record: the blended rating sits a tenth under its own five-year average, and both named legs answered their essential metrics.",
+  "answer_line": "INVENTED FIXTURE - a buy as one idea at today's prices; the next test is each leg's dated results.",
+  "decisive_argument": {
+   "seat": "advisor_base_rate",
+   "why": "INVENTED FIXTURE - the base-rate reading of the blended multiple against its own history carried the rating; neither leg's story moved it on its own."
+  },
+  "business_read": "INVENTED FIXTURE - a pair: Alpha Chips designs data-centre accelerator chips, and Beta Grid builds the switchgear utilities install at the grid. What is changing is the build-out that needs both.",
+  "decisive_metrics_read": [
+   {
+    "metric": "Data-centre revenue",
+    "constituent": "ACHP",
+    "value": "3108 USD_m",
+    "implies": "The chip leg is carried by the data-centre line."
+   },
+   {
+    "metric": "Revenue against last year",
+    "constituent": "ACHP",
+    "value": "4200 USD_m against 3600 USD_m",
+    "implies": "The chip leg is growing."
+   },
+   {
+    "metric": "Gross margin by product line",
+    "constituent": "ACHP",
+    "value": "declared a gap in the case file",
+    "implies": "The chip leg's margin cannot be read line by line."
+   },
+   {
+    "metric": "Order backlog",
+    "constituent": "BGRD",
+    "value": "9800 USD_m",
+    "implies": "The grid leg has years of work booked."
+   },
+   {
+    "metric": "Revenue against last year",
+    "constituent": "BGRD",
+    "value": "2100 USD_m against 2300 USD_m",
+    "implies": "The grid leg's revenue fell; the backlog has to convert."
+   },
+   {
+    "metric": "Free cash flow",
+    "constituent": "BGRD",
+    "value": "declared a gap in the case file",
+    "implies": "The grid leg's cash cannot be read."
+   }
+  ],
   "evidence_dependencies": [
    "price_last__achp",
    "pair_pe_blended_current",

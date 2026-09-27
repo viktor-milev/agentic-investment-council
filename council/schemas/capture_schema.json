@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Evidence capture contract 1.8.0 - what the evidence session hands the gate",
-  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 added the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. 1.4.0 adds business_frame (owner ruling AC1): the pack states what the business IS, how it earns, what is changing, the three to five numbers that decide THIS question, the peer set or an honest gap, and management's delivery against its own guidance. The frame is keyed by ticker - the subject's own for a single instrument, one key per constituent for a basket or a theme universe - so one contract carries a single name and an expression of several without a second shape. 1.4.1 adds the frame's own figures lists (owner ruling AC12.2): a figure written in the frame's prose is DECLARED beside that prose and must appear in it word for word, exactly as a tier-2 passage's figures already must. what_it_does_figures carries them for what_it_does; what_is_changing, each revenue line and each decisive-metric row carries its own list. The lists may be empty - prose with no figure in it declares none. 1.4.2 adds evidence_challenge (owner ruling AC2): a genuinely different model audits the evidence BEFORE any seat is paid, and what it said and what the capture session did about every point travel INSIDE the capture, so the pack hash covers them. 1.4.3 makes that block traceable and honest about what moved after it (owner ruling AC13): it carries the one-time nonce the bridge issued for the call and the hash of the evidence the auditor was given, and it lists every fact that changed, was added or was removed between the call and the recording of its answer. 1.5.0 (owner ruling AC15, unit U3d) adds four things and forces none of them on a capture that has none: an optional plain-English 'label' on any tier-1 fact and an optional 'period_basis' on a derived one (P5, P3); optional 'comparable_because' and 'not_comparable_on' statements on each peer (P1); an optional 'corrections' list recording each user correction (who, when, fact, old, new, reason, and whether it narrows a claim or rebuilds what the seats reason from) so a fix patches the pack in place instead of rebuilding it (P7); and, in the evidence_challenge block, the archive of every audit pass - prior_passes with the current pass marked - so a re-dispatched audit no longer overwrites the first (per-pass archive), plus the scope of the current pass (a full audit or a delta re-audit of a correction, P8). The gate and the sufficiency gate enforce these where they bite; the block and the list stay optional because a pack that was never corrected and never re-audited carries neither. 1.6.0 (owner ruling AC15, unit U3e) adds two meaning changes for a single name and forces neither on any other subject. The business frame gains 'archetype' - what kind of business this is (a profitable operator, a ramping infrastructure builder, a stabilised lessor, or an asset with no earnings) - with 'archetype_because' citing facts in at most forty words; the third canonical test gains 'measure', the rating basis that archetype calls for, and council/floors/floors.json carries the archetype-to-measure table as data (P2, AC15.2); the same row names the measure's denominators on both sides - 'subject_denominator_facts' (the subject's own tier-1 denominator fact ids) and 'peer_denominator_metrics' (the peer-side metric names), each holding exactly the measure's denominators_required count - so the rating is required computable for the subject AND every peer, the numerator and each denominator, not the numerator alone (architect ruling 2026-09-20; unit U3e round-1 findings r1-1 and r1-3). The frame also gains 'cycle_dependence' - whether this single name's thesis rests on an identifiable capital or commodity cycle - with 'cycle_dependence_because' in at most twenty-five words, and an optional top-level 'cycle' carries three to five dated, re-fetchable series for that cycle (hard cap five), or declares the gap with a reason (P4, AC15.3). All four frame fields and the measure are optional in this contract and enforced by the gate and the sufficiency gate for a single name only; a basket, a theme, a fund and an asset with no earnings carry none. 1.6.0 also carries, beside each of those two rationale prose fields, an optional figures list - archetype_because_figures and cycle_dependence_because_figures - so a figure written into either stands in its own text word for word and equals the value of a fact the frame carries, exactly as what_it_does_figures already binds (owner ruling AC13.1, unit U3e closing pass); both lists are absent or empty where the prose carries no figure. 1.7.0 (owner ruling AC4, unit U4(a)) adds the price history and forces it on no capture: an optional 'price_series' - the subject's own daily closes, each bar a date, a close and a volume as the exact strings observed, at least 500 bars or a declared gap for a recent listing - and an optional 'benchmark_series' of the same shape for the benchmark the floors rule for the asset class (council/floors/floors.json, 'benchmarks'), plus an optional top-level 'benchmark' that names the benchmark for this sitting: the broad-index ETF of a non-US primary listing, or the owner's per-sitting override, which wins over the class default (a null ticker rules the sitting absolute). The override sits at the top level, not inside 'subject', because the subject block must stay equal to the verdict's own subject. The provenance gate refuses a series whose dates do not strictly increase, that has a hole longer than five calendar days beyond the declared exchange holidays, whose last bar is more than three exchange days before its as_of, that carries a close of zero, or whose benchmark is not the ruled one or does not span the subject's window. Every capture written before 1.7.0 carries none of the three and stays valid on the version string alone. 1.8.0 (owner rulings AC28, AC30 and AC32, unit FI-ARCHETYPE) adds a fifth archetype, 'financial_institution', in six sub-types, each with its own rating measure, and the frame fields such a business declares: 'fi_subtype' (and, for a hybrid, 'fi_secondary_subtype' with the segment facts that carry the other engine's share), 'fi_capital' (the capital ratio facts beside their requirement facts, the regime and the binding constraint - or a declared gap), 'fi_risk_cost' (the credit or underwriting cost line, or none by design) and, for a financial holding, 'nav_bridge' (the parts its net asset value is struck from). A revenue line may say what KIND of earnings it is ('nature': spread, fee, underwriting, investment, trading, performance or other), and a guidance row may carry its 'revisions' beside the first guidance for the period. Every one of these is optional in this contract: the provenance gate requires them of a single name whose frame declares the financial-institution archetype (the sub-type, the capital, the cost of risk, a nature on every revenue line, revisions on every guidance row, and the bridge for a holding only), refuses them on any other single name's frame, and the sufficiency gate holds them to the floors. On a basket, a theme or a fund they stay optional and unvalidated. 1.8.0 also adds a top-level 'question_line' (owner ruling AC32): the owner's question to the council, as he asked it, on one line. It is optional in this contract so a capture on record still validates under its own version; the provenance gate requires it of every capture written to this one - present, non-empty, no line break, at most sixty words - a masthead safety bound, not a meaning; the line is his question uncut.",
+  "title": "Evidence capture contract 1.11.0 - what the evidence session hands the gate",
+  "description": "Written live by the hosting session (broker market data and web reads), then validated by council.evidence.gate. Every figure is carried as the exact string observed; nothing is rounded at capture or freeze. The words for the owner's inventory do not exist in this contract: the broker is a market-data source only. 1.3.0 added the optional bound tag on a tier-1 fact (owner ruling AB20): a figure that is a BOUND rather than a measurement says so in the file's own shape - ceiling (it can only be too high) or floor (it can only be too low) - and a ceiling standing in for an item the filer does not publish names the published line it was struck from. 1.4.0 adds business_frame (owner ruling AC1): the pack states what the business IS, how it earns, what is changing, the three to five numbers that decide THIS question, the peer set or an honest gap, and management's delivery against its own guidance. The frame is keyed by ticker - the subject's own for a single instrument, one key per constituent for a basket or a theme universe - so one contract carries a single name and an expression of several without a second shape. 1.4.1 adds the frame's own figures lists (owner ruling AC12.2): a figure written in the frame's prose is DECLARED beside that prose and must appear in it word for word, exactly as a tier-2 passage's figures already must. what_it_does_figures carries them for what_it_does; what_is_changing, each revenue line and each decisive-metric row carries its own list. The lists may be empty - prose with no figure in it declares none. 1.4.2 adds evidence_challenge (owner ruling AC2): a genuinely different model audits the evidence BEFORE any seat is paid, and what it said and what the capture session did about every point travel INSIDE the capture, so the pack hash covers them. 1.4.3 makes that block traceable and honest about what moved after it (owner ruling AC13): it carries the one-time nonce the bridge issued for the call and the hash of the evidence the auditor was given, and it lists every fact that changed, was added or was removed between the call and the recording of its answer. 1.5.0 (owner ruling AC15, unit U3d) adds four things and forces none of them on a capture that has none: an optional plain-English 'label' on any tier-1 fact and an optional 'period_basis' on a derived one (P5, P3); optional 'comparable_because' and 'not_comparable_on' statements on each peer (P1); an optional 'corrections' list recording each user correction (who, when, fact, old, new, reason, and whether it narrows a claim or rebuilds what the seats reason from) so a fix patches the pack in place instead of rebuilding it (P7); and, in the evidence_challenge block, the archive of every audit pass - prior_passes with the current pass marked - so a re-dispatched audit no longer overwrites the first (per-pass archive), plus the scope of the current pass (a full audit or a delta re-audit of a correction, P8). The gate and the sufficiency gate enforce these where they bite; the block and the list stay optional because a pack that was never corrected and never re-audited carries neither. 1.6.0 (owner ruling AC15, unit U3e) adds two meaning changes for a single name and forces neither on any other subject. The business frame gains 'archetype' - what kind of business this is (a profitable operator, a ramping infrastructure builder, a stabilised lessor, or an asset with no earnings) - with 'archetype_because' citing facts in at most forty words; the third canonical test gains 'measure', the rating basis that archetype calls for, and council/floors/floors.json carries the archetype-to-measure table as data (P2, AC15.2); the same row names the measure's denominators on both sides - 'subject_denominator_facts' (the subject's own tier-1 denominator fact ids) and 'peer_denominator_metrics' (the peer-side metric names), each holding exactly the measure's denominators_required count - so the rating is required computable for the subject AND every peer, the numerator and each denominator, not the numerator alone (architect ruling 2026-09-20; unit U3e round-1 findings r1-1 and r1-3). The frame also gains 'cycle_dependence' - whether this single name's thesis rests on an identifiable capital or commodity cycle - with 'cycle_dependence_because' in at most twenty-five words, and an optional top-level 'cycle' carries three to five dated, re-fetchable series for that cycle (hard cap five), or declares the gap with a reason (P4, AC15.3). All four frame fields and the measure are optional in this contract and enforced by the gate and the sufficiency gate for a single name only; a basket, a theme, a fund and an asset with no earnings carry none. 1.6.0 also carries, beside each of those two rationale prose fields, an optional figures list - archetype_because_figures and cycle_dependence_because_figures - so a figure written into either stands in its own text word for word and equals the value of a fact the frame carries, exactly as what_it_does_figures already binds (owner ruling AC13.1, unit U3e closing pass); both lists are absent or empty where the prose carries no figure. 1.7.0 (owner ruling AC4, unit U4(a)) adds the price history and forces it on no capture: an optional 'price_series' - the subject's own daily closes, each bar a date, a close and a volume as the exact strings observed, at least 500 bars or a declared gap for a recent listing - and an optional 'benchmark_series' of the same shape for the benchmark the floors rule for the asset class (council/floors/floors.json, 'benchmarks'), plus an optional top-level 'benchmark' that names the benchmark for this sitting: the broad-index ETF of a non-US primary listing, or the owner's per-sitting override, which wins over the class default (a null ticker rules the sitting absolute). The override sits at the top level, not inside 'subject', because the subject block must stay equal to the verdict's own subject. The provenance gate refuses a series whose dates do not strictly increase, that has a hole longer than five calendar days beyond the declared exchange holidays, whose last bar is more than three exchange days before its as_of, that carries a close of zero, or whose benchmark is not the ruled one or does not span the subject's window. Every capture written before 1.7.0 carries none of the three and stays valid on the version string alone. 1.8.0 (owner rulings AC28, AC30 and AC32, unit FI-ARCHETYPE) adds a fifth archetype, 'financial_institution', in six sub-types, each with its own rating measure, and the frame fields such a business declares: 'fi_subtype' (and, for a hybrid, 'fi_secondary_subtype' with the segment facts that carry the other engine's share), 'fi_capital' (the capital ratio facts beside their requirement facts, the regime and the binding constraint - or a declared gap), 'fi_risk_cost' (the credit or underwriting cost line, or none by design) and, for a financial holding, 'nav_bridge' (the parts its net asset value is struck from). A revenue line may say what KIND of earnings it is ('nature': spread, fee, underwriting, investment, trading, performance or other), and a guidance row may carry its 'revisions' beside the first guidance for the period. Every one of these is optional in this contract: the provenance gate requires them of a single name whose frame declares the financial-institution archetype (the sub-type, the capital, the cost of risk, a nature on every revenue line, revisions on every guidance row, and the bridge for a holding only), refuses them on any other single name's frame, and the sufficiency gate holds them to the floors. On a basket, a theme or a fund they stay optional and unvalidated. 1.8.0 also adds a top-level 'question_line' (owner ruling AC32): the owner's question to the council, as he asked it, on one line. It is optional in this contract so a capture on record still validates under its own version; the provenance gate requires it of every capture written to this one - present, non-empty, no line break, at most sixty words - a masthead safety bound, not a meaning; the line is his question uncut. 1.9.0 (owner ruling AC35(3), unit U5(b)) lets each tier-2 passage say what it is about - 'category', one of business, peers, price, positioning, calendar, cycle or general - so each advisor's case file puts first the passages its lens reads first; order only, every seat still receives every passage. It is optional: absent reads as general, and the gate does not require it. 1.10.0 (owner rulings AC49(1) and AC50, unit GROWTH-ARCHETYPE) adds a sixth archetype, 'reinvesting_grower' - a listed company with real sales that has not yet had four profitable quarters, spending on growth - rated on 'ev_to_gross_profit_against_revenue_growth', enterprise value over the last four quarters' gross profit read beside how fast its sales grow; the frame fields such a business declares: 'grower_subtype' (recurring_revenue or transaction_platform) and 'growth_runway' (the cash facts, the operating cash flow and capital spending facts its months of cash are counted from, any undrawn credit lines shown and never counted, and in at most twenty-five words how it funds itself, with the figures that prose writes); and four more words a revenue line's 'nature' may take for a grower - subscription, usage, transaction and product. Every one of these is optional in this contract: the provenance gate requires the sub-type, the runway block and a nature on every revenue line of a single name whose frame declares the growth archetype and refuses the two grower fields on any other single name's frame, and the sufficiency gate holds them to the floors; on a basket, a theme or a fund they stay optional and unvalidated. No capture written before 1.10.0 is a grower, so each stays valid on the version string alone. 1.11.0 (owner rulings AC51-AC54, unit RESOURCE-ARCHETYPE) adds a seventh archetype, 'resource_producer' - a listed company that earns most of its sales from oil, gas or metal it extracts under a recognised reserve standard, or from royalties and streams on others' output - rated on 'ev_to_reserves_against_cash_flow_at_the_recorded_price', enterprise value per unit of reserves beside what the market pays for the last four quarters' operating cash flow, each printed beside the price it rests on; the frame fields such a business declares: 'producer_subtype' (oil_and_gas_producer, miner or royalty_and_streaming) and 'resource_base' (the main product and any by-products, the reserve standard, and the facts carrying the reserve report's date, the reserves, the price they were counted at, the output and the price received, today's price, the cost per unit, and the hedges - or a statement that the company does not hedge); three more words a revenue line's 'nature' may take - commodity_sales, royalty and stream; and 'integrated_major', the block by which a reserve-reporting company declared an ordinary profit-maker shows it is an integrated oil major (owner ruling AC52(1)): the facts carrying the upstream and downstream arms' shares of the group's capital employed, the evidence of its own midstream assets, and the midstream share where the company reports midstream as its own segment. Every one of these is optional in this contract: the provenance gate requires the sub-type, the resource block with exactly one hedge statement, a nature on every revenue line and an identified cycle of a single name whose frame declares the producer archetype, refuses the two producer fields on any other single name's frame and the integrated-major block on any frame not declaring the ordinary profit-maker, and the sufficiency gate holds them to the floors; on a basket, a theme or a fund they stay optional and unvalidated. No capture written before 1.11.0 is a producer, so each stays valid on the version string alone.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -17,7 +17,7 @@
   ],
   "properties": {
     "capture_version": {
-      "const": "1.8.0"
+      "const": "1.11.0"
     },
     "subject": {
       "type": "object",
@@ -365,7 +365,7 @@
                   }
                 },
                 "nature": {
-                  "description": "Owner rulings AC28 and AC30 (contract 1.8.0): what KIND of earnings this line is - the split a financial institution is read by (spread against fee against underwriting). Optional in this contract; the gate requires it on every line of a single name whose frame declares the financial-institution archetype, and it stays optional for every other archetype.",
+                  "description": "Owner rulings AC28 and AC30 (contract 1.8.0): what KIND of earnings this line is - the split a financial institution is read by (spread against fee against underwriting). Owner ruling AC50 (contract 1.10.0, architect ruling A11) adds the grower's four: subscription, usage, transaction and product. Owner rulings AC51-AC54 (contract 1.11.0, architect ruling B13) add the producer's three: commodity_sales, royalty and stream. Optional in this contract; the gate requires it on every line of a single name whose frame declares the financial-institution, the growth or the producer archetype, and it stays optional for every other archetype.",
                   "enum": [
                     "spread",
                     "fee",
@@ -373,7 +373,14 @@
                     "investment",
                     "trading",
                     "performance",
-                    "other"
+                    "other",
+                    "subscription",
+                    "usage",
+                    "transaction",
+                    "product",
+                    "commodity_sales",
+                    "royalty",
+                    "stream"
                   ]
                 }
               }
@@ -638,7 +645,11 @@
                       }
                     },
                     "delivered": {
-                      "type": "string",
+                      "description": "Owner ruling AC45(9), amending AC12(1), within contract 1.9.0 (a widening: every capture valid before stays valid): null leaves what was delivered open, and the gate accepts it only for a period after the one the pack's latest periodic report (latest_required_report_period) leads with - this year so far, read by the canonical period slug, never the clock. Every reported period names its delivered figure.",
+                      "type": [
+                        "string",
+                        "null"
+                      ],
                       "pattern": "[a-z0-9][a-z0-9_]*"
                     },
                     "revisions": {
@@ -683,13 +694,15 @@
             "pattern": "[a-z0-9][a-z0-9_]*"
           },
           "archetype": {
-            "description": "Owner ruling AC15 (P2, unit U3e): what KIND of business this is, which decides the rating basis the third canonical test uses. profitable_operator - rated on earnings against its own history and peers. ramping_infrastructure_builder - revenue has not arrived yet, so rated on enterprise value per unit of contracted capacity and contracted revenue per unit. stabilised_lessor - rated on enterprise value to operating income. no_earnings_asset - keeps the AB13/AB15 anchorless ladder, legal only for an anchorless subject. financial_institution (owner rulings AC28 and AC30, contract 1.8.0) - a bank, insurer, reinsurer, traditional or alternative asset manager, or financial holding, rated on the return it earns on the capital it must hold (a manager: the clients' capital) against the price the market pays for that capital; its fi_subtype selects the measure. The archetype-to-measure table is data in council/floors/floors.json. Optional in this contract; the sufficiency gate requires it, and requires it to match the measure below, for a single name only.",
+            "description": "Owner ruling AC15 (P2, unit U3e): what KIND of business this is, which decides the rating basis the third canonical test uses. profitable_operator - rated on earnings against its own history and peers. ramping_infrastructure_builder - revenue has not arrived yet, so rated on enterprise value per unit of contracted capacity and contracted revenue per unit. stabilised_lessor - rated on enterprise value to operating income. no_earnings_asset - keeps the AB13/AB15 anchorless ladder, legal only for an anchorless subject. financial_institution (owner rulings AC28 and AC30, contract 1.8.0) - a bank, insurer, reinsurer, traditional or alternative asset manager, or financial holding, rated on the return it earns on the capital it must hold (a manager: the clients' capital) against the price the market pays for that capital; its fi_subtype selects the measure. reinvesting_grower (owner rulings AC49(1) and AC50, contract 1.10.0) - a listed company with real sales that has not yet had four profitable quarters, rated on enterprise value over its gross profit beside its sales growth; its grower_subtype names its kind. resource_producer (owner rulings AC51-AC54, contract 1.11.0) - a listed company that earns most of its sales from oil, gas or metal it extracts under a recognised reserve standard, or from royalties and streams on others' output, rated on enterprise value per unit of reserves beside what the market pays for its last four quarters' operating cash flow; its producer_subtype names its kind. The archetype-to-measure table is data in council/floors/floors.json. Optional in this contract; the sufficiency gate requires it, and requires it to match the measure below, for a single name only.",
             "enum": [
               "profitable_operator",
               "ramping_infrastructure_builder",
               "stabilised_lessor",
               "no_earnings_asset",
-              "financial_institution"
+              "financial_institution",
+              "reinvesting_grower",
+              "resource_producer"
             ]
           },
           "archetype_because": {
@@ -725,6 +738,222 @@
             "items": {
               "type": "string",
               "minLength": 1
+            }
+          },
+          "grower_subtype": {
+            "description": "Owner rulings AC49(1) and AC50 (contract 1.10.0): which of the two kinds of growth company this is - recurring_revenue (subscription and usage software) or transaction_platform (marketplaces, payments and consumer internet earning a take rate on volume). The two share one measure and differ in the evidence they must carry. The ground is written in archetype_because. Optional in this contract; the gate requires it of a single name whose archetype is reinvesting_grower and refuses it on any other single name's frame.",
+            "enum": [
+              "recurring_revenue",
+              "transaction_platform"
+            ]
+          },
+          "growth_runway": {
+            "description": "Owner rulings AC50(7) and AC50(8) (contract 1.10.0): what a growth company's months of cash left are counted from - its cash plus short-term investments at the latest quarter end, over the last four quarters' operating cash flow less capital spending - and, in at most twenty-five words, how it funds itself. Undrawn credit lines are shown, never counted. Every id is a tier-1 fact; the figures the prose writes stand in it word for word and are values of the facts the block cites. Optional in this contract; the gate requires it of a single name whose archetype is reinvesting_grower and refuses it on any other single name's frame.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "cash_facts",
+              "operating_cash_flow_fact",
+              "capital_expenditure_fact",
+              "funding_because",
+              "funding_because_figures"
+            ],
+            "properties": {
+              "cash_facts": {
+                "description": "The tier-1 fact(s) carrying the cash and short-term investments at the latest quarter end.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "operating_cash_flow_fact": {
+                "description": "The tier-1 fact carrying the last four quarters' operating cash flow.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "capital_expenditure_fact": {
+                "description": "The tier-1 fact carrying the last four quarters' capital spending.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "undrawn_facility_facts": {
+                "description": "Optional: the tier-1 fact(s) carrying undrawn credit lines - shown beside the cash, never counted in it.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "funding_because": {
+                "description": "How the company funds its growth until it earns, in at most twenty-five words. The gate counts the words.",
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "funding_because_figures": {
+                "description": "Every figure written into funding_because, declared here and standing in that text word for word, and equal to the value of a fact the block cites. Empty where the prose carries no figure.",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "producer_subtype": {
+            "description": "Owner rulings AC51-AC54 (contract 1.11.0): which of the three kinds of producer this is - oil_and_gas_producer (exploration and production companies), miner (gold, silver and copper miners) or royalty_and_streaming (companies that finance mines and wells for a share of the output). The three share one measure and differ in the reserves they are rated on and the evidence they must carry. The ground is written in archetype_because. Optional in this contract; the gate requires it of a single name whose archetype is resource_producer and refuses it on any other single name's frame.",
+            "enum": [
+              "oil_and_gas_producer",
+              "miner",
+              "royalty_and_streaming"
+            ]
+          },
+          "resource_base": {
+            "description": "Owner rulings AC51-AC54 (contract 1.11.0, architect ruling B12): what a producer's rating rests on - its main product and any by-products, the standard its reserves are reported under, and the tier-1 facts carrying the reserve report's date, the reserves, the price they were counted at, the output and the price received, today's price, the cost per unit, and the hedges; a company that does not hedge says so with hedge_none_by_design instead of hedge_facts, and the gate requires exactly one of the two. No prose field: every figure prints from facts. Optional in this contract; the gate requires it of a single name whose archetype is resource_producer and refuses it on any other single name's frame.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "product",
+              "reserves_standard",
+              "reserve_report_date_fact",
+              "reserve_facts",
+              "reserve_price_facts",
+              "production_facts",
+              "realized_price_facts",
+              "reference_price_fact",
+              "unit_cost_facts"
+            ],
+            "properties": {
+              "product": {
+                "description": "The main commodity, named as the floors' product list names it; whether it is on that list is the sufficiency gate's to judge.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "by_products": {
+                "description": "Optional: other commodities produced alongside the main one - shown apart, never converted by the council (owner ruling AC52(R6)).",
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "reserves_standard": {
+                "description": "The standard the reserves are reported under: the US SEC's oil and gas rules, the US SEC's mining rules (S-K 1300), Canada's NI 43-101, Australia's JORC code, or the SPE petroleum resources management system.",
+                "enum": [
+                  "sec_oil_and_gas",
+                  "sec_s_k_1300",
+                  "ni_43_101",
+                  "jorc",
+                  "prms"
+                ]
+              },
+              "reserve_report_date_fact": {
+                "description": "The tier-1 fact carrying the latest annual reserve report's effective date.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "reserve_facts": {
+                "description": "The tier-1 fact(s) carrying the reserves, by category, the company's own share only.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "reserve_price_facts": {
+                "description": "The tier-1 fact(s) carrying the price the reserves were counted at.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "production_facts": {
+                "description": "The tier-1 fact(s) carrying the output.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "realized_price_facts": {
+                "description": "The tier-1 fact(s) carrying the price received for the output.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "reference_price_fact": {
+                "description": "The tier-1 fact carrying today's price of the main commodity.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "unit_cost_facts": {
+                "description": "The tier-1 fact(s) carrying the cost per unit (for a royalty or streaming company, the price it pays per unit).",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "hedge_facts": {
+                "description": "The tier-1 fact(s) carrying the share of next year's output under contracts that lock in a price, and the average locked-in price. Exactly one of hedge_facts and hedge_none_by_design is carried.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "hedge_none_by_design": {
+                "description": "true where the company does not hedge. Exactly one of hedge_facts and hedge_none_by_design is carried.",
+                "type": "boolean",
+                "const": true
+              }
+            }
+          },
+          "integrated_major": {
+            "description": "Owner ruling AC52(1) on AC51(R2) (contract 1.11.0): an integrated oil major is rated as an ordinary profit-maker, and this block is how a reserve-reporting company declared one shows it is: the tier-1 facts carrying the upstream and downstream (refining and marketing) arms' shares of the group's capital employed over the last three financial years combined, in percent, from the segment note; the facts evidencing its own pipelines, processing or LNG assets as reported; and the midstream arm's share where the company reports midstream as its own segment. Whether the arms are significant is the sufficiency gate's to judge against the floors. Optional in this contract; the gate refuses it on any single name's frame that does not declare the archetype profitable_operator.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "upstream_share_fact",
+              "downstream_share_fact",
+              "midstream_evidence_facts"
+            ],
+            "properties": {
+              "upstream_share_fact": {
+                "description": "The tier-1 fact carrying the upstream production arm's share of the group's capital employed over the last three financial years combined, in percent.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "downstream_share_fact": {
+                "description": "The tier-1 fact carrying the downstream refining and marketing arm's share of the group's capital employed over the last three financial years combined, in percent.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              },
+              "midstream_evidence_facts": {
+                "description": "The tier-1 fact(s) evidencing the company's own pipelines, processing or LNG assets as reported.",
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "[a-z0-9][a-z0-9_]*"
+                }
+              },
+              "midstream_share_fact": {
+                "description": "Optional: where the company reports midstream as its own segment, the tier-1 fact carrying that arm's share of the group's capital employed over the last three financial years combined, in percent.",
+                "type": "string",
+                "pattern": "[a-z0-9][a-z0-9_]*"
+              }
             }
           },
           "fi_subtype": {
@@ -1525,6 +1754,11 @@
                 "type": "string",
                 "minLength": 1
               },
+              "rounded_places": {
+                "description": "Owner ruling AC41(2), unit SITTING-FIXES (architect ruling on audit finding r1-1): the decimal places a division that does not come out even was rounded at, once, half-up. Declared only on a share or a yield whose id is in a family council/floors/floors.json names ('rounded_quotient_families'); the value is written to exactly these places. The gate refuses it on any other fact, and refuses a rounded quotient that does not declare it.",
+                "type": "integer",
+                "minimum": 0
+              },
               "date": {
                 "description": "Unit U4(a2): the bar a dated tape row names (the largest fall, the highest and the lowest close).",
                 "type": "string",
@@ -1624,6 +1858,18 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "category": {
+            "description": "Owner ruling AC35(3), since 1.9.0: what the passage is about, so the advisors whose lens reads it first see it first - business (what the company is and does), peers (comparable companies), price (the market's pricing), positioning (who owns and trades it), calendar (dated events), cycle (the capital or commodity cycle), general (anything else). Optional; absent reads as general.",
+            "enum": [
+              "business",
+              "peers",
+              "price",
+              "positioning",
+              "calendar",
+              "cycle",
+              "general"
+            ]
           }
         }
       }
@@ -1729,7 +1975,7 @@
                 "minLength": 1
               },
               "measure": {
-                "description": "Owner ruling AC15 (P2, unit U3e): the rating basis the third canonical test uses, which must match the subject's archetype in the business frame. earnings_vs_history_and_peers for a profitable operator; ev_per_contracted_capacity_and_contracted_revenue_per_unit for a ramping infrastructure builder; ev_to_operating_income for a stabilised lessor; anchorless_ladder for an asset with no earnings; for a financial institution (contract 1.8.0) the measure its fi_subtype's row names - price_to_tangible_book_against_return_on_tangible_equity (bank), price_to_book_against_operating_return_on_equity (insurer), price_to_book_against_return_on_equity (reinsurer), price_to_earnings_against_return_on_client_assets (traditional asset manager), price_to_fee_earnings_against_fee_earning_assets (alternative asset manager), price_to_net_asset_value (financial holding). Carried on the 'rating_vs_history_or_peers' row only. Optional in this contract; the sufficiency gate requires it there, and requires the match, for a single name.",
+                "description": "Owner ruling AC15 (P2, unit U3e): the rating basis the third canonical test uses, which must match the subject's archetype in the business frame. earnings_vs_history_and_peers for a profitable operator; ev_per_contracted_capacity_and_contracted_revenue_per_unit for a ramping infrastructure builder; ev_to_operating_income for a stabilised lessor; anchorless_ladder for an asset with no earnings; for a financial institution (contract 1.8.0) the measure its fi_subtype's row names - price_to_tangible_book_against_return_on_tangible_equity (bank), price_to_book_against_operating_return_on_equity (insurer), price_to_book_against_return_on_equity (reinsurer), price_to_earnings_against_return_on_client_assets (traditional asset manager), price_to_fee_earnings_against_fee_earning_assets (alternative asset manager), price_to_net_asset_value (financial holding); for a reinvesting grower (contract 1.10.0) ev_to_gross_profit_against_revenue_growth; for a resource producer (contract 1.11.0) ev_to_reserves_against_cash_flow_at_the_recorded_price. Carried on the 'rating_vs_history_or_peers' row only. Optional in this contract; the sufficiency gate requires it there, and requires the match, for a single name.",
                 "enum": [
                   "earnings_vs_history_and_peers",
                   "ev_per_contracted_capacity_and_contracted_revenue_per_unit",
@@ -1740,7 +1986,9 @@
                   "price_to_book_against_return_on_equity",
                   "price_to_earnings_against_return_on_client_assets",
                   "price_to_fee_earnings_against_fee_earning_assets",
-                  "price_to_net_asset_value"
+                  "price_to_net_asset_value",
+                  "ev_to_gross_profit_against_revenue_growth",
+                  "ev_to_reserves_against_cash_flow_at_the_recorded_price"
                 ]
               },
               "peer_denominator_metrics": {

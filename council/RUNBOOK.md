@@ -2,10 +2,15 @@
 
 The whole pipeline (REBUILD-SPEC §4), operated from one interactive session
 on this machine. Everything below runs from the repository root with
-`PYTHONIOENCODING=utf-8`. The budgets are acceptance criteria (AB6/AC8): wall
-clock at most 1.5 hours from the go to the rendered report — the wait for a
-human to read the evidence brief is outside it — at most 2.2M Anthropic tokens,
-challenger at most 50% of the Anthropic cost.
+`PYTHONIOENCODING=utf-8`. Where a command below says `python`, it means your
+Python 3 interpreter, as in `council/CHECKS.md`: `python3.13` on the Mac (no bare
+`python` exists there), `python` on Windows. The budgets are acceptance criteria
+(AB6/AC8): wall clock at most 1.5 hours from the go to the rendered report — the
+wait for a human to read the evidence brief is outside it — at most 2.2M
+Anthropic tokens (AC8), challenger at most 50% of the Anthropic cost. For a given
+sitting the owner may set the token figure as a target, not a cap: the sitting
+reports where it comes out; AC8's 2.2M stands for every other subject until
+measured.
 
 ## 0. Ask the one question, and write the answer down (owner ruling AC3)
 
@@ -103,6 +108,23 @@ practice:
   figures sit in the fact table below. The table holds four quarters, so a pack
   carrying five is legal and the four you show are your own recorded choice; a
   table with room left owes every quarter the pack holds.
+  **One row per period, never one row per metric:** every metric guided for that period
+  goes in the row's `guided` list, and each is scored against its own `delivered_` partner,
+  which the seats' case file prints beside it; `delivered` names the row's headline metric.
+  Two rows for the same period refuse (a label that fits two quarters).
+- **This year so far (owner ruling AC45(9)).** Guidance for a period the
+  company has not reported yet - the year it is in - goes in the ruled
+  families like any other: its own row headed by that period (`FY<year>`),
+  the first guides in `guided`, each revision in `revisions`, and
+  `"delivered": null`. The gate lets a row wait for its outcome only where its
+  period falls after the one `latest_required_report_period` (the member's
+  own, inside an expression) leads with, so write that fact's value period
+  first, in the rows' own labelling (`Q<n> FY<year>, quarter ended ...`); a
+  value that is a bare date places no period, and every row then names its
+  delivered figure. A year's row cannot share the table with that year's
+  quarter rows (their ids end with the year's slug too). The pages print the
+  open cell as "not reported yet". Once the period is reported, the row names
+  its `delivered_` figure like any other.
 - **Every figure you write in the frame's prose is declared (owner ruling
   AC12.2).** `what_it_does_figures` beside `what_it_does`; a `figures` list
   inside `what_is_changing`, on each revenue line, and on each decisive-metric
@@ -137,8 +159,25 @@ practice:
   ONLY from them. The natural shape is a derived fact — the segment's revenue
   divided by every revenue line of the quarter — whose arithmetic the freeze
   prints; the worked example
-  (`council/tests/fixtures/evidence/exmp-pass.json`) shows it. A business with
-  one revenue line writes that line's own recorded revenue there.
+  (`council/tests/fixtures/evidence/exmp-pass.json`) shows it. With real
+  figures that division almost never comes out even, so record the share
+  rounded once, half-up, to at least four significant digits (owner ruling
+  AC41(2)): the gate recomputes the rounding at the figure's own decimal
+  places and names the right figure if yours is off, and the freeze's note
+  says the figure is rounded. The rule, whole: a quotient may be recorded
+  rounded only when its id is in a share or yield family the floors name
+  (`rounded_quotient_families`: ids starting `segment_revenue_share_` or
+  containing `share_of_period` or `yield`) AND its `derived` block declares
+  `rounded_places` equal to the places the value is written to — on every
+  path, a quotient that comes out even included, and a correction re-strikes
+  the figure at the declared places; every other derived figure stays exact. A business with one revenue line
+  strikes its share the same way (its revenue divided by itself). Never write
+  a line's own revenue in the share's place. The owner's documents print a
+  recorded share at reading precision, a percentage to one decimal (owner
+  ruling AC16(4)); a share written as a plain fraction prints as a
+  percentage to one decimal (0.62 prints 62.0%), the exact figure kept in
+  the fact's own entry; the change on a year ago is struck at reading
+  precision from the recorded figures (unit READ-B1).
 - **A revenue line points at revenue and nothing else (owner ruling
   AC12.3).** The ids under `how_it_earns[].facts` must be `revenue_q`,
   `revenue_prior_year_q`, anything starting `segment_revenue_`, or a fact
@@ -308,8 +347,279 @@ beside the date the series was read.
 institution.** `question_line` is the owner's question as he asked it, on one
 line, at most sixty words, uncut; the report's masthead prints it.
 
+**Units and the question line (AC37 and its amendment, floors 1.10.0).** Every fact's `unit`
+and every cycle series' `unit` must be on the floors' `allowed_units` list,
+written exactly as listed (`USD_million` and `USD_millions` are both there;
+`USD millions` is not). Any other unit refuses: "fact '<id>' has the unit
+'<unit>', which is not on the floors' list of allowed units (allowed_units,
+owner ruling AC37) ...". When a capture needs a unit that is not on the list,
+stop and ask the architect: he adds a plain measure of the asset (a physical
+quantity, a currency per such quantity or per share, a count, a rate, a
+period) without asking the owner and records it in the floors' authority
+note; any other unit goes to the owner. The `question_line` is checked for
+contradiction, not vocabulary. The subject's name and ticker are first
+taken out of both the line and `question_verbatim`, never cut from inside a
+word: the name as typed, each of its words whole, in that order, in any
+case, with nothing but spaces between them and an optional possessive `'s`
+after it, touching no letter, digit or figure sign (a currency, percent or
+comparison sign) on either side; only the name and its possessive come out,
+and any other mark beside it stays and is read as usual (so `(Buy Corp)`,
+`Buy Corp's` and `Best Buy—a retailer` are the name, but `buy, Corp`,
+`xBuy Corp` and `$Buy Corp` are not);
+the ticker only as a whole word written exactly as the subject block writes
+it, capitals and all (a ticker `BUY` leaves the owner's own "buy" alone). So
+the name stands in the line but a word of it standing alone allows nothing,
+and a figure joined to the ticker (`EXMP-1`) is still checked whole as a
+figure. The line then passes when every figure in it (whole, with its signs, so `$50` does not match `$50.5` nor
+`<$50` match `>$50`), every ticker in it and
+every decision word or negation in it - buy, sell, hold, long, short, add,
+trim, exit, not, no, never, in any form (`buying` answers `buy`; every word
+ending in `n't`, such as `don't`, answers `not`; words joined by a mark, as in `buy/sell`, are read apart) - is
+in `question_verbatim`. Ordinary words are free. So
+paraphrase freely, but add no figure, ticker or action the owner never
+wrote; one that he never wrote refuses by name. Beware ordinary uses of the
+decision words ("no debt", "the long history"): reword them if the owner's
+question never uses that word.
+
 Sources: brief §B (the per-sub-type facts and where to find them), §E (the floors)
 and §F (the JPMorgan list). Do not copy their tables here.
+
+### 1.0b A growth company that does not yet make a profit (owner ruling AC49)
+
+**The four-quarters rule (AC49(1), AC50(1)-(3)).** A company is rated on its
+earnings only when each of its four latest reported quarters shows an operating
+profit under standard accounting - after stock pay and after one-off charges, no
+"adjusted" figure. A company that reports only every six months needs its two
+latest halves profitable. Anything less puts it on the growth path:
+`archetype: reinvesting_grower`. The rule works both ways - a company with four
+profitable quarters is rated on its earnings however fast it grows, and a grower
+with four refuses as graduated. It governs `profitable_operator` and
+`stabilised_lessor`, turnarounds and cyclicals included; the contract-based
+infrastructure builder, the financial institution and an asset with no earnings
+are untouched. The machine chooses from the quarters you record, never you; the
+data is `archetype_measures.profitability_rule` in the floors, in force for a
+capture made from 2026-09-27. No sales at all, or a loss on every sale
+(negative gross profit), is refused openly (AC50(4)).
+
+**The sub-type.** `grower_subtype`: `recurring_revenue` for subscription and
+usage software; `transaction_platform` for a marketplace, a payments business
+or consumer internet earning a cut of the volume that passes through it. Pick
+by what the company's own segment reporting says most of its gross profit comes
+from; the ground goes in `archetype_because`. The two share one measure and
+differ in the evidence they carry.
+
+**The quarters and their ids.** One member per quarter, the id ending in the
+quarter's period: `revenue_quarter_<q>_fy<yyyy>`, `gross_profit_quarter_...`
+and `operating_income_quarter_...` (for example `_q2_fy2026`), at least the
+four latest, the newest being the latest report's quarter. A half-year reporter
+writes its halves under the same prefixes (`_h1_fy2026`). Never mix quarters and
+halves, and never two members for one period.
+
+**The trailing sums, derived.** `revenue_ttm`, `gross_profit_ttm`,
+`operating_cash_flow_ttm` and `capital_expenditure_ttm` are derived facts with
+their arithmetic declared: the four quarters summed (`sum`), or the full year
+plus this year to date less last year to date. `capital_expenditure_ttm` is a
+spend, recorded as a positive amount; the machine refuses it below zero. Record
+every figure the months of cash left are counted from in ONE unit.
+
+**The yardstick (AC50(5)).** The `rating_vs_history_or_peers` row carries
+`measure: ev_to_gross_profit_against_revenue_growth`,
+`subject_denominator_facts: [gross_profit_ttm, revenue_ttm]` in that order, and
+`answered_by` naming `enterprise_value`. Sales growth is the `revenue_q` /
+`revenue_prior_year_q` pair. Record the yardstick's two halves, `enterprise_value`
+and the gross profit, in ONE unit - sufficiency refuses a mixed pair by name.
+A forward figure appears only where the company
+itself guides it (`guidance_breakeven_` and the like); it is shown beside and
+never rated on.
+
+**The months of cash left (AC50(7), AC50(8)).** The frame's `growth_runway`
+block: `cash_facts` (`cash_and_investments_mrq_end` - cash plus short-term
+investments at the latest quarter end), `operating_cash_flow_fact`
+(`operating_cash_flow_ttm`), `capital_expenditure_fact`
+(`capital_expenditure_ttm`), optional `undrawn_facility_facts` (shown on every
+page, never counted), `funding_because` (how it funds itself, at most
+twenty-five words) and `funding_because_figures`. The machine works out the
+months - never write them as a fact. Under the line in the floors
+(`growth_runway.threshold_months`) the council may rate the company at most
+hold, sell still open, and every page says so in one sentence. A company
+generating cash is not burning it and passes. The cash, the burn and the growth
+pair must each sit in some decisive metric's `answered_by`.
+
+**Stock pay and the share count (AC50(6)).** `stock_based_compensation_q` and
+`diluted_shares_q`, each with its `_prior_year_q` pair from the same filing's
+comparative column. Stock pay is NOT subtracted from gross profit; the pages
+print it beside the yardstick as a share of sales, with the share-count growth.
+
+**The three standard tests (AC50(9) as amended).** `revenue_growth` (a new row
+of kind `canonical_test`) answered by the growth pair and, where the company
+reports it, an `arr_` fact; `profit_growth` answered by a `gross_profit_` fact;
+`free_cash_flow` answered by the three runway facts. **Naming rule:** an id
+starting `gross_profit_` carries an amount of gross profit and nothing else - a
+margin or any other ratio goes under `gross_margin_`, never under
+`gross_profit_`.
+
+**By sub-type (AC50(11)).** Recurring revenue: `net_revenue_retention_`, `rpo_`
+(remaining performance obligations) - each present or declared absent by design
+- and `arr_` where reported. Platform: `gross_volume_q` with its prior-year pair,
+or declared absent by design. Every grower: `convertible_notes_` (or absent by
+design), and the yardstick's own history, `ev_hist_` beside
+`gross_profit_ttm_hist_`, eight quarter ends, or the gap declared where the
+company has been listed under two years.
+
+**Peers (AC50(10)).** Growth companies of the same kind - subscription with
+subscription, platform with platform - each carrying `enterprise_value`,
+`gross_profit_ttm` and `revenue_ttm` as `peer_<metric>__<ticker>`, with its
+`comparable_because`. A mature profitable leader appears only with
+`not_comparable_on` saying why.
+
+**A model transition.** Where `what_is_changing.kind` is `model_transition`, the
+gross-profit and revenue denominators are the continuing business's, the same
+id ending `_continuing`, and the rule reads the continuing business's quarterly
+operating income (`operating_income_quarter_<period>_continuing`).
+
+**Every revenue line carries a `nature`:** `subscription`, `usage`,
+`transaction` or `product`.
+
+**Traps, one line each.** An "adjusted" margin or "Rule of 40" before stock pay
+is not standard accounting - record the reported figure. Recurring revenue and
+retention are the company's own definitions - quote the definition in the
+source. Billings are not revenue. A negative enterprise value (net cash above
+the market value) is recorded as it is, never floored. Convertible notes are
+dilution the enterprise value hides - record each issue's principal and
+conversion price.
+
+**The cycle.** Often identified (the long-dated discount rate drives these
+valuations). The series in brief §2.1 - the ten-year real yield, the Nasdaq
+Composite, a software sector fund - are SUGGESTIONS, never a rule.
+
+Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.1 (the facts and where
+to find them). Do not copy its tables here.
+
+### 1.0c An oil, gas or mining producer (owner rulings AC51-AC56)
+
+**Who is a producer (AC51 R1, R2; AC52 R8).** A company whose sales come mostly
+from oil, gas or metal it extracts under a reserve standard, or from royalties
+and streams on others' output: `archetype: resource_producer`. Service firms,
+refiners and pipelines are not producers; a company with nothing produced yet is
+refused openly. **The three kinds**, in `producer_subtype`:
+`oil_and_gas_producer`, `miner` (gold, silver, copper), `royalty_and_streaming`
+(finances mines and wells for a share of the output). The ground goes in
+`archetype_because`.
+
+**The products (AC51 R3, AC56(1)).** The main commodity is one of the floors'
+`resource_products`: `crude_oil`, `natural_gas`, `gold`, `silver`, `copper`.
+Anything else as the MAIN product refuses with a shopping list. A by-product off
+the list (zinc, lead, molybdenum) is named in `by_products` and shown apart.
+
+**The rule both ways (AC51 R4).** A company that reports reserves (any tier-1
+id starting `reserves_`) is rated as a producer - never as a profit-maker on
+peak earnings, never as a grower in a loss year. The one exception is an
+integrated oil major declared a profit-maker with its `integrated_major` block
+(AC52(1) as amended; §1.1 names the arms' ids); its pages show its reserves and
+today's `reference_price_` fact beside the profit yardstick.
+
+**The `resource_base` block.** `product`, optional `by_products`,
+`reserves_standard`, `reserve_report_date_fact`, `reserve_facts`,
+`reserve_price_facts`, `production_facts`, `realized_price_facts`,
+`reference_price_fact`, `unit_cost_facts`, and exactly one of `hedge_facts` and
+`hedge_none_by_design: true`. Each field names ids of its own family (below).
+
+**Reserves (AC52 R7).** The company's own share only; "resources" never
+counted (`resources_` is shown, advisory). Oil and gas: `reserves_proved_boe`
+(rated), `reserves_probable_boe` where published; miner and royalty company:
+`reserves_pp_attributable` (proven plus probable). An id starting `reserves_`
+carries a reserve amount and nothing else - a price goes under
+`reserve_price_<product>`, a past year-end under `reserves_hist_`. Name the
+category (`proved`, `probable`, `pp`) and, for a figure of one commodity, the
+commodity in the id: the pages read both from it.
+
+**Oil and gas shown apart (AC52 R6).** Beside the barrel-of-oil-equivalent total,
+record `reserves_proved_crude_oil_bbl` and `reserves_proved_natural_gas_mcf`
+(and each commodity's `reserve_price_` and `reference_price_` where carried):
+every page prints them on rows of their own. A by-product's reserve and output
+name it (`reserves_pp_zinc`, `production_zinc_ttm`) in the one unit the company
+reports.
+
+**The report date, the standard, the price deck (AC53 R9, R12).**
+`reserve_report_date`: the latest annual reserve report's effective date,
+`YYYY-MM-DD`, at most 456 days before the capture, else the sitting is refused.
+`reserves_standard`: `sec_oil_and_gas`, `sec_s_k_1300`, `ni_43_101`, `jorc` or
+`prms`. `reserve_price_<product>`: each price the reserves were counted at, in
+the product's price unit. The council takes reserves as reported.
+
+**Units (AC52 R6; the gas trap, F4).** Crude oil in `bbl`, priced `USD per
+barrel`; gas in `mcf`, priced `USD per MMBtu`; gold and silver in `oz`, `USD per
+ounce`; copper in `lb`, `USD per pound`. An oil and gas producer's rated
+reserves and output are in `boe` (six thousand cubic feet to a barrel), its unit
+cost in `USD per boe` or per barrel. The council converts nothing: gas counted in
+cubic feet is never set against a price per million British thermal units, and a
+pair in two units reads "not comparable in one unit". Record `enterprise_value`,
+`operating_cash_flow_ttm` and every peer's in ONE unit - plain `USD` where the
+reserves are counted in single barrels or ounces, or the value per unit of
+reserves reads in millions per barrel.
+
+**Today's price (B4).** `reference_price_<product>` from the benchmark the
+product list names, dated at the sitting (freshness no looser than 3 days).
+
+**Output and the price received.** `production_quarter_<period>` and
+`realized_price_quarter_<period>`, one member per quarter (`_q2_fy2026`), the
+four latest; `production_q` with `production_prior_year_q` and
+`realized_price_q` with `realized_price_prior_year_q`, each pair from one
+report.
+
+**Cost per unit (AC54 R14, R16).** `unit_cost_<product>` in the words the fact
+carries as its label: all-in sustaining cost (the World Gold Council definition)
+for gold, operating cost per barrel for oil and gas. A royalty or streaming
+company: one `stream_payment_` fact per stream, every one cited in
+`unit_cost_facts` and named by `profit_growth`; `operator_concentration_` for
+the share of income from its largest mine or operator.
+
+**Hedges (AC53 R11).** `hedge_` facts - the share of next year's output under
+contracts that lock in a price, and the average locked-in price - cited in
+`hedge_facts`; or `hedge_none_by_design: true` with the `hedge_` gap declared
+absent by design. Shown beside today's price, never netted.
+
+**Derived, and the balance sheet.** `production_ttm`, `operating_cash_flow_ttm`,
+`capital_expenditure_ttm` (a positive spend) are derived facts, arithmetic
+declared. `total_debt_mrq_end`, `cash_and_investments_mrq_end`,
+`asset_retirement_obligation` (oil and gas, miner); `standardized_measure` for a
+US SEC filer in oil and gas (shown beside, never the denominator). The machine
+works out reserve life and value per unit - never write them as facts.
+
+**The yardstick and the tests (AC52 R5, AC54 R13-R14).** The
+`rating_vs_history_or_peers` row: `measure:
+ev_to_reserves_against_cash_flow_at_the_recorded_price`,
+`subject_denominator_facts: [<the rated reserves id>, operating_cash_flow_ttm]`,
+`answered_by` naming `enterprise_value`. `profit_growth`: `production_q`,
+`production_prior_year_q`, `realized_price_q` and a `unit_cost_` fact (royalty:
+every `stream_payment_`). `free_cash_flow`: `operating_cash_flow_ttm` and
+`capital_expenditure_ttm` - all capital spending. A negative cash flow passes and
+prints "negative, not a multiple".
+
+**Peers and own history (AC54 R15).** Producers of the same main commodity and
+kind, each with `peer_enterprise_value__<t>`, `peer_<reserves id>__<t>` and
+`peer_operating_cash_flow_ttm__<t>` in the subject's units; an outsider only with
+`not_comparable_on`. History: `ev_hist_` beside `reserves_hist_`, five year
+ends, or the gap declared.
+
+**Also.** A sale of a field or mine: `what_is_changing.kind: model_transition`,
+the denominators ending `_continuing`. Every revenue line carries `nature`:
+`commodity_sales`, `royalty` or `stream`, together more than half of revenue.
+`cycle_dependence: identified`.
+
+**Traps, one line each.** The standardized measure uses the SEC's twelve-month
+average price, not today's. Hedges move the price received away from the
+benchmark. All-in cost definitions differ (by-product credits) - quote the
+company's. Write-downs of reserves and impairments. Country risk
+(`jurisdiction_`, advisory). A stream's fixed payment per unit is not a mining
+cost. An integrated major's refining and chemicals arms are not production.
+
+**The cycle.** Always identified. The series in brief §2.2 - the product's own
+price, crude stocks, the rig count, the broad dollar, and for precious metals the
+ten-year real yield - are SUGGESTIONS, never a rule.
+
+Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.2. Do not copy its tables
+here.
 
 ### 1.1 Gather, then write the capture
 
@@ -317,7 +627,16 @@ Derive what THIS question needs: the four valuation tests for a priced
 asset (profit growth · free cash flow · rating against own history or
 peers · earnings/cash yield against the risk-free rate) plus whatever the
 owner's thesis turns on, on top of the ruled floors in
-`council/floors/floors.json` (floors 1.7.0). Gather live: filings WITH their
+`council/floors/floors.json` (floors 1.17.0). A producer's by-product off the
+floors' product list (zinc, lead, molybdenum) is shown apart: its reserve and
+output figures name it and sit in one unit of quantity (`by_product_units`), never converted
+or counted in the rating (owner ruling AC56(1)). A royalty or streaming
+company's first standard test names every `stream_payment_` fact its resource
+block cites, one per stream (owner ruling AC56(2)). An integrated oil major declared a
+profit-maker names each arm's share of capital employed by the fact id's
+prefix: `capital_share_upstream`, `capital_share_refining_and_marketing`, and
+`capital_share_midstream` where the company reports midstream on its own.
+Gather live: filings WITH their
 prior-year comparatives, guidance, the dated events calendar, the risk-free
 rate, market data from the broker, short interest where the class has it, and
 — new at floors 1.3.0, all conditional, so present or declared absent with a
@@ -331,7 +650,85 @@ stock and also conditional: insiders' dealings over the last twelve months
 its shares (`buyback_*`) — each present, or declared absent-by-design with the
 gap's `fact_class` exactly `insider_flow_` or `buyback_`; a gap with any other
 reason reads as a gathering failure and refuses, and what management owns
-(`insider_ownership_pct`) does not answer the insider-dealing floor.
+(`insider_ownership_pct`) does not answer the insider-dealing floor. Made real
+at floors 1.8.0 (owner ruling AC35(2)): the buyback floor reads only
+`buyback_spend_<period>` — the amount actually spent on repurchased shares in
+that period, dated at the period end (`buyback_spend_q`); an authorisation
+(`buyback_authorisation_remaining`) or a yield alone does not answer it, and a
+share count may ride beside it as `buyback_shares_<period>`. The insider floor
+reads only dealings, one set of three facts per Form 4 dealing sharing a suffix
+`<n>`: `insider_flow_direction_<n>` (`buy` or `sell`, unit `direction`),
+`insider_flow_date_<n>` (the trade date `YYYY-MM-DD`, unit `date`) and
+`insider_flow_size_<n>` (the shares traded, unit `shares`); a dealing missing
+any part refuses by name, and a summary such as `insider_flow_net_shares_12m`
+may ride beside but answers nothing. The two gap classes are now exactly
+`buyback_spend_` (no repurchase programme) and `insider_flow_direction_` (no
+published dealings, or none in the window); the old `buyback_` and
+`insider_flow_` gap classes no longer lift anything. The gate checks every
+fact under either prefix for its shape and its unit, and anything else refuses
+by name. A fact id carries its period or its number after the prefix (a bare
+`buyback_spend_` or `insider_flow_direction_` refuses), and every value is read
+exactly as stored, so a stray space or line break refuses too. A spend is a positive amount dated not after the capture, in a currency
+unit (`USD`, `USD_million`, `USD_millions`, `USD_m`, `USD_thousand`,
+`USD_billion`, `USD_billions`, `US$m`, `EUR` or `EUR_b`); the one exception is a
+spend of exactly zero, which may ride beside a spend that counts and is not
+itself counted. Every dealing's direction reads exactly `buy` or `sell` (unit
+`direction`), its date falls within the twelve months before the capture (366
+days, unit `date`), and its size is positive in `shares`, `thousand_shares`,
+`thousands_of_shares` or `million_shares`; a dealing with any part wrong is not
+counted at all.
+
+**The holder-structure test comes first (floors 1.12.0, owner rulings AC41(1)
+as amended of record and AC47).** Before gathering any dealing, record what
+the officers and directors together own, from the proxy's security-ownership
+table: `insider_ownership_pct` in `%` (where the proxy prints only a "less
+than" line, record that figure with a `ceiling` bound naming the published
+line), or the group row's shares as `insider_group_shares` beside the shares
+in issue (`common_shares_outstanding`, `shares_outstanding`,
+`shares_outstanding_mrq_end` or `shares_common_outstanding`) in the SAME
+unit; where two shares-in-issue figures disagree the smaller decides, and a
+group figure published as "more than" or "less than" carries its bound and
+decides only the way it points. The group row counts as it stands: shares the officers and directors
+control through trusts and holding companies count, a family holding outside
+that row does not. Then the depth, against the threshold the floors carry
+(`depth.threshold_pct` on the insider floor):
+- **Under the threshold:** the three summary facts, each dated at the capture
+  and each source naming the method - the Form 4 filings in the twelve months
+  before the capture, which rows were counted, how the value was summed:
+  `insider_flow_summary_count` (the number of dealings, unit `count`, a whole
+  number above zero), `insider_flow_summary_direction` (`buy`, `sell` or
+  `even` by net shares, unit `direction`) and `insider_flow_summary_value`
+  (the total value of the dealings, bought plus sold, in a currency unit the
+  buyback floor names). Beside them, every dealing by the company's own chief
+  executive (both, where the company has two co-chief executives; a division
+  head with a chief executive title does not count), its finance chief and
+  its chair, each as the three dealing facts with the role in the id ending:
+  `ceo_<n>`, `cfo_<n>`, `chair_<n>`. One person in two roles is recorded once,
+  under the first of `ceo`, `cfo`, `chair` that applies. A window with no
+  dealing is declared (the `insider_flow_direction_` gap, absent-by-design),
+  never summarised as nothing.
+- **At or over the threshold:** every dealing, as above. Carrying every
+  dealing meets the floor at either depth - more is never less - and a
+  summary alone refuses at this ownership, naming the holding it found.
+- **The ownership cannot be established** (no percentage is published and no
+  share counts pair): declare the `insider_ownership_pct` gap absent-by-design
+  and gather NO `insider_flow_` fact. The floor does not apply, the council
+  rules without the insider evidence, and the approval document, the report
+  and the seats' case file say once that insider information was not
+  available and was not considered. A pack that carries an insider fact beside
+  an unknown ownership refuses.
+
+The gate checks each summary part's shape, unit and date (the capture's own
+day) wherever a summary is carried, not its truth, and never
+that the three officers' dealings are complete - both are the gatherer's
+duty, stated here.
+
+**The financial-year end (floors 1.12.0, owner ruling AC46(2)).** Every
+single-stock capture records `fiscal_year_end`: the month and day the
+company's financial year ends, written `MM-DD`, unit `month_day`, from the
+cover of the latest annual report. The gate asks it of every capture made on
+or after the floor's `applies_from` date; a capture made earlier - every
+capture on record - is never asked.
 
 **The third canonical test keeps its id `rating_vs_history_or_peers` and its
 meaning — but peers are now EXPECTED wherever a peer set exists, and it now
@@ -345,17 +742,62 @@ rules that matter most in practice:
 
 - The broker is a MARKET-DATA source only. Never call the two calls that
   read the owner's book; the gate refuses sources naming them.
-- Every figure is the exact string observed — never round, never reformat.
+- **The daily price series reaches the capture through the helper, never through your own
+  reading.** A gatherer seat makes the broker's price-history call — for the subject and, where
+  one is ruled, the benchmark — so the long reply lands in that seat's transcript, not in yours.
+  Then run, once per series, on that seat's own transcript
+  (`subagents/agent-<id>.jsonl` beside your session's):
+
+  ```
+  python -m council.evidence.series <agent-transcript.jsonl> --contract <id> --ticker <T> \
+      --calendar <C> --as-of <D> --source "<where it was read>" \
+      --last-date <the last finished session> --out <file>
+  ```
+
+  and paste the object it writes as `price_series` or `benchmark_series`. It takes the last
+  reply for that contract, copies every close and volume exactly as the broker wrote it, and
+  drops any bar after `--last-date` (a day still trading). Never retype a bar.
+- Every figure is the exact string observed — never round, never reformat. One exception is
+  the broker's float noise: a figure that comes back as the full digits of a single-precision
+  number (a price with a long tail of digits where the quote shows two places) is refused at the
+  gate — as a fact's own value or as a figure written inline in a derived fact's arithmetic —
+  and the gate names the short figure to write; write that and quote the broker's digits in the
+  source.
+- The previous close is the price series' last bar, never a snapshot field: the broker's
+  snapshot has returned an empty previous close.
+- Give every tier-1 fact a plain `label` of at most eight words: its plain name, never its id,
+  on one line (owner ruling AC15, P5). The gate refuses a longer label, so write them short
+  the first time.
 - A derived figure declares `derived.operation` + `operands`; the gate
   recomputes it exactly and the freeze generates its equation sentence.
 - A prior-period comparative is dated by the CURRENT filing that
   republishes it (its own fact family, longer freshness rule).
+- **A dated record of a finished period is current for five years (owner ruling AC41(3)).**
+  A first guide or a revision for a period now reported, a delivered figure, a filed report for
+  a finished quarter or year, a past year-end balance: date it by the document you read it
+  from, and give it the floors' `freshness_ceiling` → `closed_period_record_rule_days` (five
+  years, 1,826 days) as its `freshness_rule_days`. Everything else keeps a rule matching how often it is
+  republished. The gate refuses any rule longer than 1,826 days, so a record older than that is
+  too old to carry. That is five calendar years as the floors count them; across a century year
+  that is not a leap year the span is one day shorter, so a record could count as current one
+  day past its fifth anniversary, first reachable by a sitting in 2101 (the floors' own note,
+  accepted).
 - A shut market is legal and disclosed: `market_state.state = "closed"`
   plus a plain `disclosure` sentence — it reaches the seats.
 - Every Tier-2 passage states its figures literally in its own text. The
   `figures` list is a HAND-WRITTEN, curated assertion of the figures that matter, written in the
   same format as the passage prose (grouped thousands included) — never a mechanical dump of every
   numeral in the text (MAC-5).
+- Tag each Tier-2 passage's `category` from `business`, `peers`, `price`, `positioning`,
+  `calendar`, `cycle`, `general` — `general` where none fits (capture contract 1.9.0). Each
+  advisor's case file places the passages its lens reads first at the top; every seat still
+  reads every passage, and the reviewer, the chairman and both outside calls read capture order.
+  Every seat, the outside challenger and the evidence auditor read the facts' sources through a
+  numbered index before the fact table: text that several facts' sources repeat is printed once in
+  an entry, and each fact's line carries the rest of its source verbatim - usually its page, line
+  or column, sometimes also its address or saved file; one document can take several entries, and
+  a source no other fact repeats stays in full. The owner's one-page brief, full document and
+  report page keep full citations.
 - Write the sufficiency checklist INTO the capture: every requirement
   (the four tests + thesis-specific) mapped to the fact ids that answer it. The four
   canonical tests carry EXACTLY these ids — `profit_growth`, `free_cash_flow`,
@@ -399,9 +841,9 @@ rules that matter most in practice:
   — copy its arithmetic and its source sentences, but note that it was
   written to an older contract (`capture_version` 1.2.0) and carries neither
   the tags nor a business frame, because runs on record are never rewritten.
-  Your capture is 1.8.0 and needs both. The migrations are set out in
+  Your capture is 1.11.0 and needs both. The migrations are set out in
   `council/tests/test_evidence.py`, `to_contract_1_4_1` through
-  `to_contract_1_8_0`, and the same file prints
+  `to_contract_1_11_0`, and the same file prints
   exactly which frame rows the two single-name sittings on record would have
   needed.
 - **The four sizing facts, in the units the hand-off is pinned to (ruling
@@ -549,7 +991,9 @@ python -m council.bridge.codex_bridge evidence <capture.json> <run>/evidence/cha
 
 The command builds the brief, sends it on stdin, and writes what came back into
 `<run>/evidence/challenge/`: `brief.md` (exactly what the auditor read),
-`request.json`, `response.json`, `events.jsonl`, `probe.json` and `result.json`. It runs the
+`request.json`, `response.json`, `events.jsonl`, `probe.json` and `result.json`. Where the
+capture carries a daily price series, the brief also shows the auditor the price table the freeze
+will compute from it, figure by figure, so a missing moving average is never raised as a gap. It runs the
 standing smoke test first and refuses the paid call if that fails or lists a forbidden tool
 (see "The challenger's tool posture", §3 step 5). **One audit
 per sitting:** a `result.json` that already stands refuses a second call, the
@@ -764,11 +1208,14 @@ python -m council.evidence.brief <out_a>/pack.json --out <run>/evidence/EVIDENCE
 ```
 
 The one-page brief is deterministic text out of the frozen pack — no model call,
-nothing on the page that is not already in the pack, not one figure reformatted.
-It is one page: the question, what the business is, the numbers that decide it,
-what the outside auditor asked for and what happened to every point, what the
-record admits it does not carry, the price against its 52-week range, the dated
-events, and what the gathering cost. The command reads `capture-usage.json` from
+nothing on the page that is not already in the pack. Every figure reads in the
+report's market form ($84.20, 6.8%, 18 Nov 2026); the full document prints the
+exact recorded value beside it in each fact's own entry, and the pack itself stays
+exact. It is one page: the question, what the business is, the numbers that decide
+it (one small table), what the outside model asked for in the evidence check and
+what happened to every point, what the record admits it does not carry, the price
+against its 200-day average and its 52-week range, the dated events by name, and
+what the gathering cost. The command reads `capture-usage.json` from
 the folder it writes into, so §1b comes first.
 
 **The full document is what a person actually approves (owner ruling AC15,
@@ -780,6 +1227,20 @@ trimmed. The one-page brief was never fit to approve: it is bounded to one page
 and cuts mid-figure. The full document is the one the reviewer reads and says go
 on.
 
+**The same `--full` command writes the page he reads it on (owner ruling
+AC40(2b)).** Beside `EVIDENCE-FULL.md` it writes `EVIDENCE-FULL.html`: the same
+text, rendered from the Markdown's own bytes, in the report's look, one file that
+opens from disk and fetches nothing. The owner cannot open Markdown — give him
+the PAGE, and open it for him on the Mac:
+
+```
+open <run>/evidence/EVIDENCE-FULL.html
+```
+
+Do not send files through the app's file card: they do not save on his machine
+(recorded 2026-09-24). The command refuses, and writes neither file, when some
+other file already stands at the page's path. Never render a page by hand.
+
 **Generate both in BOTH modes.** In auto-mode nobody reads them and the council
 sits; both are still part of the record. `host init` now refuses an
 **unattended** sitting whose full document is missing too (owner ruling
@@ -789,8 +1250,8 @@ handed, not a stale document from another pack. Missing, and init names the file
 to produce; from a different pack, and init refuses and names the command to
 regenerate it — no run is created either way.
 
-**In `reviewed` mode the sitting now stops.** Give the FULL document to the
-person who chose that mode. Nothing is paid until he writes, in the same folder:
+**In `reviewed` mode the sitting now stops.** Give the FULL document — its
+page, opened as above — to the person who chose that mode. Nothing is paid until he writes, in the same folder:
 
 ```
 <run>/evidence/approval.json
@@ -805,7 +1266,8 @@ evidence (owner ruling AC3): a go that cannot be tied to the exact document and
 pack the council sits on is not that go. Record the `document_sha256` of the full
 document he approved (`shasum -a 256` on the file) and the `pack_sha256` of the
 pack it summarizes — it is printed at the head of EVIDENCE-FULL.md, so he copies
-the one he actually read. `host init` refuses a reviewed sitting whose full
+the one he actually read. The `document_sha256` stays the MARKDOWN's hash, never
+the page's; the page prints that same hash at its foot. `host init` refuses a reviewed sitting whose full
 document is missing, whose approval omits either hash, whose `document_sha256` no
 longer matches the document on disk (it was rewritten after he read it), or whose
 `pack_sha256` is not the pack the council was handed (the go was taken on a
@@ -813,6 +1275,16 @@ different pack) — so nobody can approve one document, or one pack, and sit on
 another. It also re-renders the full document from the pack it was handed and
 refuses unless the bytes match the one approved, so a document whose head line
 names this pack while its body was rendered from a different one is caught too.
+**Approve and sit on the same code:** because init re-renders with the code it
+runs, a document approved before a change to how the document reads (a merge such
+as READ-B2) is refused after it — re-run the `--full` command and take a fresh go
+on the new document.
+In the reviewed mode it refuses, too, a missing `EVIDENCE-FULL.html` or one that
+is not the rendering of the approved Markdown — so the page he read is provably
+the document he approved — and it copies the page into the run beside it.
+In the unattended mode a missing page is allowed, but a page that is there must
+be the rendering of the full document too, or init refuses: the run never files
+a page of some other document.
 The 1.5-hour clock starts at the approval moment, so the wait costs the
 sitting nothing. An `approval.json` beside an `unattended` mode is refused rather
 than guessed at: one of the two would be a lie about who saw the evidence.
@@ -838,6 +1310,11 @@ frame's reading rests on, or a headline figure — and the command calls the
 correction *rebuilding* and refuses to let the pack sit until you run the delta
 re-audit of section 1a. Correct a peripheral figure and it *narrows*: no
 re-audit, and the chain re-runs green at once.
+
+A correction also removes, from the capture's folder, the approval, the one-page
+brief, the full document AND its page (`EVIDENCE-FULL.html`): no stale page
+survives a changed fact. Run the `--full` command again for a fresh document and
+page, and take a fresh go on it.
 
 You never `--set` a derived figure directly; correct the fact it is struck from
 and it is re-struck for you. A correction whose re-strike would turn a division
@@ -916,6 +1393,27 @@ kill. Loop until DONE:
    is carried by its own briefs and this measure (`council/lib/prose.py`, with
    its thresholds and word lists in `council/floors/prose-rules.json`), never by
    the host machine's own CLAUDE.md — a sitting must not rely on that file.
+
+   **The chairman's four fields** (UPGRADE-2 U5(b) and READ-C1, owner rulings AC5, AC35(3)
+   and AC44(1)): first the one-line answer (`answer_line` — one line answering the owner's
+   question, printed above everything else on the page and never carried into the Atlas
+   hand-off; a figure in it that traces to no recorded fact or key number is marked where the
+   line is printed), then what decided it (`decisive_argument` — the advisor whose argument decided the rating, and
+   why), the business in his own words (`business_read`, at most 120 words) and one row per
+   decisive metric (`decisive_metrics_read`). At publish each row's value is traced to the
+   facts its metric is answered by (and the figures a passage answering it states), by the
+   same rule that marks business-frame prose; a row
+   whose figure traces to none is marked "not traced to a recorded fact" on the row, once in
+   the verdict's warnings and beside the row on the page — never refused, never re-asked. The host checks them on each chair document
+   BEFORE the writing measure; a field missing or not in the form asked is asked for ONCE, as
+   its own request (`chair_draft_fields` / `chair_resolve_fields`) — dispatch it like any seat.
+   Its answer is spliced onto the accepted document; after it the field stands as written, or
+   publishes empty — never a refusal. A `price` trigger's unit must be its price fact's unit
+   exactly (refused otherwise, like any wrong figure); a price level counts as supported where
+   it is one the market-structure advisor named, or sits at or within 1% of a turning point the price
+   history carries — the year's lowest or highest close, a moving average (owner ruling
+   AC44(4)); where no price trigger is supported, the verdict carries one plain warning line
+   saying which level is the chairman's own judgement and naming the nearest turning point.
 5. When the chair's draft is in, `step` writes the challenge request and
    prints the bridge command:
 
@@ -925,7 +1423,11 @@ python -m council.bridge.codex_bridge challenge <run_dir>
 
    Run it yourself (detached or in the background if you prefer — its
    result lands durably in `challenge/result.json` either way). It smokes
-   the model first and refuses the paid call on a failed smoke.
+   the model first and refuses the paid call on a failed smoke. Beside the smoke it asks
+   `codex --version` once, unpaid, and records the first line as `codex_version` on every result
+   it writes (owner ruling AC25(4)); the evidence audit does the same, and the host copies that
+   one into the run record at `init`. The verdict's provenance carries both, and the report's
+   model stamp prints them — nothing where none was recorded.
 
    **The challenger's tool posture.** The challenger reads the case file it is
    sent and nothing else: no web search, no reach into the owner's connected

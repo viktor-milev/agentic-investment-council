@@ -37,8 +37,9 @@ import tempfile
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from council.engine import runrecord  # noqa: E402
-from council.evidence import brief, gate, tape, trace  # noqa: E402
+from council.engine import chair_fields, runrecord  # noqa: E402
+from council.engine.briefs import LENS_TITLES, _source_clauses  # noqa: E402
+from council.evidence import brief, freeze, gate, sufficiency, tape, trace  # noqa: E402
 from council.lib import prose, subjects  # noqa: E402
 from council.report import chart  # noqa: E402
 
@@ -86,9 +87,14 @@ CURRENCY_SIGNS = {
     "CAD": "C$", "AUD": "A$",
 }
 # The scale words a money unit may carry, as the factor to whole currency units.
+# `million`, `millions`, `billion`, `billions` and `trillion` are units the floors allow and the
+# packs carry (every USD_million fact of the JPM sitting); unread, they fell to the fallback
+# spelling "<figure> USD million" (unit READ-A).
 _SCALE_WORDS = {"thousand": decimal.Decimal(1000), "m": decimal.Decimal(10) ** 6,
                 "mn": decimal.Decimal(10) ** 6, "bn": decimal.Decimal(10) ** 9,
-                "b": decimal.Decimal(10) ** 9}
+                "b": decimal.Decimal(10) ** 9, "million": decimal.Decimal(10) ** 6,
+                "millions": decimal.Decimal(10) ** 6, "billion": decimal.Decimal(10) ** 9,
+                "billions": decimal.Decimal(10) ** 9, "trillion": decimal.Decimal(10) ** 12}
 _THOUSAND = decimal.Decimal(1000)
 _MILLION = decimal.Decimal(10) ** 6
 _BILLION = decimal.Decimal(10) ** 9
@@ -229,19 +235,18 @@ def _money_parse(unit):
 
 
 def _percent_number(exact, negate):
-    """A percentage to ONE decimal (owner ruling AC16(4)); a whole value shows no decimal.
-    `negate` prints a drawdown with a minus. Returns the body WITHOUT the % sign, or None where
-    one decimal would erase a live figure (the caller then keeps the exact text)."""
+    """A percentage to ONE decimal (owner ruling AC16(4)), a whole value included: a whole value
+    keeps its one decimal beside a fractional one (architect ruling 2 on the READ-A bracket). `negate`
+    prints a drawdown with a minus. Returns the body WITHOUT the % sign, or None where one
+    decimal would erase a live figure (the caller then keeps the exact text)."""
     if exact == 0:
-        return "0"
+        return "0.0"
     rounded = exact.quantize(decimal.Decimal("0.1"), rounding=_HALF_UP)
     if rounded == 0:
         # One decimal would print 0.0% for a live figure; the caller falls back to exact text.
         return None
     if negate:
         rounded = -abs(rounded)
-    if rounded == rounded.to_integral_value():
-        return "{:d}".format(int(rounded.to_integral_value()))
     return "{:.1f}".format(rounded)
 
 
@@ -530,6 +535,15 @@ def format_number(value, unit=None, currency=None):
         return _strip_trailing(rounded) + " " + suffix
     if unit in ("years", "days"):
         return _fixed_unit(exact, 1, unit, fallback)
+    if unit == "count":
+        return _plain_count(exact, fallback)
+    if unit == "bars":
+        return _plain_count(exact, fallback) + " trading days"
+    if unit == "percentage_points":
+        # Still never a "%" (round 1 finding r1-2 of U6b): a difference of two percentages is
+        # points, and it reads to one decimal like every percentage (unit READ-A).
+        body = _percent_number(exact, False)
+        return (fallback if body is None else body) + " points"
     if unit == "contracts":
         return _fixed_unit(exact, 0, "contracts", fallback)
     return _fallback_unit(exact, unit, fallback)
@@ -711,6 +725,11 @@ ARCHETYPE_WORDS = {
     "stabilised_lessor": "stabilised lessor",
     "no_earnings_asset": "asset with no earnings",
     "financial_institution": "financial institution",
+    # Owner rulings AC49(1) and AC50 (GROWTH-ARCHETYPE (c)): worded as the evidence brief words
+    # them; the sub-type, earnings and ruled-sentence words are the brief's own, read from there.
+    "reinvesting_grower": "a growth company that does not yet make a profit",
+    # Owner rulings AC51-AC54 (RESOURCE-ARCHETYPE (c)): worded as the evidence brief words them.
+    "resource_producer": "an oil, gas or mining producer",
 }
 MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -736,6 +755,11 @@ MEASURE_WORDS = {
     "price_to_fee_earnings_against_fee_earning_assets":
         "price against fee earnings, read against the fee-earning assets",
     "price_to_net_asset_value": "price against net asset value",
+    "ev_to_gross_profit_against_revenue_growth":
+        "enterprise value against gross profit, read beside sales growth",
+    "ev_to_reserves_against_cash_flow_at_the_recorded_price":
+        "enterprise value against its reserves and against the cash they "
+        "earn, each beside the price it rests on",
 }
 
 
@@ -767,33 +791,56 @@ FINDING_KIND_WORDS = {
 DISPOSITION_MEANING = {
     "addressed": "the verdict actually moved",
     "adjudicated": "engaged and settled, verdict unchanged",
-    "overruled": "rejected, with the reason on the record",
+    "overruled": "set aside, with the reason on the record",
+}
+# The tag each disposition wears on the page (owner ruling AC41(4): a rejected point is "set
+# aside"); its meaning above is the tag's hover title and prints only where the chairman's
+# response is empty (unit READ-A).
+DISPOSITION_TAGS = {"addressed": "acted on", "adjudicated": "weighed", "overruled": "set aside"}
+
+# The verdict's fields in plain words, for the list of what changed after the outside challenge
+# (unit READ-A); a field not listed prints its own name.
+FIELD_WORDS = {
+    "rating": "the rating",
+    "conviction_rationale": "the chairman's rationale",
+    "mispricing.read": "the price read",
+    "mispricing.magnitude": "how far off the price is",
+    "mispricing.arithmetic": "the arithmetic behind the price read",
+    "tripwires": "what changes this rating",
+    "sizing_inputs": "the sizing facts about the asset",
+    "evidence_dependencies": "the facts the ruling rests on",
+    "key_numbers": "the numbers this ruling turns on",
+    "decisive_argument": "what decided it",
+    "business_read": "the chairman's read of the business",
+    "decisive_metrics_read": "the chairman's table of decisive numbers",
+    "constituent_notes": "the notes on each constituent",
 }
 
 CHANGE_LABEL_WORDS = {
-    "change": "changed after the audit",
-    "endorsed_raise": "a raise the auditor endorsed",
-    "unendorsed_raise": "a raise the auditor did not see",
-    "degradation_cap": "capped because the audit failed",
+    "change": "changed after the outside challenge",
+    "endorsed_raise": "a raise the outside challenge endorsed",
+    "unendorsed_raise": "a raise the outside challenge did not see",
+    "degradation_cap": "capped because the outside challenge failed",
+    "runway_cap": "capped at hold because the company's cash covers too few months",
 }
 
 CHALLENGE_STATUS_WORDS = {
-    "success": "the challenger answered",
+    "success": "the outside model answered",
     "launch_failure": "the challenge could not be launched",
-    "timeout": "the challenger ran out of time",
-    "malformed_output": "the challenger's answer could not be read",
-    "schema_failure": "the challenger's answer did not match the required shape",
-    "binding_failure": "the challenger's answer did not bind to this run's case file",
+    "timeout": "the outside model ran out of time",
+    "malformed_output": "the outside model's answer could not be read",
+    "schema_failure": "the outside model's answer did not match the required shape",
+    "binding_failure": "the outside model's answer did not bind to this run's case file",
     "internal_failure": "the challenge machinery failed on this side",
 }
 
 # The loud sentence for a failed outside audit (REBUILD-SPEC section 7), stated once, up top
 # in the challenge section, in the spirit of the old N3 banner.
-AUDIT_FAILED_SENTENCE = "THE OUTSIDE AUDIT DID NOT COMPLETE - THIS VERDICT IS UNAUDITED"
+AUDIT_FAILED_SENTENCE = "THE OUTSIDE CHALLENGE DID NOT COMPLETE - NO OUTSIDE MODEL CHECKED THIS VERDICT"
 
 REQUIREMENT_KIND_WORDS = {
-    "canonical_test": "one of the four canonical tests",
-    "thesis_specific": "specific to the owner's thesis",
+    "canonical_test": "standard test",
+    "thesis_specific": "your thesis test",
     "floor": "a ruled floor for this subject",
     "constituent_essential": "essential for one named constituent",
 }
@@ -851,6 +898,48 @@ ADVISOR_SEATS = (
 )
 
 
+# The page's glossary and name maps, as DATA (council/report/glossary.json; unit READ-A, owner
+# ruling AC41(5)): a hover note on every tape row name, key-number label and metric name in the
+# chairman's table, the plain names of the cycle's series, of the models and of a benchmark fund.
+def _load_glossary():
+    with open(os.path.join(os.path.dirname(__file__), "glossary.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+GLOSSARY = _load_glossary()
+_TERM_NOTES = {row["term"].lower(): row["note"] for row in GLOSSARY["terms"]}
+_TERM_PATTERN = re.compile(
+    r"(?<![\w-])(%s)(?![\w-])" % "|".join(
+        re.escape(term) for term in sorted(_TERM_NOTES, key=len, reverse=True)), re.IGNORECASE)
+
+
+def _note_span(words, note):
+    """A term with its hover note: the note shows when the mouse rests on the term, or on a tap
+    or keyboard focus; the dotted underline alone says a note is there (owner ruling AC43; CSS
+    only)."""
+    return '<span class="gl" tabindex="0" data-note="%s">%s</span>' % (esc(note), esc(words))
+
+
+def _glossed(text):
+    """A label as HTML, each glossary term in it carrying its note the first time it appears."""
+    text = "" if text is None else str(text)
+    out, last, seen = [], 0, set()
+    for match in _TERM_PATTERN.finditer(text):
+        key = match.group(1).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(esc(text[last:match.start()]) + _note_span(match.group(1), _TERM_NOTES[key]))
+        last = match.end()
+    return "".join(out) + esc(text[last:])
+
+
+def _tape_term(title, fact_id):
+    """A tape row's title with the row's own note, keyed by the row's first figure."""
+    note = GLOSSARY["tape"].get(fact_id)
+    return _note_span(title, note) if note else esc(title)
+
+
 # ---------------------------------------------------------------------------------------------
 # MARKDOWN, THE SUBSET THE COUNCIL'S OWN DOCUMENTS ACTUALLY USE (ported from the old renderer)
 # ---------------------------------------------------------------------------------------------
@@ -904,9 +993,49 @@ def _paired(text, mark, open_tag, close_tag):
     return out
 
 
+# A pipe table's delimiter row: cells of dashes, each with an optional alignment colon at either
+# end (unit READ-A). The colons are read and dropped - the page's own table look applies.
+_TABLE_DELIMITER = re.compile(r"^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$")
+
+
+def _table_cells(line):
+    """One pipe-table row as its cells: split on every pipe not escaped by a back-slash, the
+    leading and trailing pipe dropped, an escaped pipe kept in its cell as a plain pipe."""
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|") and not body.endswith("\\|"):
+        body = body[:-1]
+    return [cell.strip().replace("\\|", "|") for cell in re.split(r"(?<!\\)\|", body)]
+
+
+def _pipe_table(lines, start):
+    """The HTML of the pipe table that starts at `lines[start]` and the index after it, or None
+    where the lines there are not a well-formed table: a header, a delimiter row, and body rows
+    each with the header's number of cells. A malformed block stays the paragraph it was."""
+    if start + 1 >= len(lines) or not lines[start].strip().startswith("|"):
+        return None
+    if not _TABLE_DELIMITER.match(lines[start + 1].strip()):
+        return None
+    header = _table_cells(lines[start])
+    if len(_table_cells(lines[start + 1])) != len(header):
+        return None
+    end, rows = start + 2, []
+    while end < len(lines) and lines[end].strip().startswith("|"):
+        rows.append(_table_cells(lines[end]))
+        end += 1
+    if any(len(row) != len(header) for row in rows):
+        return None
+    html_rows = ["<tr>%s</tr>" % "".join("<th>%s</th>" % _inline(cell) for cell in header)]
+    html_rows += ["<tr>%s</tr>" % "".join("<td>%s</td>" % _inline(cell) for cell in row)
+                  for row in rows]
+    return '<table class="md">%s</table>' % "".join(html_rows), end
+
+
 def markdown(text, base_level=3):
     """The subset, as HTML. `base_level` is the heading level a top-level `#` becomes, so a
-    document nested inside a collapsed section does not claim to be a page heading."""
+    document nested inside a collapsed section does not claim to be a page heading. A pipe
+    table renders as a table (unit READ-A: twelve seat tables printed as lines of pipes)."""
     if not text:
         return ""
     lines = str(text).replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -926,11 +1055,20 @@ def markdown(text, base_level=3):
             del list_items[:]
             list_tag = None
 
-    for line in lines:
-        stripped = line.strip()
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        index += 1
         if not stripped:
             flush_para()
             flush_list()
+            continue
+        table = _pipe_table(lines, index - 1)
+        if table is not None:
+            flush_para()
+            flush_list()
+            out.append(table[0])
+            index = table[1]
             continue
         if set(stripped) <= set("-*_") and len(stripped) >= 3:
             flush_para()
@@ -1048,6 +1186,8 @@ def load_run(run_dir):
         "answers": answers,
         "challenge_result": _optional_json(os.path.join(run_dir, "challenge", "result.json")),
         "approved_document": _approved_document(run_dir),
+        # The blind draw's letters, so the page can say which response was which advisor.
+        "draw": _optional_json(os.path.join(run_dir, "blind", "draw.json")) or {},
     }
 
 
@@ -1108,6 +1248,24 @@ def _heading_note(run, seat):
                esc(", ".join(differing.get("rewrite") or []) or "none")))
 
 
+def _load_fields_flags(run_dir):
+    """Each chair seat's figure flag from its fields re-answer, out of the run record
+    (UPGRADE-2 U5(b)). Empty where none was re-asked, which is every sitting before it."""
+    flags, asked = {}, {}
+    if os.path.isfile(runrecord.record_path(run_dir)):
+        for event in runrecord.read_events(run_dir):
+            if event.get("event") != "chair_fields_checked":
+                continue
+            if event.get("outcome") == "reasked":
+                asked[event.get("seat")] = [problem.get("key") for problem
+                                            in event.get("problems") or []]
+            if "figures_changed" in event:
+                # The fields the re-ask asked for travel with the flag, so the page can tell
+                # whether the rewrite is still the published text (audit round 1, r1-4).
+                flags[event.get("seat")] = dict(event, asked=asked.get(event.get("seat"), []))
+    return flags
+
+
 def _challenge_response(result):
     """The challenger's own document out of challenge/result.json. The flat shape carries the
     summary, findings and endorsement beside the status; a shape that nests the whole findings
@@ -1140,38 +1298,67 @@ _BOLD_PROP = "font-" + "we" + "ight"
 
 _CSS_TEMPLATE = """
 :root{
-  --base:#161616; --panel:#202020; --panel-open:#262625; --chrome:#1D1D1C;
-  --text:#E8E6E0; --muted:#94918A; --line:rgba(255,255,255,0.09);
-  --ember:#DD8B5A; --bear:#A85C50; --mid:#5F5C55; --bull:#7F9468; --alarm:#D2603F;
-  --alarm-wash:rgba(210,96,63,0.12); --shadow:rgba(0,0,0,0.5);
+  --base:#161616; --panel:#1F1F1E; --panel-open:#242423; --chrome:#1C1C1B;
+  --text:#E6E4DE; --muted:#96938C; --line:rgba(255,255,255,0.09);
+  --ember:#CF8A5E; --bear:#A85C50; --mid:#5F5C55; --bull:#7F9468; --alarm:#D2603F;
+  --alarm-wash:rgba(210,96,63,0.12); --shadow:rgba(0,0,0,0.45);
   --hair:rgba(255,255,255,0.13); --measure:680px;
+  --ch-ink:#E8E6E0; --ch-muted:#94918A; --ch-hair:rgba(255,255,255,0.13);
+  --ch-axis:rgba(255,255,255,0.09); --ch-up:#7F9468; --ch-down:#A85C50; --ch-avg:#DD8B5A;
+  --ch-level:#D2603F; --ch-paper:#161616;
 }
 :root[data-theme="light"]{
-  --base:#FAF8F3; --panel:#F1EDE5; --panel-open:#E9E4DA; --chrome:#F1EDE5;
-  --text:#1F1E1B; --muted:#615D55; --line:rgba(0,0,0,0.14);
-  --ember:#A8571B; --bear:#8C3B2F; --mid:#6F6B62; --bull:#4B6837; --alarm:#992D14;
-  --alarm-wash:rgba(153,45,20,0.09); --shadow:rgba(0,0,0,0.18);
-  --hair:rgba(0,0,0,0.17);
+  --base:#FAF8F3; --panel:#F3F0E9; --panel-open:#ECE8DF; --chrome:#F3F0E9;
+  --text:#1F1E1B; --muted:#625E56; --line:rgba(0,0,0,0.13);
+  --ember:#9E5320; --bear:#8C3B2F; --mid:#6F6B62; --bull:#4B6837; --alarm:#992D14;
+  --alarm-wash:rgba(153,45,20,0.09); --shadow:rgba(0,0,0,0.14);
+  --hair:rgba(0,0,0,0.16);
+  --ch-ink:#1F1E1B; --ch-muted:#615D55; --ch-hair:rgba(0,0,0,0.17);
+  --ch-axis:rgba(0,0,0,0.14); --ch-up:#4B6837; --ch-down:#8C3B2F; --ch-avg:#A8571B;
+  --ch-level:#992D14; --ch-paper:#FAF8F3;
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 @media (prefers-reduced-motion: reduce){html{scroll-behavior:auto} *{transition:none!important}}
 body{margin:0;background:var(--base);color:var(--text);
-     font-family:system-ui,"Segoe UI",sans-serif;line-height:1.5;font-size:14.5px;
-     font-variant-numeric:tabular-nums}
-/* A 12-column feel: a 1,100px column with a 680px measure for running text (design audit C5).
-   Tables use the full width; the masthead and the sticky bar are handled on their own below. */
-.wrap{max-width:1100px;margin:0 auto;padding:58px 24px 64px}
-.wrap>p,.wrap>ul,.wrap>ol,.wrap>.card,.wrap>details,.wrap>.muted,.wrap>hr{max-width:var(--measure)}
+     font-family:system-ui,"Segoe UI",sans-serif;line-height:1.55;font-size:15px;
+     font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+/* One 1,100px column (design audit C5). Cards, prose and tables share its full width (unit
+   READ-A, the owner's finding 3); long prose sets its lines in columns instead. A word with no
+   break in it (a record key, a hash) wraps rather than widening the page (READ-D, the phone). */
+.wrap{max-width:1100px;margin:0 auto;padding:60px 24px 64px}
 
 h1,h2,h3,h4{font-family:Georgia,Cambria,serif;line-height:1.22}
 h1{font-size:30px;@B@:600;margin:0 0 4px;letter-spacing:-0.01em}
 h1 .tkr{font-size:16px;color:var(--muted);@B@:400;white-space:nowrap}
-h2{font-size:11px;text-transform:uppercase;letter-spacing:0.13em;color:var(--ember);@B@:700;
-   margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--ember);scroll-margin-top:70px}
-h3{font-size:16px;@B@:600;margin:22px 0 8px}
-h4{font-size:14px;font-style:italic;@B@:600;color:var(--muted);margin:16px 0 6px}
+h2{font-size:22px;@B@:600;margin:56px 0 16px;padding-bottom:8px;
+   border-bottom:1px solid var(--ember);scroll-margin-top:70px}
+h3{font-size:17px;@B@:600;margin:26px 0 8px}
+h4{font-size:14.5px;font-style:italic;@B@:600;color:var(--muted);margin:18px 0 6px}
 p{margin:10px 0}
+
+/* Unit READ-A (the owner's finding 5): each section opens under a numbered title large enough
+   to read as a new section; the number and the rule under the title are the page's one accent,
+   the way a reader finds a section (READ-D bracket 6). */
+.cols{column-width:34em;column-gap:40px}
+.cols>.lead{column-span:all}
+.cols p:first-of-type{margin-top:0}
+.report h2{color:var(--text)}
+.secnum{color:var(--ember);margin-right:10px}
+.stickybar-inner .sb-sec{margin-left:auto;color:var(--text)}
+/* A glossary term: the dotted underline alone marks it (owner ruling AC43); its note opens on
+   hover, keyboard focus or a tap (the term takes focus on a touch screen). On a desktop the note
+   hangs under its term, capped to the window; on a phone it is a sheet pinned inside the
+   screen's edges (below), so it can never widen the page. */
+.gl{@P@:relative;cursor:help;text-decoration:underline dotted var(--muted);
+  text-decoration-thickness:1px;text-underline-offset:3px}
+.gl::before{content:attr(data-note);display:none;@P@:absolute;left:0;top:calc(100% + 6px);
+  z-index:600;width:max-content;max-width:min(360px,calc(100vw - 32px));padding:9px 12px;
+  background:var(--chrome);color:var(--text);border:1px solid var(--line);border-radius:3px;
+  box-shadow:0 6px 18px var(--shadow);font:400 13px/1.45 system-ui,sans-serif;
+  white-space:normal;text-transform:none;letter-spacing:0;text-align:left;@B@:400}
+.gl:hover::before,.gl:focus::before{display:block}
+.gl:focus{outline:1px solid var(--ember);outline-offset:2px}
 
 /* Masthead (design audit C4 tier 0): company identity on the left, the rating rail on the
    right above 1,000px, stacked below it on a narrow screen. */
@@ -1188,8 +1375,8 @@ p{margin:10px 0}
 
 /* The rating box: the one card in the masthead. The rating word large, the price it is made
    against and its date, the model stamp beneath (owner ruling AC16(9); M3 still satisfied). */
-.ratingbox{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--ember);
-  border-radius:4px;padding:15px 18px 16px}
+.ratingbox{background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--ember);
+  border-radius:3px;padding:16px 18px}
 .rating-word{font-family:Georgia,serif;font-size:28px;line-height:1.12;color:var(--ember);@B@:600;
   margin:0 0 8px}
 .rating-scale{margin-bottom:6px}
@@ -1205,7 +1392,7 @@ p{margin:10px 0}
 .rail h3{font-size:11px;text-transform:uppercase;letter-spacing:0.12em;color:var(--muted);
   @B@:700;margin:20px 0 8px}
 .keydata{display:grid;grid-template-columns:1fr auto;gap:7px 14px;margin:6px 0}
-.keydata dt{font-size:12px;color:var(--muted);align-self:baseline}
+.keydata dt{font-size:12.5px;color:var(--muted);align-self:baseline}
 .keydata dd{margin:0;text-align:right;font-size:13.5px;@B@:600;white-space:nowrap}
 .rail .muted.small{margin-top:9px}
 
@@ -1214,85 +1401,86 @@ p{margin:10px 0}
    theme toggle (both fixed at the screen corners, ruling Y3/Y4) sit at its two ends; the inner
    text is inset past them. CSS only - no script beyond the theme toggle's own. */
 .stickybar{@P@:sticky;top:0;z-index:500;margin:20px calc(50% - 50vw) 0;
-  background:var(--chrome);border-bottom:1px solid var(--line);box-shadow:0 2px 9px var(--shadow)}
+  background:var(--chrome);border-bottom:1px solid var(--line);box-shadow:0 2px 6px var(--shadow)}
 .stickybar-inner{max-width:1100px;margin:0 auto;min-height:40px;display:flex;align-items:center;
   gap:9px;padding:5px 58px;font-size:13px;color:var(--muted);flex-wrap:wrap}
 .stickybar-inner .sb-tick{@B@:700;color:var(--text);letter-spacing:0.03em}
 .stickybar-inner .sb-rate{color:var(--ember);@B@:600}
 .stickybar-inner .sep{color:var(--muted);opacity:0.6}
 
-/* The price chart and the tape (unit U4(c)). Colour only through these classes and the theme
-   tokens, so the dark screen, the light toggle and the light print all follow. The drawing scales
-   to the column; on a narrow screen its words are drawn larger so they stay legible. */
+/* The price chart and the tape (unit U4(c)). The chart's colours are ITS OWN settings, the
+   `--ch-*` tokens, fixed at the values it had before unit READ-D in each of the three sets
+   (bracket 1): the page's palette may move, the chart the owner called superb does not. The
+   drawing scales to the column; on a narrow screen its words are drawn larger. */
 .tapechart{margin:12px 0 4px}
 .tapechart>svg{display:block;width:100%;height:auto}
 .tapechart text{font-family:system-ui,"Segoe UI",sans-serif;font-size:12px}
-.tapechart figcaption{font-size:12px;color:var(--muted);margin-top:6px;max-width:var(--measure)}
-.ch-txt{fill:var(--muted)}
-.ch-grid{stroke:var(--hair);stroke-width:1}
-.ch-axis{stroke:var(--line);stroke-width:1}
-.ch-band{fill:var(--hair);stroke:none}
-.ch-bandline{stroke:var(--hair);stroke-width:6}
-.ch-close{fill:none;stroke:var(--text);stroke-width:1.5}
-.ch-sma50{fill:none;stroke:var(--bull);stroke-width:1.3}
-.ch-sma100{fill:none;stroke:var(--bear);stroke-width:1.3;stroke-dasharray:6 3}
-.ch-sma200{fill:none;stroke:var(--ember);stroke-width:2.2}
-.ch-bench{fill:none;stroke:var(--muted);stroke-width:1.3;stroke-dasharray:2 3}
-.ch-levelmark{color:var(--alarm)}
-.ch-level{stroke:var(--alarm);stroke-width:1.2;stroke-dasharray:7 4}
-.ch-leveltxt{fill:var(--alarm)}
-.ch-markgroup{color:var(--ember)}
-.ch-mark{fill:var(--ember);stroke:var(--base);stroke-width:1.5}
-.ch-marktxt{fill:var(--ember)}
+.tapechart figcaption{font-size:12.5px;color:var(--muted);margin-top:6px;max-width:var(--measure)}
+.ch-txt{fill:var(--ch-muted)}
+.ch-grid{stroke:var(--ch-hair);stroke-width:1}
+.ch-axis{stroke:var(--ch-axis);stroke-width:1}
+.ch-band{fill:var(--ch-hair);stroke:none}
+.ch-bandline{stroke:var(--ch-hair);stroke-width:6}
+.ch-close{fill:none;stroke:var(--ch-ink);stroke-width:1.5}
+.ch-sma50{fill:none;stroke:var(--ch-up);stroke-width:1.3}
+.ch-sma100{fill:none;stroke:var(--ch-down);stroke-width:1.3;stroke-dasharray:6 3}
+.ch-sma200{fill:none;stroke:var(--ch-avg);stroke-width:2.2}
+.ch-bench{fill:none;stroke:var(--ch-muted);stroke-width:1.3;stroke-dasharray:2 3}
+.ch-levelmark{color:var(--ch-level)}
+.ch-level{stroke:var(--ch-level);stroke-width:1.2;stroke-dasharray:7 4}
+.ch-leveltxt{fill:var(--ch-level)}
+.ch-markgroup{color:var(--ch-avg)}
+.ch-mark{fill:var(--ch-avg);stroke:var(--ch-paper);stroke-width:1.5}
+.ch-marktxt{fill:var(--ch-avg)}
 .ch-legend{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:4px 18px;
-  font-size:12px;color:var(--muted)}
+  font-size:12.5px;color:var(--ch-muted)}
 .ch-legend li{margin:0}
 .ch-key{display:inline-block;width:24px;height:10px;margin-right:6px;vertical-align:middle;
-  color:var(--muted)}
-@media (max-width:600px){.tapechart>svg text{font-size:18px}}
+  color:var(--ch-muted)}
 
-.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:12px 15px;
-  margin:12px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:14px 18px;
+  margin:14px 0}
 .muted{color:var(--muted)}
-.small{font-size:12.5px}
-.lead{display:block;@B@:600;color:var(--text);margin-bottom:5px}
+.small{font-size:13px}
+.lead{display:block;@B@:600;color:var(--text);margin-bottom:6px}
 
 /* Tables read as a research note's data tables (design audit C5): no vertical rules and no outer
    box, a firm rule under the header row, hairlines between body rows, tabular figures, and
    numeric or date columns (marked nowrap) right-aligned. */
-table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0}
-.wrap>table{max-width:none}
-td,th{padding:7px 12px 7px 0;vertical-align:top;text-align:left;border:0;
+table{border-collapse:collapse;width:100%;font-size:13.5px;margin:14px 0}
+td,th{padding:8px 12px 8px 0;vertical-align:top;text-align:left;border:0;
   border-bottom:1px solid var(--hair);overflow-wrap:anywhere}
 td:last-child,th:last-child{padding-right:0}
-tr:first-child th{border-bottom:1.5px solid var(--line)}
+tr:first-child th{border-bottom:1px solid var(--muted)}
 tr:last-child td{border-bottom:0}
-th{color:var(--muted);@B@:700;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+th{color:var(--muted);@B@:600;font-size:11.5px;text-transform:uppercase;letter-spacing:0.05em}
 th.nowrap,td.nowrap{white-space:nowrap;text-align:right;padding-left:16px}
 tr.alarm td{background:var(--alarm-wash)}
 
-details{background:var(--panel);border:1px solid var(--line);border-radius:4px;margin:12px 0}
-details[open]{background:var(--panel-open);border-left:2px solid var(--ember)}
-summary{cursor:pointer;padding:11px 15px;font-family:Georgia,serif;font-size:15px;outline-offset:3px}
+details{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:14px 0}
+details[open]{background:var(--panel-open)}
+summary{cursor:pointer;padding:12px 18px;font-family:Georgia,serif;font-size:15.5px;
+  outline-offset:3px}
 summary:focus-visible{outline:2px solid var(--ember)}
-details .body{padding:2px 18px 15px;border-top:1px solid var(--line)}
-details details{margin:10px 0;background:var(--base)}
-details details summary{font-size:13.5px;padding:9px 13px}
+details .body{padding:2px 18px 16px;border-top:1px solid var(--line)}
+details details{margin:12px 0;background:var(--base)}
+details details summary{font-size:14px;padding:10px 14px}
 ul,ol{margin:8px 0;padding-left:22px}
 li{margin:5px 0}
 strong{color:var(--text)}
-/* Code font is a debug tell: it is kept for the run id and hash in the stamps only (C5). A fact
-   id elsewhere reads as a labelled term in the body font, tinted ember. */
-code{font-family:inherit;color:var(--ember);font-size:0.94em}
+/* Code font is a debug tell: it is kept for the run id and hash in the stamps and the foot only
+   (C5). A labelled term elsewhere reads in the body font and the body's own ink; colour on this
+   page is a signal, and a name is not one. */
+code{font-family:inherit;color:inherit;font-size:0.94em}
 .foot code{font-family:Consolas,"SF Mono",monospace;color:var(--muted);font-size:12px;
   word-break:break-all}
-pre{background:var(--base);border:1px solid var(--line);border-radius:4px;padding:12px;
+pre{background:var(--base);border:1px solid var(--line);border-radius:3px;padding:12px;
   overflow-x:auto}
 pre,pre code{font-family:Consolas,"SF Mono",monospace}
 pre code{color:var(--text);font-size:12px}
 hr{border:0;border-top:1px solid var(--line);margin:16px 0}
-.foot{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);
-  font-size:12.5px}
+.foot{margin-top:48px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);
+  font-size:13px}
 .prominent{border-left:2px solid var(--ember)}
 .alarm{border:1px solid var(--alarm);border-left:4px solid var(--alarm);background:var(--alarm-wash)}
 .alarm .shout{color:var(--alarm);font-family:Georgia,serif;font-size:17px;letter-spacing:.02em;
@@ -1315,21 +1503,39 @@ tr.alarm td{border-color:var(--alarm)}
    icon and the menu and the hover never drops. */
 .dock{@P@:fixed;top:12px;left:12px;z-index:900}
 .dockbtn,.themebtn{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
-  background:var(--chrome);color:var(--ember);border:1px solid var(--line);border-radius:5px;
-  cursor:pointer;padding:0;box-shadow:0 2px 10px var(--shadow)}
+  background:var(--chrome);color:var(--muted);border:1px solid var(--line);border-radius:4px;
+  cursor:pointer;padding:0}
+.dockbtn:hover,.themebtn:hover{color:var(--text)}
 .dockbtn:focus-visible,.themebtn:focus-visible{outline:2px solid var(--ember);outline-offset:2px}
 .themebtn{@P@:fixed;top:12px;right:12px;z-index:900;font-size:16px;line-height:1}
 .dock .menu{display:none;@P@:absolute;top:38px;left:0;padding-top:6px}
 .dock:hover .menu,.dock:focus-within .menu,.dock.open .menu{display:block}
-.menucard{min-width:250px;background:var(--chrome);border:1px solid var(--line);border-radius:5px;
-  padding:6px 0;box-shadow:0 8px 26px var(--shadow)}
+.menucard{min-width:250px;background:var(--chrome);border:1px solid var(--line);border-radius:4px;
+  padding:6px 0;box-shadow:0 8px 24px var(--shadow)}
 .menucard a{display:block;padding:7px 15px;color:var(--text);text-decoration:none;font-size:13.5px}
 .menucard a:hover,.menucard a:focus-visible{background:var(--panel-open);color:var(--ember);outline:none}
+
+/* A phone (unit READ-D, criterion 4): a 16px gutter, the type a step smaller, every table
+   scrolling inside its own box and never the page, the prose in one column, and the hover note
+   as a sheet pinned inside the screen's edges - so nothing can push the page sideways. */
+@media (max-width:600px){
+  .wrap{padding:62px 16px 48px}
+  h1{font-size:25px}
+  h2{font-size:20px;margin:44px 0 12px}
+  .rating-word{font-size:25px}
+  .cols{column-width:auto}
+  table{display:block;overflow-x:auto;max-width:100%}
+  .tapechart>svg text{font-size:18px}
+  .stickybar-inner{padding:6px 56px;font-size:12px;gap:7px}
+  .gl::before{@P@:fixed;left:16px;right:16px;bottom:16px;top:auto;width:auto;max-width:none;
+    font-size:14px;padding:12px 14px}
+  .menucard{min-width:220px}
+}
 
 /* Print (owner ruling AC16(2), design audit C5): the screen stays dark by default, but the
    PRINTED page is light - a dark PDF is unreadable on paper. A4 with a running margin, the
    screen chrome removed, the rating box, table rows and cards kept whole, and a fresh page
-   before the chairman's note and before the evidence. */
+   before the chairman's note and before the evidence. The chart keeps its own print colours. */
 @page{size:A4;margin:18mm 16mm}
 @media print{
   :root,:root[data-theme="dark"],:root[data-theme="light"]{
@@ -1337,11 +1543,13 @@ tr.alarm td{border-color:var(--alarm)}
     --text:#101010; --muted:#4A4A4A; --line:#C9C9C9; --hair:#DEDEDE;
     --ember:#A8571B; --bear:#8C3B2F; --mid:#6F6B62; --bull:#4B6837; --alarm:#992D14;
     --alarm-wash:#F6E7E1; --shadow:transparent;
+    --ch-ink:#101010; --ch-muted:#4A4A4A; --ch-hair:#DEDEDE; --ch-axis:#C9C9C9;
+    --ch-up:#4B6837; --ch-down:#8C3B2F; --ch-avg:#A8571B; --ch-level:#992D14; --ch-paper:#FFFFFF;
   }
   body{background:#FFFFFF;color:#101010}
   .dock,.themebtn,.stickybar{display:none!important}
+  .gl::before{display:none!important}
   .wrap{max-width:none;padding:0}
-  .wrap>p,.wrap>ul,.wrap>ol,.wrap>.card,.wrap>details,.wrap>.muted{max-width:none}
   .ratingbox,tr,.card,.keydata{break-inside:avoid}
   .tapechart{break-inside:avoid}
   #decision,#decision+h3{break-after:avoid}
@@ -1392,6 +1600,24 @@ SCRIPT = """
 """
 
 
+# The report's own addition to the script (unit READ-A, owner's finding 5): the pinned bar names
+# the numbered section the reader is in. Printed after SCRIPT, inside the same element.
+SECTION_SCRIPT = """
+(function(){
+  var slot=document.getElementById('sb-section');
+  if(!slot) return;
+  var heads=[].slice.call(document.querySelectorAll('h2[data-num]'));
+  function update(){
+    var here=null;
+    for(var i=0;i<heads.length;i++){ if(heads[i].getBoundingClientRect().top<90) here=heads[i]; }
+    slot.textContent = here ? here.getAttribute('data-num')+' \\u00b7 '+here.getAttribute('data-title') : '';
+  }
+  window.addEventListener('scroll', update, {passive:true});
+  update();
+})();
+"""
+
+
 # ---------------------------------------------------------------------------------------------
 # THE PAGE
 # ---------------------------------------------------------------------------------------------
@@ -1414,6 +1640,14 @@ class Page(object):
     def section(self, anchor, heading, nav_label=None):
         self.nav.append((anchor, nav_label or heading))
         self.parts.append('<h2 id="%s">%s</h2>' % (esc(anchor), esc(heading)))
+
+    def numbered(self, anchor, number, heading):
+        """A numbered section of the report (unit READ-A, owner's finding 5): its title carries
+        its number, the menu lists it with the number, and the pinned bar reads both."""
+        self.nav.append((anchor, "%s  %s" % (number, heading)))
+        self.parts.append('<h2 id="%s" data-num="%s" data-title="%s"><span class="secnum">%s'
+                          "</span>%s</h2>" % (esc(anchor), esc(number), esc(heading), esc(number),
+                                              esc(heading)))
 
     def mark(self):
         """Remember where the page currently ends, so what follows can be folded away."""
@@ -1442,16 +1676,40 @@ class Page(object):
 
 # --- 1. Title and run stamps -------------------------------------------------------------------
 
+def _model_name(model):
+    """A model's plain name from the glossary's map (unit READ-A); an id not listed as recorded."""
+    return GLOSSARY["models"].get(str(model), str(model))
+
+
 def _models_line(provenance):
     per_seat = provenance.get("models_per_seat") or {}
-    names = sorted({str(model) for model in per_seat.values() if model})
+    names = sorted({_model_name(model) for model in per_seat.values() if model})
     seats = ", ".join(names) if names else "not recorded"
     # Partial provenance says so - a known model beside an unrecorded
     # seat must not read as the whole bench (audit finding SC3 r6-3).
     if names and any(model is None for model in per_seat.values()):
         seats += " (not recorded for every seat)"
-    challenger = provenance.get("challenger_model_requested") or "not recorded"
-    return seats, challenger
+    challenger = provenance.get("challenger_model_requested")
+    return seats, _model_name(challenger) if challenger else "not recorded"
+
+
+def _codex_stamp(provenance):
+    """The codex version that ran the outside calls (owner ruling AC25(4)), as one sentence for
+    About this sitting (unit READ-A moved it off the stamp under the rating): the outside
+    challenge's, and the evidence check's where it differs. Empty where none is recorded - every
+    sitting before verdict 1.5.0."""
+    versions = provenance.get("codex_version")
+    if not isinstance(versions, dict):
+        return ""
+    challenge, audit = versions.get("challenge"), versions.get("evidence_audit")
+    if not challenge and not audit:
+        return ""
+    if challenge and audit and audit != challenge:
+        said = ("The outside challenge ran through %s; the evidence check through %s."
+                % (esc(challenge), esc(audit)))
+    else:
+        said = "The outside model ran through %s." % esc(challenge or audit)
+    return '<div class="muted small">%s</div>' % said
 
 
 def _masthead_title(subject):
@@ -1562,7 +1820,8 @@ def _sticky_bar(page, run):
         if asof:
             bits.append(esc(asof))
     joined = ' <span class="sep">&middot;</span> '.join(bits)
-    page.add('<div class="stickybar"><div class="stickybar-inner">%s</div></div>' % joined)
+    page.add('<div class="stickybar"><div class="stickybar-inner">%s'
+             '<span class="sb-sec" id="sb-section"></span></div></div>' % joined)
 
 
 # --- 1b. THE DECISION FRONT (ANCHORLESS-SPEC section 5, owner ruling AB13.5) --------------------
@@ -1596,16 +1855,8 @@ LEADING_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 SCALE_ORDER = ("strong_buy", "buy", "hold", "sell", "monitor")
 
 
-def _prose_note(run, seat):
-    """One muted line with a seat's writing score, for the collapsed appendix
-    (spec U6.4). Empty where the run carries no score for the seat - a report
-    published before U6, or a hand-built fixture with no record."""
-    score = (run.get("prose_scores") or {}).get(seat)
-    if not score:
-        return ""
-    whose = "chairman, measured" if score.get("judged") else "advisory"
-    return ('<div class="muted small">Writing score (%s): %s</div>'
-            % (whose, esc(prose.describe(score.get("score") or {}))))
+# The advisory writing scores left the page (unit READ-A, architect ruling 6): they are the
+# writers' quality meter and stay in the run's record. AC6's alarm below still prints.
 
 
 def _chair_prose_warning(page, run):
@@ -1666,34 +1917,27 @@ def _rating_box(page, verdict):
     if lead:
         asof = format_date(lead.get("as_of", ""))
         page.add('<dl class="rating-price"><dt>%s</dt><dd>%s%s</dd></dl>'
-                 % (esc(lead.get("name", "")),
+                 % (_glossed(lead.get("name", "")),
                     esc(format_number(lead.get("value"), lead.get("unit"))),
                     (' <span class="asof">%s</span>' % esc(asof)) if asof else ""))
     seats, challenger = _models_line(verdict.get("provenance") or {})
-    page.add('<div class="stamp muted small">seats ran on <strong>%s</strong> &middot; the '
-             "challenge went to <strong>%s</strong></div>" % (esc(seats), esc(challenger)))
+    page.add('<div class="stamp muted small">Advisors and chairman: <strong>%s</strong> '
+             "&middot; outside challenge: <strong>%s</strong></div>"
+             % (esc(seats), esc(challenger)))
     page.add("</div>")
 
 
-def _front_thesis(page, verdict):
-    """The thesis in five sentences or fewer (owner ruling AC16(3),(6)): the opening of the
-    chairman's rationale, shown once as a lede. No new verdict field - the renderer takes the
-    rationale's first sentences; fewer than five means the thesis is all of it, and the full
-    rationale still prints below."""
-    rationale = _display_prose(verdict, "conviction_rationale", "chairman rationale", page)
-    if not rationale or rationale == "not recorded":
-        return
-    sentences = prose.split_sentences(rationale, prose.load_rules())
-    thesis = " ".join(sentences[:5]) if sentences else rationale
-    page.add('<div class="card prominent"><span class="lead">The thesis</span>%s</div>'
-             % markdown(thesis))
+# The five-sentence thesis card is gone (owner ruling AC41(4), R3): it repeated the opening of
+# the rationale printed in full directly beneath it. The rule that the reasoning is never cut
+# stands.
 
 
 def _front_rationale(page, verdict):
     """The chairman's rationale, in full, never cut, with its paragraph breaks (owner ruling
-    AC16(3); audit B2). Length is bounded at the writer by the chair's brief, not here."""
+    AC16(3); audit B2), set in columns across the section's width (owner's finding 3). Length is
+    bounded at the writer by the chair's brief, not here."""
     rationale = _display_prose(verdict, "conviction_rationale", "chairman rationale", page)
-    page.add('<div class="card"><span class="lead">Why this rating, in the chairman&#x27;s own '
+    page.add('<div class="card cols"><span class="lead">Why this rating, in the chairman&#x27;s own '
              "words</span>%s</div>" % markdown(rationale))
 
 
@@ -1708,7 +1952,7 @@ def _front_key_numbers(page, verdict):
         return
     shown = key_numbers[:KEY_DATA_STRIP_MAX]
     cells = "".join("<dt>%s</dt><dd>%s</dd>"
-                    % (esc(number.get("name", "")),
+                    % (_glossed(number.get("name", "")),
                        esc(format_number(number.get("value"), number.get("unit"))))
                     for number in shown)
     page.add('<dl class="keydata">%s</dl>' % cells)
@@ -1769,7 +2013,7 @@ def _capped_caveat(block):
     outside audit capped the published one. One wording, used
     wherever those figures are rendered."""
     return ("Everything here reads the ladder&#x27;s own rating of "
-            "<strong>%s</strong>. The outside audit did not run, so "
+            "<strong>%s</strong>. The outside challenge did not run, so "
             "the rating actually published was capped to "
             "<strong>%s</strong>, and these readings move the "
             "ladder&#x27;s answer rather than this page&#x27;s."
@@ -1842,7 +2086,7 @@ def _front_price_read(page, run):
     block = verdict.get("scenario_rating") or {}
     if block and block.get("basis") == "rating":
         return
-    page.add('<div class="card"><span class="lead">The mispricing read</span>%s</div>'
+    page.add('<div class="card"><span class="lead">The price read</span>%s</div>'
              % _mispricing_sentence(verdict))
 
 
@@ -1889,6 +2133,13 @@ def _front_downside(page, run):
     levels = tripwires.get("invalidation_levels") or []
     block = verdict.get("scenario_rating") or {}
     below = _below_reference_rungs(block) if block.get("basis") == "rating" else []
+    if _reads_as_scorecard(verdict):
+        # A level that names its measure is on the scorecard in the answer section (owner
+        # ruling AC44(2)); only the rest keep their place here, and a ladder left with nothing
+        # to show is not printed.
+        levels = [level for level in levels if not chair_fields.measure_name(level)]
+        if not levels and not below:
+            return
     page.add("<h3>The downside ladder</h3>")
     if not levels and not below:
         page.add('<div class="card">The verdict names no level whose breach would break this '
@@ -1944,13 +2195,15 @@ def _detail_calendar(page, run):
     if not rows:
         return
     page.add("<h3>The dated event calendar</h3>")
-    body = "".join('<tr><td class="nowrap">%s</td><td>%s%s<div class="muted small"><code>%s</code>'
-                   "</div></td></tr>"
-                   % (esc(format_date(when)), (esc(detail) + " ") if detail else "",
-                      esc(source), esc(fact_id))
-                   for when, fact_id, source, detail in rows)
-    page.add('<table><tr><th class="nowrap">date</th>'
-             "<th>what happens, and where the date comes from</th></tr>%s</table>" % body)
+    # The event's plain name and, where its value is words, their first sentence; the source and
+    # the id are in the evidence fold (unit READ-A).
+    body = "".join('<tr><td class="nowrap">%s</td><td>%s%s</td></tr>'
+                   % (esc(format_date(when)), esc(_fact_label(run, fact_id)),
+                      (" &mdash; %s" % esc(re.split(r"(?<=[.!?])\s", detail)[0]))
+                      if detail else "")
+                   for when, fact_id, _source, detail in rows)
+    page.add('<table><tr><th class="nowrap">date</th><th>what happens</th></tr>%s</table>'
+             % body)
 
 
 def _trigger_when(trigger):
@@ -1963,13 +2216,100 @@ def _trigger_when(trigger):
     return ""
 
 
+def _reads_as_scorecard(verdict):
+    """True for a verdict of the contract that lets the chairman name a measure (1.6.0 on) where
+    at least one entry of his three lists names one (owner ruling AC44(2)). Anything else keeps
+    the three tables exactly as before."""
+    tripwires = verdict.get("tripwires") or {}
+    return _carries_answer_line(verdict) and any(
+        chair_fields.measure_name(entry) for name in chair_fields.LISTS
+        for entry in tripwires.get(name) or [])
+
+
+def _scorecard_date(tripwires):
+    """The first date the chairman's measured entries are tested on, or None."""
+    dates = sorted(str(entry.get("date")) for name in chair_fields.LISTS
+                   for entry in tripwires.get(name) or []
+                   if chair_fields.measure_name(entry) and LEADING_DATE.match(
+                       str(entry.get("date") or "")))
+    return dates[0] if dates else None
+
+
+def _scorecard_items(entries, line):
+    """One cell's entries, each on its own line; a dash where there are none."""
+    return "".join("<div>%s</div>" % line(entry) for entry in entries) or "&mdash;"
+
+
+def _falsifier_line(row):
+    scored = row.get("figure_name") or ""
+    source = row.get("source") or ""
+    tail = ((("<code>%s</code>" % esc(scored)) if scored else "")
+            + ((" from %s" % esc(source)) if source else ""))
+    return "%s%s%s" % (_constituent_tag(row), esc(row.get("statement", "")),
+                       (' <span class="muted small">Scored against %s.</span>' % tail)
+                       if tail else "")
+
+
+def _level_line(level):
+    return '<strong class="nowrap">%s</strong> %s%s' % (
+        esc(format_number(level.get("level"), level.get("unit"))), _constituent_tag(level),
+        esc(level.get("meaning", "")))
+
+
+def _trigger_line(trigger):
+    when = _trigger_when(trigger)
+    return "%s%s%s" % (('<strong class="nowrap">%s</strong> ' % when) if when else "",
+                       _constituent_tag(trigger), esc(trigger.get("detail", "")))
+
+
+SCORECARD_CONFLICT_OPEN = "Two different numbers for this one measure: "
+
+
+def _front_scorecard(page, run):
+    """The chairman's three lists read as one scorecard (owner ruling AC44(2), option (b)): one
+    row per measure he names - what the case needs on it, what breaks the case, what reopens the
+    question, and when - with a flag on the row where he gave the measure two different numbers.
+    His three lists, the hand-off and the grading of past calls are unchanged; the entries that
+    name no measure keep their place below."""
+    tripwires = run["verdict"].get("tripwires") or {}
+    date = _scorecard_date(tripwires)
+    page.add("<h3>The %sscorecard</h3>" % (("%s " % esc(format_date(date))) if date else ""))
+    rows = []
+    for name, lists, numbers in chair_fields.scorecard(tripwires, brief._marks_config()):
+        flag = ""
+        if len(numbers) > 1:
+            flag = '<div class="alarmtag small">%s%s.</div>' % (
+                esc(SCORECARD_CONFLICT_OPEN), esc(chair_fields.and_list(numbers)))
+        dates = list(dict.fromkeys(
+            format_date(entry.get("date")) for key in ("falsifiers", "reopening_triggers")
+            for entry in lists[key] if entry.get("date")))
+        rows.append("<tr><td>%s%s</td><td>%s</td><td>%s</td><td>%s</td>"
+                    '<td class="nowrap">%s</td></tr>'
+                    % (esc(name), flag,
+                       _scorecard_items(lists["falsifiers"], _falsifier_line),
+                       _scorecard_items(lists["invalidation_levels"], _level_line),
+                       _scorecard_items(lists["reopening_triggers"], _trigger_line),
+                       esc(", ".join(dates)) or "&mdash;"))
+    page.add("<table><tr><th>what to check</th><th>what the case needs</th>"
+             "<th>what breaks the case</th><th>what reopens the question</th>"
+             '<th class="nowrap">when</th></tr>%s</table>' % "".join(rows))
+
+
 def _front_tripwires(page, run):
     """Everything that would change the rating, in one full table (owner ruling AC16(3); audit C4
     and B4): every reopening trigger and every falsifier, uncut, with no restated bullets beside
-    it. Each row: what it is, the level or date it turns on, and the figure it is scored against."""
+    it. Each row: what it is, the level or date it turns on, and the figure it is scored against.
+    On a verdict whose chairman names measures (owner ruling AC44(2)) the scorecard comes first
+    and this table carries only the entries that name none."""
     tripwires = run["verdict"].get("tripwires") or {}
     triggers = tripwires.get("reopening_triggers") or []
     falsifiers = tripwires.get("falsifiers") or []
+    if _reads_as_scorecard(run["verdict"]):
+        _front_scorecard(page, run)
+        triggers = [row for row in triggers if not chair_fields.measure_name(row)]
+        falsifiers = [row for row in falsifiers if not chair_fields.measure_name(row)]
+        if not triggers and not falsifiers:
+            return
     page.add("<h3>What changes this rating</h3>")
     if not triggers and not falsifiers:
         page.add('<div class="card">The verdict names nothing that would change this rating.</div>')
@@ -1997,12 +2337,26 @@ def _front_tripwires(page, run):
              "<th>the figure it is scored against</th></tr>%s</table>" % "".join(rows))
 
 
+def _letters_line(run):
+    """Which advisor each of the blind reviewer's letters stands for, from the run's blind draw
+    (unit READ-A): "Response A is the Bull, B the Base Rate Skeptic, ..." as ready HTML, or ""
+    where the run carries no draw or a letter names a seat with no plain title."""
+    mapping = (run.get("draw") or {}).get("mapping") or {}
+    if not mapping or any(seat not in LENS_TITLES for seat in mapping.values()):
+        return ""
+    names = [(letter, re.sub(r"^The ", "the ", LENS_TITLES[mapping[letter]]))
+             for letter in sorted(mapping)]
+    said = "Response %s is %s" % names[0] + "".join(", %s %s" % pair for pair in names[1:])
+    return '<div class="muted small">%s.</div>' % esc(said)
+
+
 def _front_cross_examination(page, run):
     reviewer = run["answers"].get("reviewer") or {}
     page.add("<h3>Where the five advisors disagreed &mdash; the blind reviewer&#x27;s "
              "summary</h3>")
     page.add('<div class="muted small">One reviewer read all five advisors without knowing who '
              "wrote what, and summarised where they parted company.</div>")
+    page.add(_letters_line(run))
     page.add('<div class="card prominent">%s</div>'
              % markdown(_display_prose(reviewer, "synopsis", "reviewer synopsis", page), 4))
 
@@ -2013,7 +2367,7 @@ def _front_cross_examination(page, run):
 # the record before the council could sit. The reader meets that here; the whole of it, with the
 # auditor's own paragraph in its own words, is in the appendix.
 
-EVIDENCE_UNCHECKED_SENTENCE = "The outside auditor did not check the evidence."
+EVIDENCE_UNCHECKED_SENTENCE = "No evidence check ran: no outside model read the evidence."
 
 _AUDIT_KIND_WORDS = {
     "missing_decisive_fact": "a fact the case turns on, missing",
@@ -2125,32 +2479,51 @@ def _changes_that_decide(run):
     return hits
 
 
-def _front_post_audit_changes(page, run):
-    """What moved after the audit, on the front (owner ruling AC13.2).
+def _fact_label(run, entry_id):
+    """A pack entry's plain name for the reader (unit READ-A): a fact's own label, a tape
+    figure's name, or for a part of the business description the part in words - never the id,
+    which stays in the evidence fold."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    entry_id = str(entry_id or "")
+    if entry_id.startswith("capture."):
+        parts = entry_id.split(".")
+        words = parts[-1].replace("_", " ")
+        if parts[1] == "business_frame":
+            return "The business description (%s)" % words
+        return "The %s" % " ".join(part.replace("_", " ") for part in parts[1:])
+    for fact in capture.get("tier1") or []:
+        if fact.get("id") == entry_id and str(fact.get("label") or "").strip():
+            return str(fact["label"]).strip()
+    return tape.LABELS.get(entry_id, entry_id.replace("_", " "))
 
-    Open - and a CONSTANT size, whatever moved - when a change touches a number the decision
-    turns on: a decisive metric, or one of the three headline pairs. Otherwise one folded line
-    pointing at the appendix, which lists every change with what the auditor read and what the
-    council sat on."""
+
+def _front_post_audit_changes(page, run):
+    """What moved after the evidence check, on the front (owner ruling AC13.2).
+
+    Open when a change touches a number the decision turns on - a decisive metric, or one of the
+    three headline pairs - naming those by their labels. Otherwise one folded line. Every change,
+    with its old and new value, is listed under the evidence check's points (unit READ-A)."""
     changes = _post_audit_changes(run)
     if not changes or _evidence_audit(run).get("status") != "success":
         return
     decisive = _changes_that_decide(run)
+    count = "%d figure%s" % (len(changes), "" if len(changes) == 1 else "s")
     if not decisive:
         mark = page.mark()
-        page.add('<div class="muted small">Each one, with what the auditor read and what the '
-                 "council sat on, is under &ldquo;The outside auditor&#x27;s objections&rdquo; "
-                 "below.</div>")
-        page.collapse("%d figure%s changed after the outside auditor read the evidence &mdash; "
-                      "none of them a number this decision turns on"
-                      % (len(changes), "" if len(changes) == 1 else "s"), mark)
+        page.add('<div class="muted small">Each one, with its old and new value, is listed under '
+                 "&ldquo;The evidence check&rdquo; in section 6.</div>")
+        page.collapse("%s changed after the evidence check &mdash; none of them a number this "
+                      "decision turns on" % count, mark)
         return
-    # Deliberately terse, and open whatever moved: a number the decision turns on that the
-    # outside auditor never read is a fact the reader must not have to click for.
-    page.add('<div class="card alarm"><span class="shout">%d figure%s changed after the outside '
-             "auditor read the evidence, %d of them decisive.</span>"
-             '<div class="small">Listed under the outside auditor&#x27;s objections.</div></div>'
-             % (len(changes), "" if len(changes) == 1 else "s", len(decisive)))
+    # Open whatever moved: a number the decision turns on that the outside model never read is
+    # a fact the reader must not have to click for.
+    page.add('<div class="card alarm"><span class="shout">%s changed after the evidence check; '
+             "%d of them %s this decision turns on.</span>"
+             '<div class="small">%s: %s. Each change, with its old and new value, is listed '
+             "under &ldquo;The evidence check&rdquo; in section 6.</div></div>"
+             % (count, len(decisive), "is a number" if len(decisive) == 1 else "are numbers",
+                "The one" if len(decisive) == 1 else "They are",
+                esc("; ".join(_fact_label(run, change.get("id")) for change in decisive))))
 
 
 def _front_evidence_audit(page, run):
@@ -2174,11 +2547,12 @@ def _front_evidence_audit(page, run):
     resolutions = block.get("resolutions") or {}
     if not blocking:
         mark = page.mark()
-        page.add('<div class="muted small">Every point is set out in full, with the '
-                 "auditor&#x27;s own reading of the evidence, under &ldquo;The outside "
-                 "auditor&#x27;s objections&rdquo; below.</div>")
-        page.collapse("An outside auditor read this evidence before the council sat and raised "
-                      "%d point%s, none of them blocking &mdash; all answered on the record"
+        page.add('<div class="muted small">Every point is set out in full, with the outside '
+                 "model&#x27;s own reading of the evidence, under &ldquo;The evidence "
+                 "check&rdquo; in section 6.</div>")
+        page.collapse("The evidence check: an outside model read this evidence before the council "
+                      "sat and raised %d point%s, none of them blocking &mdash; all answered on "
+                      "the record"
                       % (len(findings), "" if len(findings) == 1 else "s"), mark)
         _front_post_audit_changes(page, run)
         return
@@ -2187,10 +2561,10 @@ def _front_evidence_audit(page, run):
     # findings and their answers would break the ruled budget on exactly the run where the
     # reader most needs the rest of the page. The fact that must not be foldable is that the
     # council sat over an unanswered objection - and that fits in a sentence.
-    page.add('<div class="card alarm"><span class="shout">The outside auditor called %d point%s '
+    page.add('<div class="card alarm"><span class="shout">The evidence check called %d point%s '
              "blocking before the council sat.</span>"
              '<div class="small">Each one, and what the record answered, is under &ldquo;The '
-             "outside auditor&#x27;s objections&rdquo; below.</div></div>"
+             "evidence check&rdquo; in section 6.</div></div>"
              % (len(blocking), "" if len(blocking) == 1 else "s"))
     _front_post_audit_changes(page, run)
 
@@ -2356,24 +2730,19 @@ def _sitting_clocks(page, run, now):
     capture = review.get("capture") or {}
     bits = []
     if minutes is not None:
-        bits.append("The council sat %s minutes, from the go to this page being rendered."
-                    % esc(format_number(minutes, "minutes")))
+        # From the go to this page being rendered (spec U3.3).
+        bits.append("%s minutes sitting" % esc(format_number(minutes, "minutes")))
     if capture.get("minutes") is not None or capture.get("tokens") is not None:
-        # Owner ruling AC15 (P5(b)): where the capture-stage figures are an
-        # estimate, the page says so beside them - an estimate never reads
-        # as a counted figure.
-        estimated = " (estimated)" if capture.get("estimated") else ""
-        bits.append("Gathering it took another %s minutes and %s tokens%s, counted beside that "
-                    "clock and never inside it."
+        # Owner ruling AC15 (P5(b)): where the capture-stage figures are an estimate, the page
+        # says so beside them - an estimate never reads as a counted figure. The two clocks are
+        # printed side by side and never added into one number.
+        gathered = ("%s minutes gathering the evidence"
                     % (esc(format_number(capture["minutes"], "minutes"))
-                       if capture.get("minutes") is not None
-                       else "an unrecorded number of",
-                       esc(format_number(capture["tokens"], "tokens"))
-                       if capture.get("tokens") is not None
-                       else "an unrecorded number of",
-                       estimated))
+                       if capture.get("minutes") is not None else "an unrecorded number of"))
+        bits.append(("plus " if bits else "") + gathered
+                    + (" (estimated)" if capture.get("estimated") else ""))
     if bits:
-        page.add('<div class="muted small">%s</div>' % " ".join(bits))
+        page.add('<div class="card"><span class="lead">Time</span>%s.</div>' % ", ".join(bits))
 
 
 def _front_archetype(page, run):
@@ -2396,8 +2765,59 @@ def _front_archetype(page, run):
     holding = (" %s" % esc(brief.FI_NOT_RATED_SENTENCE)
                if archetype == brief.FI_ARCHETYPE
                and frame.get("fi_subtype") == brief.FI_HOLDING else "")
+    if brief.grower_subject_frame(capture) is frame:
+        _front_grower(page, run, frame, measure)
+        return
+    if brief.producer_subject_frame(capture) is frame:
+        _front_producer(page, run, frame, measure)
+        return
+    # Owner ruling AC52(1), register item P-RESOURCEa-4: a passing integrated major shows its
+    # reserves and today's price beside its ordinary profit yardstick.
+    if brief.integrated_major_frame(capture) is frame:
+        # The measure ends in a full stop so the line below never runs into it (architect ruling).
+        holding += ".<div>%s%s</div>" % (esc(brief.INTEGRATED_BESIDE_LEAD),
+                                         esc(brief.integrated_major_words(run.get("pack") or {})))
     page.add('<div class="card"><span class="lead">What kind of business, '
              "and how it is rated</span>%s%s%s</div>" % (kind, rated, holding))
+
+
+def _front_grower(page, run, frame, measure):
+    """A growth company on the front (owner rulings AC49(1) and AC50): the kind of business and
+    its sub-type, the measure, and the months of cash left marked calculated, each term with its
+    hover note; below the line, the ruled sentence in a card of its own (AC50(8): the front says
+    so), word for word as every other page prints it."""
+    runway = brief.grower_runway(run.get("pack") or {})
+    rated = (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
+             if measure else "")
+    undrawn = brief.grower_undrawn_words(run.get("pack") or {}, frame)
+    undrawn = ("<div>%s%s</div>" % (esc(brief.GROWER_UNDRAWN_LEAD),
+                                     esc("; ".join(undrawn))) if undrawn else "")
+    page.add('<div class="card"><span class="lead">What kind of business, and how it is rated'
+             "</span>%s%s<div>%s</div>%s</div>"
+             % (esc(brief.grower_kind_words(frame, _plain)), rated,
+                _glossed(brief.grower_months_line(runway, with_cap=False)), undrawn))
+    cap = brief.grower_cap_sentence(runway)
+    if cap:
+        page.add('<div class="card prominent"><p>%s</p></div>' % esc(cap))
+
+
+def _front_producer(page, run, frame, measure):
+    """A producer on the front (owner rulings AC51-AC54): the kind of producer and its main
+    commodity, the measure, and the reserve life marked calculated, each term with its hover note;
+    where today's price is below the price the reserves were counted at, the ruled sentence in a
+    card of its own (AC53(R9): the front says so), word for word as every other page prints it."""
+    readings = brief.producer_readings(run.get("pack") or {})
+    rated = (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
+             if measure else "")
+    # The kind and the measure end in a full stop, so the reserve life never runs into them
+    # (the architect's ruling on the front's two lines).
+    page.add('<div class="card"><span class="lead">What kind of business, and how it is rated'
+             "</span>%s%s.<div>%s</div></div>"
+             % (esc(brief.producer_kind_words(frame, _plain)), rated,
+                _glossed(brief.producer_life_line(readings, with_sentence=False))))
+    sentence = brief.reserve_price_sentence(readings)
+    if sentence:
+        page.add('<div class="card prominent"><p>%s</p></div>' % esc(sentence))
 
 
 def _front_theme_thesis(page, verdict):
@@ -2428,26 +2848,221 @@ def _front_chart_and_tape(page, run):
         return
     subject = run["verdict"].get("subject") or {}
     page.add(chart.figure(capture, run["verdict"], subject.get("kind") not in _MULTI_MEMBER_KINDS,
-                          format_number, format_date))
-    table = chart.tape_table(capture, format_number, format_date)
+                          format_number, format_date, GLOSSARY["benchmarks"]))
+    # The capture's own provenance sentences, folded under the chart (owner's finding 1).
+    page.add("<details><summary>Where the price history comes from</summary><div class=\"body\">"
+             "%s</div></details>" % "".join("<p>%s</p>" % esc(line) for line in
+                                            chart.provenance(capture, format_date)))
+    table = chart.tape_table(capture, format_number, format_date, _tape_term)
     page.add(table or '<p class="muted">%s</p>' % esc(brief.TAPE_ALL_GAPS))
+
+
+# --- The chairman's three fields (UPGRADE-2 U5(b), owner rulings AC5, AC35(3)) ------------------
+# What decided it opens the executive summary; the business and the decisive numbers, in his words,
+# open the synthesis. The labels are the seat-answer contracts' own. A verdict older than 1.5.0
+# carries none of the three and renders exactly as before.
+
+CHAIR_FIELD_MISSING = {
+    "decisive_argument": "The chairman did not state what decided it.",
+    "business_read": "The chairman did not describe the business in his own words.",
+    "decisive_metrics_read": "The chairman did not read out the decisive numbers.",
+}
+NO_METRICS_TABLE = "This subject has no table of decisive numbers for the chairman to read."
+FIELDS_FIGURE_NOTE_OPEN = '<div class="muted small">The chairman was asked once more for '
+
+
+def _version_at_least(verdict, version):
+    try:
+        found = tuple(int(part) for part in str(verdict.get("schema_version")).split("."))
+    except ValueError:
+        return False
+    return found >= version
+
+
+def _carries_chair_fields(verdict):
+    """True for a verdict of the contract that carries the chairman's three fields (1.5.0 on)."""
+    return _version_at_least(verdict, (1, 5, 0))
+
+
+def _carries_answer_line(verdict):
+    """True for a verdict of the contract that carries the chairman's one-line answer (1.6.0 on,
+    owner ruling AC44(1))."""
+    return _version_at_least(verdict, (1, 6, 0))
+
+
+# The chairman's one-line answer (owner ruling AC44(1)) leads the answer section. A verdict
+# recorded before the chairman was asked for it says so in one muted line: the page never writes
+# the answer for him.
+ANSWER_LINE_BEFORE = ("This verdict was recorded before the chairman was asked for a one-line "
+                      "answer to the question; the page does not write one for him.")
+ANSWER_LINE_MISSING = "The chairman did not give a one-line answer to the question."
+
+
+def _front_insider_not_considered(page, run):
+    """Owner ruling AC47(3): where what officers and directors own could not be established, the
+    council ruled without the insider evidence, and the page says so once, beneath the rating box
+    and before the reasoning. Any other page is unchanged."""
+    pack = run.get("pack") or {}
+    if (isinstance(pack.get("capture"), dict)
+            and (sufficiency.insider_depth(pack, brief._floors()) or {}).get("not_considered")):
+        page.add('<div class="card prominent"><p>%s</p></div>'
+                 % esc(sufficiency.INSIDER_NOT_CONSIDERED))
+
+
+def _front_answer_line(page, run):
+    """The chairman's one line answering the owner's question, first in the answer section. A
+    figure in it that traces to no recorded fact of the case file and none of his key numbers is
+    marked where it stands, by the prose marker's own rule (AC19) - never refused."""
+    verdict = run["verdict"]
+    if not _carries_answer_line(verdict):
+        page.add('<div class="muted small">%s</div>' % esc(ANSWER_LINE_BEFORE))
+        return
+    line = verdict.get("answer_line")
+    if not isinstance(line, str) or not line.strip():
+        page.add('<div class="muted small">%s</div>' % esc(ANSWER_LINE_MISSING))
+        return
+    shown = reformat_prose(" ".join(line.split()), "chairman answer line", page.number_subs)
+    bases = chair_fields.answer_line_bases(
+        (verdict.get("atlas_envelope") or {}).get("key_numbers") or [],
+        (run.get("pack") or {}).get("capture") or {}, brief._marks_config())
+    page.add('<div class="card prominent"><span class="lead">%s</span><p>%s</p></div>'
+             % (esc(chair_fields.labels()["answer_line"]),
+                trace.mark(shown, bases, brief._marks_config(), esc)))
+
+
+def _missing_field(page, key):
+    page.add('<div class="muted small">%s</div>' % esc(CHAIR_FIELD_MISSING[key]))
+
+
+def _front_decisive_argument(page, verdict):
+    """The advisor whose argument decided the rating, by its lens, and why - first in the tier."""
+    if not _carries_chair_fields(verdict):
+        return
+    field = verdict.get("decisive_argument")
+    if not isinstance(field, dict):
+        _missing_field(page, "decisive_argument")
+        return
+    title = LENS_TITLES.get(field.get("seat"), str(field.get("seat")))
+    why = reformat_prose(str(field.get("why") or ""), "chairman decisive argument",
+                         page.number_subs)
+    page.add('<div class="card prominent"><span class="lead">%s</span>%s</div>'
+             % (esc(chair_fields.labels()["decisive_argument"]),
+                markdown("**%s.** %s" % (title, why))))
+
+
+def _synthesis_chair_fields(page, run):
+    """The business read and the decisive numbers as the chairman reads them, above his
+    synthesis prose; values through the display rules."""
+    verdict = run["verdict"]
+    if not _carries_chair_fields(verdict):
+        return
+    labels = chair_fields.labels()
+    read = verdict.get("business_read")
+    if not isinstance(read, str):
+        _missing_field(page, "business_read")
+    else:
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>'
+                 % (esc(labels["business_read"]),
+                    markdown(reformat_prose(read, "chairman business read", page.number_subs))))
+    rows = verdict.get("decisive_metrics_read")
+    if not isinstance(rows, list):
+        _missing_field(page, "decisive_metrics_read")
+        return
+    lead = '<div class="card"><span class="lead">%s</span>' % esc(labels["decisive_metrics_read"])
+    if not rows:
+        # An empty list says "no table" only where the case file has none; where it carries
+        # decisive metrics, the empty answer that stood after the one re-ask is the chairman
+        # not reading them.
+        capture = (run.get("pack") or {}).get("capture") or {}
+        line = (CHAIR_FIELD_MISSING["decisive_metrics_read"]
+                if chair_fields.required_rows(capture) else NO_METRICS_TABLE)
+        page.add('%s<div class="muted small">%s</div></div>' % (lead, esc(line)))
+        return
+    per_member = any(row.get("constituent") for row in rows)
+
+    def shown(text):
+        return esc(reformat_prose(str(text or ""), "chairman decisive numbers", page.number_subs))
+    body = "".join(
+        "<tr><td>%s</td>%s<td>%s</td><td>%s</td></tr>"
+        % (_glossed(row.get("metric", "")),
+           ("<td>%s</td>" % esc(row.get("constituent") or "")) if per_member else "",
+           shown(row.get("value")) + (' <span class="alarmtag">[%s]</span>' % esc(row["mark"])
+                                      if row.get("mark") else ""),
+           shown(row.get("implies")))
+        for row in rows)
+    # Architect ruling on round 8's related gap: a table short of the case file's decisive
+    # metrics says how many were not read out, by name when three or fewer - a count on the
+    # page, never a refusal or a re-ask.
+    capture = (run.get("pack") or {}).get("capture") or {}
+    missing = chair_fields.missing_rows(rows, capture)
+
+    def named(constituent, name):
+        # Round 9 (P-U5b-12): a metric's name is marked against its own frame's facts, as the
+        # page marks every other figure the capture wrote (AC19).
+        ticker = constituent or (capture.get("subject") or {}).get("ticker")
+        marked = trace.mark(str(name), brief._frame_bases(capture, ticker),
+                            brief._marks_config(), esc)
+        return "&quot;%s&quot;%s" % (marked, "" if constituent is None
+                                      else esc(" of %s" % constituent))
+    note = ""
+    if missing:
+        note = esc("%d of the case file's decisive metrics %s not read out by the chairman" % (
+            len(missing), "was" if len(missing) == 1 else "were"))
+        if len(missing) <= 3:
+            note += ": " + ", ".join(named(*pair) for pair in missing)
+        note = '<div class="muted small">%s.</div>' % note
+    page.add("%s<table><tr><th>metric</th>%s<th>value</th><th>what it implies for the rating"
+             "</th></tr>%s</table>%s</div>"
+             % (lead, "<th>constituent</th>" if per_member else "", body, note))
+
+
+def _fields_figure_note(run):
+    """One muted line under the synthesis for each of the chairman's fields re-answers that
+    changed figures on the published document (as the advisors' heading note does). A field's
+    changed figures print only while the published field is the text that re-answer left,
+    host-written keys ignored (architect ruling closing P-U5b-5), so a field the resolve later
+    replaced is never called "shown above"."""
+    answers = run.get("answers") or {}
+    verdict = run.get("verdict") or {}
+    lines = []
+    for seat, document in (("chair_draft", "draft_verdict"), ("chair_resolve", "final_verdict")):
+        flag = (run.get("fields_flags") or {}).get(seat)
+        if not flag or not flag.get("figures_changed"):
+            continue
+        written = (answers.get(seat) or {}).get(document) or {}
+        first, rewrite = [], []
+        for key, moved in (flag.get("figures_by_field") or {}).items():
+            if key in verdict and (chair_fields.as_written(key, verdict.get(key))
+                                   == chair_fields.as_written(key, written.get(key))):
+                first += moved.get("first") or []
+                rewrite += moved.get("rewrite") or []
+        if not first and not rewrite:
+            continue
+        lines.append(FIELDS_FIGURE_NOTE_OPEN + "fields his first answer missed, and his second "
+                     "answer, shown above, changed figures. First answer: %s. Second answer: "
+                     "%s.</div>"
+                     % (esc(", ".join(first) or "none"), esc(", ".join(rewrite) or "none")))
+    return "".join(lines)
 
 
 def _front_section(page, run, now):
     """The executive summary (owner ruling AC16(3)): the first two to three minutes of reading.
-    The decisive numbers, the thesis, the price read, the chairman's rationale IN FULL and never
-    cut, one table of everything that would change the rating, where the advisors parted, and the
-    audit state. The chairman's synthesis follows this directly (AC16(5)); the decision in detail,
+    The chairman's one-line answer first (owner ruling AC44(1)), the decisive numbers, the price
+    read, the chairman's rationale IN FULL and never cut, one table of everything that would change
+    the rating - read as one scorecard where he names measures (AC44(2)) - where the advisors
+    parted, and the audit state. The chairman's synthesis follows this directly (AC16(5)); the decision in detail,
     the frozen evidence and the appendices come below it in turn - a reader dives deeper the
     further down the page they scroll."""
     # The warnings band, the rating box and the key-data strip now sit in the masthead above
     # (owner ruling AC16(3),(9); design audit C4 tier 0 / C5), assembled by _head_block. This
     # tier opens with the business archetype and the thesis; nothing here is folded.
-    page.section("decision", "Executive summary")
+    page.numbered("decision", "1", "The answer")
+    _front_insider_not_considered(page, run)
+    _front_answer_line(page, run)
+    _front_decisive_argument(page, run["verdict"])
     _front_chart_and_tape(page, run)
     _front_archetype(page, run)
     _front_theme_thesis(page, run["verdict"])
-    _front_thesis(page, run["verdict"])
     _front_price_read(page, run)
     _front_rationale(page, run["verdict"])
     _front_tripwires(page, run)
@@ -2464,23 +3079,25 @@ def _question_section(page, run):
     to the portfolio system are the record, behind one line."""
     verdict = run["verdict"]
     frame = verdict.get("frame") or {}
-    page.section("question", "The owner's question")
+    page.add('<h3 id="question">The owner&#x27;s question</h3>')
     mark = page.mark()
     page.add('<div class="card"><span class="lead">His question, word for word</span>'
-             '<div class="verbatim">%s</div></div>' % esc(verdict.get("question_verbatim", "")))
-    page.add('<div class="card"><span class="lead">The half the council answered</span>'
              '<div class="verbatim">%s</div>'
              '<div class="muted small" style="margin-top:8px">What was asked, in one phrase: '
              "%s.</div></div>"
-             % (esc(frame.get("question_for_council", "")), esc(frame.get("classification", ""))))
+             % (esc(verdict.get("question_verbatim", "")), esc(frame.get("classification", ""))))
+    # The council's own wording prints only where it differs from his (unit READ-A).
+    asked = str(frame.get("question_for_council") or "")
+    if " ".join(asked.split()) != " ".join(str(verdict.get("question_verbatim") or "").split()):
+        page.add('<div class="card"><span class="lead">What the council was asked to answer'
+                 '</span><div class="verbatim">%s</div></div>' % esc(asked))
     if frame.get("for_atlas") is not None:
         page.add('<div class="card prominent"><span class="lead">Routed to the portfolio system, '
                  "untouched</span>The rest of his question is not the council&#x27;s to answer. "
                  "It went to the portfolio system exactly as he wrote it:"
                  '<div class="verbatim" style="margin-top:8px">%s</div></div>'
                  % esc(frame["for_atlas"]))
-    page.collapse("The owner&#x27;s question as he asked it, and the half the council answered",
-                  mark)
+    page.collapse("The owner&#x27;s question as he asked it", mark)
 
 
 # --- 3. The verdict block ----------------------------------------------------------------------
@@ -2490,19 +3107,24 @@ def _mispricing_sentence(verdict):
     verdict block below it can never come to read differently."""
     mispricing = verdict.get("mispricing") or {}
     read = mispricing.get("read")
+    magnitude = str(mispricing.get("magnitude") or "")
+    word = MISPRICING_WORDS.get(read, read)
     if read == "no_view" or not read:
-        sentence = "The council takes no view on the price yet."
-    else:
-        sentence = _end_sentence(
-            "The council reads the price as <strong>%s</strong>%s"
-            % (esc(MISPRICING_WORDS.get(read, read)),
-               (" &mdash; %s" % esc(mispricing["magnitude"]))
-               if mispricing.get("magnitude") else ""))
-    arithmetic = mispricing.get("arithmetic")
+        return "The council takes no view on the price yet."
+    if magnitude.lower().startswith(str(word).lower()):
+        # The chairman's magnitude already opens with the read word; it is not said twice.
+        return _end_sentence("The price read: %s" % esc(magnitude))
+    return _end_sentence("The council reads the price as <strong>%s</strong>%s"
+                         % (esc(word), (" &mdash; %s" % esc(magnitude)) if magnitude else ""))
+
+
+def _synthesis_price_arithmetic(page, verdict):
+    """The price read's arithmetic, in the chairman's own words, on the synthesis tier (architect
+    ruling 9 on the READ-A bracket): the front says what the price read is, this says how."""
+    arithmetic = (verdict.get("mispricing") or {}).get("arithmetic")
     if arithmetic:
-        # The arithmetic-in-words sentence is the chairman's own; it is quoted, never reworked.
-        sentence += ' <span class="muted">%s</span>' % esc(arithmetic)
-    return sentence
+        page.add('<div class="card"><span class="lead">How the price read is worked out</span>%s'
+                 "</div>" % esc(arithmetic))
 
 
 # The verdict fold is gone (owner ruling AC16(3), audit B2/B4): the rating, the chairman's
@@ -2733,17 +3355,30 @@ def _detail_section(page, run):
     content-named h3, constituents first, the ladder detail beside the ladder content already on
     this tier. They were open under the 'all folded' appendices divider before; now the divider's
     statement is true."""
-    page.section("detail", "The decision in detail")
-    _constituents_section(page, run)
-    _cycle_section(page, run)
-    _fi_section(page, run)
-    _detail_basis(page, run)
+    page.numbered("detail", "6", "The decision in detail")
+    # The dated calendar and the downside first, then the firm's figures, then the rate series,
+    # then how the rating was earned and the evidence check (architect ruling 10 on the READ-A
+    # bracket); the challenge round is section 5.
+    _detail_calendar(page, run)
     _front_downside(page, run)
+    _fi_section(page, run)
+    _grower_section(page, run)
+    _producer_section(page, run)
+    _cycle_section(page, run)
+    _constituents_section(page, run)
+    _detail_basis(page, run)
     _ladders_section(page, run)
     _theme_falsifiers(page, run)
-    _detail_calendar(page, run)
     _auditor_objections(page, run)
+
+
+def _challenge_section(page, run):
+    """Section 5 (owner's finding 5): the outside challenge and what changed - the round and its
+    endorsement open, the outside model's own words and the field-by-field change folded."""
+    page.numbered("challenge", "5", "The outside challenge and what changed")
     _challenge_card(page, run)
+    _challenger_section(page, run)
+    _changes_section(page, run)
 
 
 # --- The challenge round, summarized (a card on tier 3) ----------------------------------------
@@ -2756,9 +3391,9 @@ def _challenge_card(page, run):
     page.add("<h3>The outside challenge round</h3>")
     status = challenge.get("status")
     if status == "success":
-        page.add('<div class="card"><strong>The outside audit ran.</strong> A model from a '
+        page.add('<div class="card"><strong>The outside challenge ran.</strong> A model from a '
                  "different company, <strong>%s</strong>, read the full case file and answered."
-                 "</div>" % esc(challenge.get("model_requested", "")))
+                 "</div>" % esc(_model_name(challenge.get("model_requested", ""))))
     else:
         reason = challenge.get("failure_reason") or "no reason recorded"
         page.add('<div class="card alarm"><span class="shout">%s.</span>What happened: %s (%s). '
@@ -2777,11 +3412,13 @@ def _challenge_card(page, run):
             disposed = dispositions.get(fid)
             if disposed:
                 word = disposed.get("disposition", "")
-                tag = '<span class="tag %s">%s</span>' % (esc(word), esc(word))
                 meaning = DISPOSITION_MEANING.get(word, "")
-                note = ('<div class="muted small" style="margin-top:5px">%s%s</div>'
-                        % (("<em>%s.</em> " % esc(meaning)) if meaning else "",
-                           esc(disposed.get("response", ""))))
+                tag = '<span class="tag %s" title="%s">%s</span>' % (
+                    esc(word), esc(meaning), esc(DISPOSITION_TAGS.get(word, word)))
+                response = str(disposed.get("response") or "")
+                note = ('<div class="muted small" style="margin-top:5px">%s</div>'
+                        % (esc(response) if response.strip()
+                           else ("<em>%s.</em>" % esc(meaning)) if meaning else ""))
             else:
                 tag = '<span class="tag">no disposition recorded</span>'
                 note = ""
@@ -2792,31 +3429,80 @@ def _challenge_card(page, run):
                             tag, esc(finding.get("title", "")), note))
         page.add('<div class="card prominent"><ul>%s</ul></div>' % "".join(items))
     elif status == "success":
-        page.add('<div class="card">The challenger raised nothing. A clean audit that finds '
-                 "nothing is a success, not a silence.</div>")
+        page.add('<div class="card">The outside challenge raised nothing. A clean challenge that '
+                 "finds nothing is a success, not a silence.</div>")
     endorsement = challenge.get("endorsement")
     if endorsement:
         word = RATING_WORDS.get(endorsement.get("highest_rating_supported"),
                                 endorsement.get("highest_rating_supported") or "")
-        page.add('<div class="card"><strong>The challenger&#x27;s endorsement.</strong> The '
-                 "highest rating it would support on this record: <strong>%s</strong>.</div>"
+        page.add('<div class="card"><strong>The outside challenge&#x27;s endorsement.</strong> '
+                 "The highest rating it would support on this record: <strong>%s</strong>.</div>"
                  % esc(word))
-    page.add('<div class="muted small">The challenger&#x27;s own words, in full, are under '
-             '<a href="#challenger">its full response</a> below.</div>')
 
 
 # --- 7. The post-audit change appendix ---------------------------------------------------------
 
 def _change_sentence(change):
     """One field the challenge changed, as a sentence for a reader (owner ruling AC16(8), audit
-    B3): what field moved and what happened to it, in plain words - not the raw JSON the diff used
-    to print open in the reader's way. The before/after text itself is behind a second fold."""
-    field = esc(change.get("field", ""))
+    B3): the field in plain words (unit READ-A) and what happened to it - not the raw JSON the
+    diff used to print open in the reader's way. The before/after text is behind a second fold."""
+    field = str(change.get("field", ""))
     label = change.get("label", "")
     words = esc(CHANGE_LABEL_WORDS.get(label, label))
     if label == "unendorsed_raise":
         words = '<span class="alarmtag">%s</span>' % words
-    return "<li><code>%s</code> &mdash; %s.</li>" % (field, words)
+    return "<li>%s &mdash; %s.</li>" % (esc(FIELD_WORDS.get(field, field)), words)
+
+
+def _moved_numbers(appendix):
+    """The rating and every key number whose value differs between the draft the outside
+    challenge read and the final document, as (name, before, after) in the market form, paired
+    in order by name and date; a number on one side only shows a dash on the other (unit
+    READ-A)."""
+    rows, fields = [], {change.get("field"): change for change in appendix}
+    rating = fields.get("rating")
+    if rating:
+        rows.append(("Rating", RATING_WORDS.get(rating.get("before"), rating.get("before")),
+                     RATING_WORDS.get(rating.get("after"), rating.get("after"))))
+    try:
+        before = json.loads((fields.get("key_numbers") or {}).get("before") or "[]")
+        after = json.loads((fields.get("key_numbers") or {}).get("after") or "[]")
+    except ValueError:
+        return rows
+    if not (isinstance(before, list) and isinstance(after, list)):
+        return rows
+
+    # Paired in order (architect ruling, round 3 of READ-A): each row before pairs with the first
+    # still-unpaired row after of the same name and date; a row left unpaired on either side is
+    # added or removed. A pair is compared on the recorded value and unit, never on the printed
+    # form, which can round two different values to one; an unchanged pair is not listed.
+    before = [k for k in before if isinstance(k, dict)]
+    after = [k for k in after if isinstance(k, dict)]
+
+    def key(k):
+        return str(k.get("name")), str(k.get("as_of") or "")
+    unpaired, pairs = list(range(len(after))), []
+    for old in before:
+        match = next((i for i in unpaired if key(after[i]) == key(old)), None)
+        if match is not None:
+            unpaired.remove(match)
+        pairs.append((old, None if match is None else after[match]))
+    pairs += [(None, after[i]) for i in unpaired]
+    twice = {key(k)[0] for side in (before, after) for k in side
+             if [key(j)[0] for j in side].count(key(k)[0]) > 1}
+    for old, new in pairs:
+        if old and new and (old.get("value"), old.get("unit")) == (new.get("value"),
+                                                                  new.get("unit")):
+            continue
+        cells = [format_number(k.get("value"), k.get("unit")) if k else "\u2014"
+                 for k in (old, new)]
+        if old and new and cells[0] == cells[1]:
+            cells[1] += " (moved within the rounding; the exact values are in the fold below)"
+        name, date = key(old or new)
+        if name in twice and date:
+            name = "%s (%s)" % (name, format_date(date))
+        rows.append((name, cells[0], cells[1]))
+    return rows
 
 
 def _changes_section(page, run):
@@ -2827,16 +3513,21 @@ def _changes_section(page, run):
     open JSON in the reader's way (audit B3)."""
     challenge = run["verdict"].get("challenge") or {}
     appendix = challenge.get("change_appendix") or []
-    # A folded appendix, not in the navigation (the menu stays to the tiers and the main
-    # appendices, about nine entries): the challenge diff is a technical stamp reached by scrolling.
-    page.add('<h2 id="changes">What changed after the outside audit</h2>')
+    # Folded behind one line (owner ruling AC16(8)), in section 5 beside the challenge.
+    page.add('<h3 id="changes">What changed after the outside challenge</h3>')
     if not appendix:
-        page.add('<div class="card">Nothing changed after the outside audit.</div>')
+        page.add('<div class="card">Nothing changed after the outside challenge.</div>')
         return
     mark = page.mark()
+    moved = _moved_numbers(appendix)
+    if moved:
+        page.add('<table><tr><th>what moved</th><th class="nowrap">before</th>'
+                 '<th class="nowrap">after</th></tr>%s</table>'
+                 % "".join('<tr><td>%s</td><td class="nowrap">%s</td><td class="nowrap">%s</td>'
+                           "</tr>" % (esc(name), esc(was), esc(now)) for name, was, now in moved))
     page.add('<div class="muted small">The final document is compared, field by field, against '
-             "the draft the challenger read. Each changed field is named below; the exact text "
-             "before and after is behind the second fold.</div>")
+             "the draft the outside challenge read. Each changed field is named below; the exact "
+             "text before and after is behind the second fold.</div>")
     alarm = any(change.get("label") == "unendorsed_raise" for change in appendix)
     page.add('<div class="card%s"><ul>%s</ul></div>'
              % (" alarm" if alarm else "",
@@ -2855,7 +3546,8 @@ def _changes_section(page, run):
              '<div class="body"><table><tr><th class="nowrap">what changed</th><th>before</th>'
              "<th>after</th><th class=\"nowrap\">what happened</th></tr>%s</table></div></details>"
              % "".join(rows))
-    page.collapse("%d field%s changed between the draft the challenger read and the final document"
+    page.collapse("%d field%s changed between the draft the outside challenge read and the final "
+                  "document"
                   % (len(appendix), "" if len(appendix) == 1 else "s"), mark)
 
 
@@ -2864,7 +3556,9 @@ def _changes_section(page, run):
 def _synthesis_section(page, run):
     answers = run["answers"]
     resolve = answers.get("chair_resolve") or {}
-    page.section("synthesis", "The chairman's final synthesis")
+    page.numbered("synthesis", "2", "The chairman's synthesis")
+    _synthesis_chair_fields(page, run)
+    _synthesis_price_arithmetic(page, run["verdict"])
     prose = resolve.get("final_markdown")
     if not prose:
         prose = (answers.get("chair_draft") or {}).get("synthesis_markdown", "")
@@ -2872,9 +3566,7 @@ def _synthesis_section(page, run):
                  "is the chairman&#x27;s synthesis as drafted.</div>")
     page.add('<div class="card">%s%s</div>'
              % (markdown(reformat_prose(prose or "not recorded", "chairman synthesis",
-                                        page.number_subs)),
-                _prose_note(run, "chair_resolve_synthesis")
-                or _prose_note(run, "chair_draft_synthesis")))
+                                        page.number_subs)), _fields_figure_note(run)))
 
 
 # --- 9. The evidence, folded; the market-shut sentence in plain sight ---------------------------
@@ -2899,7 +3591,7 @@ def _auditor_objections(page, run):
     the list of figures that moved after it read fold behind one line each. A failed or absent
     audit is a loud, open alarm - never folded."""
     block = _evidence_audit(run)
-    page.add("<h3>The outside auditor&#x27;s objections, and the answers</h3>")
+    page.add("<h3>The evidence check: its points, and the answers</h3>")
     if block.get("status") != "success":
         page.add('<div class="card alarm"><span class="shout">%s</span>'
                  "<div class=\"small\">The council's rules require a model from outside its "
@@ -2917,13 +3609,13 @@ def _auditor_objections(page, run):
     findings = block.get("findings") or []
     resolutions = block.get("resolutions") or {}
     page.add('<div class="muted small">Asked of <strong>%s</strong>, a model outside this '
-             "council&#x27;s own family, before any advisor was paid. It audits the evidence; "
+             "council&#x27;s own family, before any advisor was paid. It checks the evidence; "
              "it never gathers it and it never writes it.</div>"
-             % esc(str(block.get("model") or "not recorded")))
+             % esc(_model_name(block.get("model") or "not recorded")))
     overall = block.get("overall")
     if overall:
-        page.add('<div class="card prominent"><span class="lead">The auditor&#x27;s reading of '
-                 "this evidence, in its own words</span>"
+        page.add('<div class="card prominent"><span class="lead">The outside model&#x27;s '
+                 "reading of this evidence, in its own words</span>"
                  '<div class="verbatim">%s</div></div>' % esc(str(overall)))
     blocking = [f for f in findings if f.get("severity") == "blocking"]
     nonblocking = [f for f in findings if f.get("severity") != "blocking"]
@@ -2937,33 +3629,48 @@ def _auditor_objections(page, run):
         mark = page.mark()
         for finding in nonblocking:
             page.add(_audit_finding_card(finding, resolutions))
-        page.collapse("%d non-blocking point%s the auditor raised, each with its answer on the "
-                      "record" % (len(nonblocking), "" if len(nonblocking) == 1 else "s"), mark)
+        page.collapse("%d non-blocking point%s the evidence check raised, each with its answer "
+                      "on the record" % (len(nonblocking), "" if len(nonblocking) == 1 else "s"), mark)
     _changes_after_the_audit(page, run)
 
 
-def _change_row(change, decisive):
-    """One listed change, for a reader: what it is, what the auditor read, what the council sat
-    on. Every dynamic part is escaped here, as every other card escapes its own."""
-    entry_id = esc(str(change.get("id") or ""))
-    word = change.get("change")
+def _change_row(change, decisive, run):
+    """One listed change, for a reader (unit READ-A): the figure's label, the value the council
+    sat on in the market form with its date, and whether the decision turns on it. The record
+    keeps the number the evidence check read but not its unit, which may have moved with it, so
+    that number stands as recorded and is never read by the unit the pack carries now (audit
+    round 4, r4-1). A change to the business description reads as words; its before and after
+    text stay in the run's files."""
+    entry_id = str(change.get("id") or "")
+    label = esc(_fact_label(run, entry_id))
     turns = (' <strong>&mdash; a number this decision turns on</strong>'
              if change in decisive else "")
+    if entry_id.startswith("capture."):
+        return ("<li><strong>%s</strong>%s &mdash; revised after the evidence check.</li>"
+                % (label, turns))
+    facts = {fact.get("id"): fact for fact in
+             ((run.get("pack") or {}).get("capture") or {}).get("tier1") or []}
+    fact = facts.get(entry_id) or {}
+
+    def shown(value):
+        # A figure the pack no longer carries has no unit to read it by; it stands as recorded.
+        return esc(format_number(value, fact["unit"]) if fact.get("unit") else str(value))
+    dated = format_date(fact.get("as_of", ""))
+    dated = " (as of %s)" % esc(dated) if dated else ""
+    word = change.get("change")
     if word == "added":
-        said = _end_sentence("It was gathered after the audit and reads %s"
-                             % esc(str(change.get("new") or "")))
+        said = "Added after the evidence check: %s%s" % (shown(change.get("new")), dated)
     elif word == "removed":
-        said = _end_sentence("It was taken out after the audit; it read %s"
-                             % esc(str(change.get("old") or "")))
+        said = "Taken out after the evidence check; it read %s" % shown(change.get("old"))
     elif change.get("old") == change.get("new"):
-        said = _end_sentence(
-            "Its value stands at %s; what moved is its unit, its date or where "
-            "it came from" % esc(str(change.get("new") or "")))
+        said = ("It reads %s%s; the evidence check read the same number, %s, in a unit this "
+                "record does not keep; what moved is its unit, its date or where it came from"
+                % (shown(change.get("new")), dated, esc(str(change.get("old")))))
     else:
-        said = _end_sentence("The auditor read %s; the council sat on %s"
-                             % (esc(str(change.get("old") or "")),
-                                esc(str(change.get("new") or ""))))
-    return ("<li><strong>%s</strong>%s &mdash; %s</li>" % (entry_id, turns, said))
+        said = ("The evidence check read the number %s, in a unit this record does not keep; "
+                "the council sat on %s%s"
+                % (esc(str(change.get("old"))), shown(change.get("new")), dated))
+    return "<li><strong>%s</strong>%s &mdash; %s.</li>" % (label, turns, said)
 
 
 def _changes_after_the_audit(page, run):
@@ -2977,18 +3684,17 @@ def _changes_after_the_audit(page, run):
         return
     decisive = _changes_that_decide(run)
     mark = page.mark()
-    page.add('<div class="card"><span class="lead">Changed after the outside auditor read the '
-             "evidence</span>"
+    page.add('<div class="card"><span class="lead">Changed after the evidence check</span>'
              '<div class="small">The council may gather more, correct a figure or drop one '
-             "after the audit; what it may not do is sit on evidence the record says was "
-             "audited when it was not. These %d did not reach the outside model.</div>"
+             "after the evidence check; what it may not do is sit on evidence the record says "
+             "was checked when it was not. These %d did not reach the outside model.</div>"
              "<ul>%s</ul></div>"
              % (len(changes),
-                "".join(_change_row(change, decisive) for change in changes)))
+                "".join(_change_row(change, decisive, run) for change in changes)))
     # Folded behind one line with its count (audit C4 tier 3): the list of figures that moved
-    # after the auditor read is detail, and the front already shows whether any was decisive.
-    page.collapse("%d figure%s moved after the outside auditor read the evidence, and never "
-                  "reached it" % (len(changes), "" if len(changes) == 1 else "s"), mark)
+    # after the check is detail, and the front already shows whether any was decisive.
+    page.collapse("%d figure%s moved after the evidence check, and never reached the outside "
+                  "model" % (len(changes), "" if len(changes) == 1 else "s"), mark)
 
 
 def _audit_finding_extras(finding):
@@ -3032,6 +3738,14 @@ def _cycle_section(page, run):
         page.add('<div class="card"><span class="lead">The dated series are '
                  "a declared gap</span>%s</div>" % esc(gap.get("reason", "")))
         return
+    # One small table open, each series under its plain name with its first and latest reading
+    # and the change (unit READ-B1, the rows the full document prints); the daily readings fold
+    # beneath it (owner's finding 4).
+    names = GLOSSARY["series"]
+    table = brief.cycle_rows(capture)
+    if table:
+        page.add(_business_table(table, esc))
+    mark = page.mark()
     for series in cycle.get("series") or []:
         rows = "".join(
             "<tr><td>%s</td><td>%s</td></tr>"
@@ -3040,15 +3754,16 @@ def _cycle_section(page, run):
         # Render-only (FI-ARCHETYPE (b)): the date the series was read beside the date of its
         # LAST point, so a reader sees how old the latest reading is.
         last = series["points"][-1]["date"] if series["points"] else "none"
-        page.add('<h3>%s <span class="muted small">(%s, read %s; latest point %s)</span>'
-                 "</h3>"
-                 % (esc(series["id"]), esc(series["unit"]),
-                    esc(series["as_of"]), esc(last)))
+        page.add('<h4>%s <span class="muted small">(%s &middot; %s, read %s; latest point %s)'
+                 "</span></h4>"
+                 % (esc(names.get(series["id"], series["id"])), esc(series["id"]),
+                    esc(series["unit"]), esc(series["as_of"]), esc(last)))
         page.add("<table><tr><th>Date</th><th>Value</th></tr>%s</table>"
                  % rows)
         page.add('<div class="muted small">Source: %s. Re-fetch: %s</div>'
                  % (esc(series["source"]),
                     esc(series["refetch_url_or_source_line"])))
+    page.collapse("The daily readings, series by series", mark)
 
 
 def _plain(value):
@@ -3063,10 +3778,132 @@ def _fi_value(facts, fact_id):
     fact = facts.get(fact_id) if isinstance(fact_id, str) else None
     if fact is None:
         return "%s (not in the pack)" % esc(fact_id)
-    label = str(fact.get("label") or "").strip()
-    return "%s%s %s (as of %s)" % (esc(label) + " " if label else "", _fact_name(fact_id),
-                                   esc(format_number(fact.get("value"), fact.get("unit"))),
-                                   esc(format_date(fact.get("as_of", ""))))
+    label = str(fact.get("label") or "").strip() or _fact_name(fact_id)
+    return "%s %s (as of %s)" % (esc(label),
+                                 esc(format_number(fact.get("value"), fact.get("unit"))),
+                                 esc(format_date(fact.get("as_of", ""))))
+
+
+def _business_cell(cell, prose):
+    """One cell of a business table (unit READ-B1): the capture's words marked (AC19), a cycle
+    reading with its date in small print, anything else as the brief reads it, escaped."""
+    if cell["kind"] == "prose":
+        return prose(cell["text"])
+    if cell["kind"] == "reading":
+        return '%s <span class="muted small">(%s)</span>' % (
+            esc(format_number(cell["value"], cell["unit"])), esc(format_date(cell["date"])))
+    return esc(brief.cell_text(cell))
+
+
+def _business_table(table, prose, fold=None, names=None):
+    """A business table as HTML: the table, then the lines under it - inside a closed fold named
+    `fold` where one is given. `names`, where given, prints each row's first cell of plain words
+    (a growth company's tables carry their terms' hover notes, GROWTH-ARCHETYPE (c))."""
+    def first(cell):
+        if names is not None and cell["kind"] == "words":
+            return names(brief.cell_text(cell))
+        return _business_cell(cell, prose)
+    rows = "".join("<tr>%s</tr>" % "".join(
+        "<td>%s</td>" % (first(cell) if not index else _business_cell(cell, prose))
+        for index, cell in enumerate(row)) for row in table["rows"])
+    below = "".join("<div>%s</div>" % " ".join(_business_cell(cell, prose) for cell in line)
+                    for line in table["below"])
+    if below and fold:
+        below = '<details><summary>%s</summary><div class="body">%s</div></details>' % (fold,
+                                                                                      below)
+    return "<table><tr>%s</tr>%s</table>%s" % (
+        "".join("<th>%s</th>" % esc(name) for name in table["head"]), rows, below)
+
+
+def _grower_section(page, run):
+    """What kind of growth company this is (owner rulings AC49(1) and AC50), a subject-shape
+    block on the decision-in-detail tier beside the cycle, as the financial institution's is: the
+    kind of business and the measure, the yardstick and what stands beside it, the latest
+    quarters, the cash and how long it lasts with - below the line - the ruled sentence, and how
+    it earns. The tables are the full evidence document's, built once in the brief. Evidence
+    only: nothing here reads the figures; every string the capture wrote is escaped, its numbers
+    marked where they trace to no fact (AC19); every term carries its hover note."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    frame = brief.grower_subject_frame(capture)
+    if frame is None:
+        return
+    pack = run.get("pack") or {}
+    ticker = (capture.get("subject") or {}).get("ticker")
+    bases = brief._frame_bases(capture, ticker)
+
+    def prose(text):
+        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+
+    def card(lead, body):
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (_glossed(lead), body))
+
+    page.add("<h3>What kind of growth company this is</h3>")
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, and '
+             "those worked out from them marked calculated; nothing here reads them.</div>")
+    kind = brief.grower_kind_words(frame, _plain)
+    measure = _capture_measure(capture)
+    card("The kind of business", "%s%s." % (
+        esc(kind[:1].upper() + kind[1:]),
+        (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
+         if measure else "")))
+    card("The yardstick, and what stands beside it",
+         _business_table(brief.grower_yardstick_rows(pack, frame), prose, names=_glossed))
+    card("The latest quarters, oldest first",
+         _business_table(brief.grower_quarter_rows(pack, frame), prose))
+    runway = brief.grower_runway(pack)
+    cap = brief.grower_cap_sentence(runway)
+    card("The cash, and how long it lasts",
+         "<p>%s</p>%s%s" % (_glossed(brief.grower_months_line(runway, with_cap=False)),
+                            _business_table(brief.grower_runway_rows(pack, frame, runway), prose,
+                                            names=_glossed),
+                            "<p><strong>%s</strong></p>" % esc(cap) if cap else ""))
+    if frame.get("how_it_earns"):
+        card("How it earns",
+             _business_table(brief.earnings_rows(pack, frame), prose,
+                             fold="Each line in the capture&#x27;s own words"))
+
+
+def _producer_section(page, run):
+    """What kind of producer this is (owner rulings AC51-AC56), a subject-shape block on the
+    decision-in-detail tier beside the cycle, as the growth company's is: the kind and the measure,
+    the reserve life with - where today's price is below the reserves' - the ruled sentence, the
+    reserves, the yardstick, output and the price received by quarter, what each unit costs with
+    the hedges, the debt and the clean-up obligations, and how it earns. The tables are the full
+    evidence document's, built once in the brief. Evidence only; every string the capture wrote is
+    escaped; every term carries its hover note."""
+    capture = (run.get("pack") or {}).get("capture") or {}
+    frame = brief.producer_subject_frame(capture)
+    if frame is None:
+        return
+    pack = run.get("pack") or {}
+    ticker = (capture.get("subject") or {}).get("ticker")
+    bases = brief._frame_bases(capture, ticker)
+
+    def prose(text):
+        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+
+    def card(lead, body):
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (_glossed(lead), body))
+
+    page.add("<h3>What kind of producer this is</h3>")
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, and '
+             "those worked out from them marked calculated; nothing here reads them.</div>")
+    kind = brief.producer_kind_words(frame, _plain)
+    measure = _capture_measure(capture)
+    readings = brief.producer_readings(pack)
+    sentence = brief.reserve_price_sentence(readings)
+    card("The kind of business", "%s%s.<p>%s</p>%s" % (
+        esc(kind[:1].upper() + kind[1:]),
+        (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
+         if measure else ""),
+        _glossed(brief.producer_life_line(readings, with_sentence=False)),
+        "<p><strong>%s</strong></p>" % esc(sentence) if sentence else ""))
+    for lead, table in brief.producer_tables(pack, frame, readings):
+        card(lead, _business_table(table, prose, names=_glossed))
+    if frame.get("how_it_earns"):
+        card("How it earns",
+             _business_table(brief.earnings_rows(pack, frame), prose,
+                             fold="Each line in the capture&#x27;s own words"))
 
 
 def _fi_section(page, run):
@@ -3103,68 +3940,34 @@ def _fi_section(page, run):
             ", ".join(value(fid) for fid in frame.get("fi_secondary_share_facts") or [])
             or "no fact named")
     card("The kind of firm", kind + ".")
+    # Unit READ-B1: capital, the regulator's bad year, the risk-cost line, how it earns and the
+    # guidance as small tables of figures - the rows the full evidence document prints, built
+    # once in the brief and printed here as HTML.
+    pack = run.get("pack") or {}
     capital = frame.get("fi_capital") or {}
     if capital.get("gap"):
         card("Capital beside its requirement",
              "A declared gap: %s" % prose(capital["gap"].get("reason")))
     else:
-        rows = "".join("<tr><td>%s</td><td>%s</td></tr>"
-                       % (value(ratio) if ratio else "no ratio named",
-                          value(requirement) if requirement else "no requirement named")
-                       for ratio, requirement in brief.fi_capital_pairs(capital))
-        extra = "".join("<div>%s: %s</div>" % (label, prose(capital.get(key)))
-                        for label, key in (("The regime", "regime"),
-                                           ("The binding constraint", "binding_constraint"))
-                        if capital.get(key))
-        if capital.get("target_fact"):
-            extra += "<div>Management&#x27;s own target: %s</div>" % value(capital["target_fact"])
         card("Capital beside its requirement",
-             "<table><tr><th>The capital ratio</th><th>Its requirement</th></tr>%s</table>%s"
-             % (rows, extra))
-    stress, stress_gaps = brief.fi_stress_evidence(capture, ticker)
-    if stress or stress_gaps:
-        card(esc(brief.FI_STRESS_HEADING),
-             "<ul>%s%s</ul>" % ("".join("<li>%s</li>" % value(fid) for fid in stress),
-                                "".join("<li>A declared gap (%s): %s</li>"
-                                        % (esc(gap.get("fact_class")), esc(gap.get("reason")))
-                                        for gap in stress_gaps)))
+             _business_table(brief.capital_rows(pack, frame), prose))
+    stress = brief.stress_rows(pack, ticker)
+    if stress:
+        card(esc(brief.FI_STRESS_HEADING), _business_table(stress, prose))
     risk = frame.get("fi_risk_cost") or {}
     if risk:
+        table = brief.risk_rows(pack, frame)
         card("The risk-cost line: %s" % esc(brief.FI_RISK_KIND_WORDS.get(risk.get("kind"))
                                             or risk.get("kind")),
-             "%s. Why this line: %s"
-             % (", ".join(value(fid) for fid in risk.get("facts") or []) or "no fact, by design",
+             "%s<div>Why this line: %s</div>"
+             % (_business_table(table, prose) if table else "No fact, by design.",
                 prose(risk.get("because"))))
-    lines = frame.get("how_it_earns") or []
-    if lines:
-        card("How it earns, by kind of earnings",
-             "<table><tr><th>Revenue line</th><th>Kind of earnings</th><th>Share of the period"
-             "</th></tr>%s</table>"
-             % "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
-                       % (prose(row.get("line")),
-                          esc(brief.FI_NATURE_WORDS.get(row.get("nature"))
-                              or row.get("nature") or "not stated"),
-                          esc(row.get("share_of_period")))
-                       for row in lines))
-    guidance = []
-    for row in (frame.get("management") or {}).get("guidance_vs_delivery") or []:
-        revisions = row.get("revisions")
-        if isinstance(revisions, list):
-            revised = ("; ".join("revised on %s to %s"
-                                 % (esc(item.get("date")),
-                                    ", ".join(value(fid) for fid in item.get("guided") or []))
-                                 for item in revisions if isinstance(item, dict))
-                       or esc(brief.FI_NEVER_REVISED))
-        else:
-            revised = "its revisions are not stated"
-        guidance.append("<li>%s: first guided %s; %s; delivered %s</li>"
-                        % (esc(row.get("period")),
-                           ", ".join(value(fid) for fid in row.get("guided") or [])
-                           or "nothing named",
-                           revised, value(row.get("delivered"))))
-    if guidance:
-        card("Guidance: the first, each revision, then what was delivered",
-             "<ul>%s</ul>" % "".join(guidance))
+    if frame.get("how_it_earns"):
+        card("How it earns",
+             _business_table(brief.earnings_rows(pack, frame), prose,
+                             fold="Each line in the capture&#x27;s own words"))
+    for table in brief.guidance_rows(pack, frame):
+        card(esc(brief.GUIDANCE_LEAD % table["period"]), _business_table(table, prose))
     bridge = frame.get("nav_bridge")
     if isinstance(bridge, dict):
         rows = "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"
@@ -3223,12 +4026,53 @@ def _decisive_fact_order(tier1, dependencies, envelope, frames):
 
 
 def _fact_name(fact_id):
-    """A fact's name in the evidence tables: its id, shown as data - except a tape figure, which
-    the page names by its plain label, so no tape id reaches the owner's page (unit U4(c); the
-    full evidence document does the same through the fact's label, owner ruling AC15 P5)."""
-    if fact_id in tape.LABELS:
-        return esc(tape.LABELS[fact_id])
-    return "<code>%s</code>" % esc(fact_id)
+    """A fact's name where the pack carries no label for it, as plain text: a tape figure's
+    label, or the id's words - never a code span in the reading path (unit READ-A)."""
+    return tape.LABELS.get(fact_id, str(fact_id).replace("_", " "))
+
+
+def _fact_words(fact):
+    """A fact's plain name: its own label (owner ruling AC15 P5), else as _fact_name."""
+    return str(fact.get("label") or "").strip() or _fact_name(fact.get("id", ""))
+
+
+def _source_document(source):
+    """The document a source names, for the open evidence table: its first clause, cut by the
+    rule the citation index uses (architect ruling 4 on the READ-A bracket). The whole source is
+    in the full-record fold."""
+    clauses = _source_clauses(str(source or ""))
+    return clauses[0].rstrip(",; ") if clauses else ""
+
+
+def _freeze_note_patterns():
+    """The freeze's two note shapes, read from freeze.py itself by filling its note builder with
+    markers, so the page recognises the wrapper words as data and never re-types them."""
+    probes = ({"value": "\x01", "derived": {"operation": tape.OPERATION, "window": "\x02",
+                                             "formula": "\x03"}},
+              {"value": "\x01", "derived": {"operation": sorted(freeze._OPERATOR_TEXT)[0],
+                                             "operands": [{"value": "\x03"}]}})
+    patterns = []
+    for probe in probes:
+        text = re.escape(freeze._generated_note(probe))
+        for marker, group in (("\x01", "(?P<value>.*)"), ("\x02", "(?P<window>.*?)"),
+                              ("\x03", "(?P<equation>.*)")):
+            text = text.replace(marker, group)
+        patterns.append(re.compile("^%s$" % text, re.S))
+    return patterns
+
+
+_FREEZE_NOTES = _freeze_note_patterns()
+
+
+def _calculated(note):
+    """The freeze's note for a derived figure, read as its equation (unit READ-A)."""
+    for pattern in _FREEZE_NOTES:
+        match = pattern.match(str(note))
+        if match:
+            fields = match.groupdict()
+            where = (" over the %s" % fields["window"]) if fields.get("window") else ""
+            return "Calculated%s: %s = %s" % (where, fields["equation"], fields["value"])
+    return "Arithmetic: %s" % note
 
 
 def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames):
@@ -3256,21 +4100,28 @@ def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames
             if tag.get("published_line"):
                 source_html += ("<br>The published line, as the capture names it: %s"
                                 % esc(" ".join(str(tag["published_line"]).split())))
-        rows.append('<tr><td>%s</td><td>%s</td>'
-                    '<td class="nowrap">%s</td><td class="nowrap">'
-                    '<span class="tag %s">%s</span></td><td>%s</td></tr>'
-                    % (_fact_name(fact.get("id", "")),
-                       esc(format_number(fact.get("value"), fact.get("unit"))),
+        # The plain name, the value in the market form (a stale one tagged), the date and the
+        # source document's name; the id and the whole source are in the full-record fold, and
+        # the age check reads as one line under the table (unit READ-A).
+        stale = ' <span class="tag stale">STALE</span>' if status == "stale" else ""
+        rows.append('<tr><td>%s</td><td>%s%s</td><td class="nowrap">%s</td><td>%s</td></tr>'
+                    % (esc(_fact_words(fact)),
+                       esc(format_number(fact.get("value"), fact.get("unit"))), stale,
                        esc(format_date(fact.get("as_of", ""))),
-                       esc(str(word).replace(" ", "-")), esc(word),
-                       source_html))
+                       source_html.replace(esc(fact.get("source", "")),
+                                           esc(_source_document(fact.get("source"))), 1)))
     # The value column carries figures AND tier-2 passages (whole sentences), so it is NOT a
     # nowrap column (design audit C5, B8): a sentence there must wrap, not blow the table wide.
     header = ('<table><tr><th>fact</th><th>value</th><th class="nowrap">as of</th>'
-              '<th class="nowrap">freshness</th><th>source</th></tr>%s</table>')
+              '<th>source</th></tr>%s</table>')
     page.add('<div class="muted small">The figures the verdict says its ruling rests on. Every '
              "figure on the record, with its bounds and how it was struck, is below.</div>")
     page.add(header % "".join(rows[:COMPACT_EVIDENCE_MAX]))
+    stale = sum(1 for row in rows if "tag stale" in row)
+    page.add('<div class="muted small">%s</div>'
+             % ("Every figure passed its age check." if not stale else
+                "1 figure here failed its age check and carries a STALE tag." if stale == 1 else
+                "%d figures here failed their age check and carry a STALE tag." % stale))
     rest = rows[COMPACT_EVIDENCE_MAX:]
     if rest:
         mark = page.mark()
@@ -3282,7 +4133,7 @@ def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames
 def _evidence_section(page, run):
     pack = run["pack"] or {}
     capture = pack.get("capture") or {}
-    page.section("evidence", "The evidence")
+    page.numbered("evidence", "7", "The evidence")
     market = capture.get("market_state") or {}
     if market.get("state") == "closed":
         # DIAG-2: a market-shut capture is legal and DISCLOSED - in plain sight, never folded.
@@ -3327,15 +4178,16 @@ def _evidence_section(page, run):
                                     str(tag["published_line"]).split())))
         note = notes.get(fact_id)
         if note:
-            source_html += "<br>Arithmetic: %s" % esc(note)
+            source_html += "<br>%s" % esc(_calculated(note))
         rests = ('<span class="tag checked" title="the verdict names this '
-                 'fact as one its ruling rests on">rests on this</span> '
+                 'fact as one its ruling rests on">used in the ruling</span> '
                  if fact_id in dependencies else "")
         value = format_number(fact.get("value"), fact.get("unit"))
         rows.append('<tr><td>%s%s<div class="muted small" style="margin-top:4px">'
-                    '%s</div></td><td>%s</td><td class="nowrap">%s</td>'
+                    '%s &middot; %s</div></td><td>%s</td><td class="nowrap">%s</td>'
                     '<td class="nowrap"><span class="tag %s">%s</span></td></tr>'
-                    % (rests, _fact_name(fact_id), source_html, esc(value),
+                    % (rests, esc(_fact_words(fact)), "" if fact_id in tape.LABELS
+                       else esc(fact_id), source_html, esc(value),
                        esc(format_date(fact.get("as_of", ""))),
                        esc(str(word).replace(" ", "-")), esc(word)))
     # As above: value is a wrapping column, never nowrap - it can hold a whole tier-2 sentence.
@@ -3352,13 +4204,18 @@ def _evidence_section(page, run):
                  "source. Its figures are stated in its own text and are never rounded.</div>")
         for passage in tier2:
             rests = ('<span class="tag checked" title="the verdict names '
-                     'this passage as one its ruling rests on">rests on '
-                     'this</span> '
+                     'this passage as one its ruling rests on">used in the '
+                     'ruling</span> '
                      if passage.get("id") in dependencies else "")
-            page.add('<div class="card"><span class="lead">%s<code>%s</code> &middot; %s &middot; '
-                     'as of %s</span><div class="verbatim">%s</div></div>'
-                     % (rests, esc(passage.get("id", "")), esc(passage.get("source", "")),
-                        esc(passage.get("as_of", "")), esc(passage.get("text", ""))))
+            # The title in words from the id ("t2_succession" reads "Succession"); the id, the
+            # source and the date in small print (unit READ-A).
+            passage_id = str(passage.get("id", ""))
+            title = re.sub(r"^t\d+_", "", passage_id).replace("_", " ").strip()
+            page.add('<div class="card"><span class="lead">%s%s</span><div class="muted small">'
+                     '%s &middot; %s &middot; as of %s</div><div class="verbatim">%s</div></div>'
+                     % (rests, esc(title[:1].upper() + title[1:]), esc(passage_id),
+                        esc(passage.get("source", "")), esc(format_date(passage.get("as_of", ""))),
+                        esc(passage.get("text", ""))))
     gaps = capture.get("gaps") or []
     # A gap conceded to the outside auditor is a declared gap, whether or
     # not the capture also wrote the ordinary row (audit round 5, r5-3).
@@ -3369,14 +4226,15 @@ def _evidence_section(page, run):
         page.add("<h3>Declared gaps</h3>")
         page.add('<div class="card"><ul>%s%s</ul></div>'
                  % ("".join(
-                     "<li><strong>%s</strong> &mdash; %s The test it weakens: <code>%s</code>.</li>"
-                     % (esc(tape.LABELS.get(g.get("fact_class"), g.get("fact_class", ""))),
-                        esc(g.get("reason", "")),
+                     '<li>%s <span class="muted small">(%s &middot; the test it weakens: %s)'
+                     "</span></li>"
+                     % (esc(g.get("reason", "")),
+                        esc(tape.LABELS.get(g.get("fact_class"), g.get("fact_class", ""))),
                         esc(g.get("weakened_test", "")))
                      for g in gaps),
-                    ("<li><strong>%d gap%s conceded to the outside auditor</strong> (%s) "
+                    ("<li><strong>%d gap%s conceded to the evidence check</strong> (%s) "
                      "&mdash; the reason and the test each weakens are under "
-                     "<em>The outside auditor&#x27;s objections</em>, above.</li>"
+                     "<em>The evidence check</em>, in section 6.</li>"
                      % (len(conceded), "" if len(conceded) == 1 else "s",
                         esc(", ".join(conceded)))) if conceded else ""))
     requirements = (capture.get("sufficiency") or {}).get("requirements") or []
@@ -3393,16 +4251,14 @@ def _evidence_section(page, run):
         page.add('<div class="muted small">%s</div>' % esc(line))
         rows = "".join(
             '<tr><td>%s</td><td class="nowrap">%s</td><td class="nowrap">'
-            '<span class="tag %s">%s</span></td><td>%s</td></tr>'
+            '<span class="tag %s">%s</span></td></tr>'
             % (_constituent_tag(r) + brief.checklist_description(capture, r, esc),
                esc(REQUIREMENT_KIND_WORDS.get(r.get("kind"), r.get("kind") or "")),
                "checked" if r.get("status") == "answered" else "stale",
-               "answered" if r.get("status") == "answered" else "declared gap",
-               ", ".join("<code>%s</code>" % esc(a) for a in (r.get("answered_by") or []))
-               or "&mdash;")
+               "answered" if r.get("status") == "answered" else "declared gap")
             for r in requirements)
         page.add('<table><tr><th>what this question needs</th><th class="nowrap">kind</th>'
-                 '<th class="nowrap">status</th><th>answered by</th></tr>%s</table>' % rows)
+                 '<th class="nowrap">status</th></tr>%s</table>' % rows)
     count = len(tier1)
     page.collapse("Every figure on the record &mdash; all %d frozen fact%s in the evidence pack, "
                   "the narrative record, the declared gaps and the sufficiency checklist"
@@ -3416,41 +4272,114 @@ def _review_section(page, run):
     the front already, where the advisors disagreed; here it sits with the full cross-examination,
     behind one line."""
     reviewer = run["answers"].get("reviewer") or {}
-    page.section("review", "Peer review")
-    mark = page.mark()
+    page.numbered("review", "4", "The peer review and what all five missed")
     page.add('<div class="muted small">One reviewer read all five advisors blind and wrote the '
              "cross-examination and this synopsis.</div>")
+    page.add(_letters_line(run))
+    whole = reformat_prose(reviewer.get("markdown", ""), "reviewer cross-examination",
+                           page.number_subs)
+    missed = _missed_part(whole)
+    if missed:
+        page.add('<div class="card prominent">%s</div>' % markdown(missed, 4))
+    mark = page.mark()
     page.add('<div class="card prominent"><span class="lead">Synopsis</span>%s</div>'
              % markdown(_display_prose(reviewer, "synopsis", "reviewer synopsis", page), 4))
     page.add("<h4>The reviewer's full cross-examination</h4>"
-             '<div class="body">%s%s</div>'
-             % (markdown(reformat_prose(reviewer.get("markdown", ""),
-                                        "reviewer cross-examination", page.number_subs), 4),
-                _prose_note(run, "reviewer")))
+             '<div class="body">%s</div>' % markdown(whole, 4))
     page.collapse("The blind reviewer&#x27;s synopsis and full cross-examination of the five "
                   "advisors", mark)
+
+
+# The reviewer's own heading for what the whole bench missed, and for each response's summary.
+_MISSED_HEADING = re.compile(r"^(#{1,3})\s+what (?:did )?all five miss", re.IGNORECASE)
+# The same section written as a label opening its own paragraph - "What all five missed:" or
+# "**What all five missed.**" - which the reviewer's brief equally allows (audit round 1 of READ-A).
+_MISSED_LABEL = re.compile(r"^(?:\*\*|__)?what (?:did )?all five miss", re.IGNORECASE)
+# The label with nothing after it on its line: "What all five missed:", "**What all five missed**".
+_LABEL_ONLY = re.compile(r"^(?:\*\*|__)?what (?:did )?all five miss(?:ed)?\??[:.]?(?:\*\*|__)?"
+                         r"[:.]?\s*$", re.IGNORECASE)
+_RESPONSE_HEADING = re.compile(r"^#{1,3}\s+response\s+([A-E])\b\s*[:\u2013\u2014-]?\s*(.*)$",
+                               re.IGNORECASE)
+
+
+def _missed_part(markdown_text):
+    """The reviewer's section on what all five missed (owner's finding 5: shown open), or "" where
+    the review has none. Under a heading it runs to the next heading of that level or above.
+    Written as a label (architect ruling, round 3 of READ-A) - bold or plain, opening a paragraph
+    or standing as one - it is the label's own paragraph where text follows the label there, else
+    the label and the first non-blank paragraph after it; with nothing after, the label and a
+    sentence saying no text follows."""
+    lines = str(markdown_text or "").split("\n")
+    for at, line in enumerate(lines):
+        heading = _MISSED_HEADING.match(line.strip())
+        if heading:
+            level, taken = len(heading.group(1)), [line]
+            for rest in lines[at + 1:]:
+                hashes = len(rest) - len(rest.lstrip("#"))
+                if 0 < hashes <= level and rest[hashes:hashes + 1] == " ":
+                    break
+                taken.append(rest)
+            return "\n".join(taken).strip()
+        if _MISSED_LABEL.match(line.strip()):
+            own = [line] + _paragraph(lines[at + 1:])
+            if _LABEL_ONLY.match(line.strip()) and len(own) == 1:
+                following = lines[at + 1:]
+                while following and not following[0].strip():
+                    following = following[1:]
+                text = _paragraph(following)
+                return "%s\n\n%s" % (line.strip(), "\n".join(text) if text else
+                                       "In the review, no text follows this label.")
+            return "\n".join(own).strip()
+    return ""
+
+
+def _paragraph(lines):
+    """The lines of the paragraph that opens `lines`: up to a blank line or a heading."""
+    taken = []
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            break
+        taken.append(line)
+    return taken
+
+def _advisor_verdicts(run):
+    """Each advisor's rating and level as the blind reviewer headed its response ("Response D:
+    hold; buy at about <level>"), keyed by seat through the run's blind draw; empty without either."""
+    mapping = (run.get("draw") or {}).get("mapping") or {}
+    reviewer = (run["answers"].get("reviewer") or {}).get("markdown") or ""
+    said = {}
+    for line in reviewer.split("\n"):
+        match = _RESPONSE_HEADING.match(line.strip())
+        if match and match.group(2).strip() and mapping.get(match.group(1).upper()):
+            said.setdefault(mapping[match.group(1).upper()], match.group(2).strip())
+    return said
 
 
 # --- The five advisors, each folded shut -------------------------------------------------------
 
 def _advisors_section(page, run):
-    page.section("advisors", "The five advisors")
+    page.numbered("advisors", "3", "The five advisors")
+    verdicts = _advisor_verdicts(run)
     page.add('<div class="muted small">Five seats, one frozen pack, no tools. Each line opens '
-             "to that seat&#x27;s answer, unedited.</div>")
+             "to that seat&#x27;s answer, unedited.%s</div>"
+             % (" Each title carries the advisor&#x27;s rating and level as the blind reviewer "
+                "summed it up." if verdicts else ""))
     for kind, label in ADVISOR_SEATS:
         answer = run["answers"].get(kind) or {}
+        title = ("%s &mdash; %s" % (esc(label), esc(verdicts[kind])) if kind in verdicts
+                 else esc(label))
         page.add('<details><summary>%s</summary><div class="body">%s%s</div></details>'
-                 % (esc(label),
+                 % (title,
                     markdown(reformat_prose(answer.get("markdown", ""),
                                             "advisor: " + label, page.number_subs), 4),
-                    _prose_note(run, kind) + _heading_note(run, kind)))
+                    _heading_note(run, kind)))
 
 
 # --- The challenger's full response, folded shut ------------------------------------------------
 
 def _challenger_section(page, run):
     result = run["challenge_result"]
-    page.section("challenger", "The challenger's full response")
+    page.add('<h3 id="challenger">The outside model&#x27;s own words</h3>')
     # The completed-action sentence renders ONLY when the audit in fact
     # completed - and the authority on that is the PUBLISHED verdict's
     # challenge status, never the raw bridge file: the host can reject
@@ -3461,13 +4390,13 @@ def _challenger_section(page, run):
     if (result is not None and result.get("status") == "success"
             and published_status == "success"):
         page.add('<div class="muted small">A model from a different company and a different '
-                 "lineage read the full case file and audited the chairman&#x27;s draft. It "
-                 "audits; it never authors.</div>")
+                 "lineage read the full case file and challenged the chairman&#x27;s draft. It "
+                 "challenges; it never authors.</div>")
     if result is None:
-        page.add('<div class="card">This run directory carries no challenger papers.</div>')
+        page.add('<div class="card">This run directory carries no outside challenge papers.</div>')
         return
     if result.get("status") != "success":
-        page.add('<div class="card alarm">The challenger&#x27;s papers record a failure: %s '
+        page.add('<div class="card alarm">The outside challenge&#x27;s papers record a failure: %s '
                  "(%s). There is no usable response to show.</div>"
                  % (esc(CHALLENGE_STATUS_WORDS.get(result.get("status"),
                                                    result.get("status") or "no status recorded")),
@@ -3481,7 +4410,7 @@ def _challenger_section(page, run):
         # SC3 r3-1 and r4-1: an ordinary bridge failure is handled
         # above and never reads as a rejection). The archive keeps the
         # raw file; the page shows the verified truth.
-        page.add('<div class="card alarm">The challenger returned papers, but the machine '
+        page.add('<div class="card alarm">The outside model returned papers, but the machine '
                  "rejected them (%s) and nothing in them was used: %s. Their content is "
                  "deliberately not shown; the raw file stays in the run&#x27;s archive.</div>"
                  % (esc(CHALLENGE_STATUS_WORDS.get(published_status,
@@ -3508,8 +4437,8 @@ def _challenger_section(page, run):
                     "on this record: %s.</p>"
                     % esc(RATING_WORDS.get(endorsement.get("highest_rating_supported"),
                                            endorsement.get("highest_rating_supported") or "")))
-    body.append("<h4>The raw findings, exactly as returned</h4>")
-    body.append("<pre><code>%s</code></pre>" % esc(json.dumps(findings, indent=2)))
+    # The raw findings are no longer printed (unit READ-A): the points above are the same
+    # findings in words, and the run keeps challenge/result.json.
     page.add("<details><summary>Its full response &mdash; %d finding%s</summary>"
              '<div class="body">%s</div></details>'
              % (len(findings), "" if len(findings) == 1 else "s", "".join(body)))
@@ -3547,25 +4476,25 @@ def _atlas_audit_state(page, envelope):
         # challenge round - it is simply not in the package.
         page.add('<div class="card">This package predates the '
                  "audit-state fields, so it carries a bare rating. What "
-                 "the outside audit did, and how high it would go, is "
+                 "the outside challenge did, and how high it would go, is "
                  "in the challenge round above &mdash; not inside the "
                  "package.</div>")
         return
     status = envelope.get("challenge_status")
     if status == "success":
-        told = "The outside audit ran, and the package says so."
+        told = "The outside challenge ran, and the package says so."
     else:
-        told = ("The outside audit did NOT run (%s), and the package "
+        told = ("The outside challenge did NOT run (%s), and the package "
                 "says so."
                 % esc(CHALLENGE_STATUS_WORDS.get(
                     status, status or "no status recorded")))
     ceiling = envelope.get("endorsement_highest_rating_supported")
     if ceiling is not None:
-        told += (" The highest rating the auditor said the record "
+        told += (" The highest rating the outside challenge said the record "
                  "supports is <strong>%s</strong>."
                  % esc(RATING_WORDS.get(ceiling, ceiling)))
     elif status == "success":
-        told += (" The auditor endorsed no ceiling, so the package "
+        told += (" The outside challenge endorsed no ceiling, so the package "
                  "carries none.")
     else:
         # The ceiling is null on EVERY failed audit because none was
@@ -3577,9 +4506,9 @@ def _atlas_audit_state(page, envelope):
         # answer away - _challenger_section says exactly that a few
         # sections up (audit finding r4-1). One sentence is true in
         # every case: nothing was accepted.
-        told += (" The audit did not complete, so no ceiling was "
+        told += (" The outside challenge did not complete, so no ceiling was "
                  "accepted and the package carries none &mdash; a gap, "
-                 "not the auditor&#x27;s blessing.")
+                 "not the outside challenge&#x27;s blessing.")
     carried = len(envelope.get("warnings") or [])
     told += (" Every warning on this verdict travels inside the package "
              "too &mdash; %d of them, the same ones shown at the top of "
@@ -3605,7 +4534,7 @@ def _bound_cell(row):
 
 def _atlas_section(page, run):
     envelope = run["verdict"].get("atlas_envelope") or {}
-    page.section("atlas", "What the portfolio system receives")
+    page.add('<h3 id="atlas">What the portfolio system receives</h3>')
     mark = page.mark()
     page.add('<div class="muted small">The verdict carries a machine hand-off for the portfolio '
              "system, named Atlas. This is what is inside it.</div>")
@@ -3649,9 +4578,13 @@ def _atlas_section(page, run):
              '<tr><th class="nowrap">Rating</th><td>%s</td></tr>'
              "%s"
              '<tr><th class="nowrap">Hash of the frozen evidence pack &mdash; a fingerprint no '
-             "other file shares</th><td><code>%s</code></td></tr></table>"
+             "other file shares</th><td><code>%s</code></td></tr>"
+             '<tr><th class="nowrap">Publication hash &mdash; the fingerprint of the verdict '
+             "file as it sits on disk</th><td><code>%s</code></td></tr>"
+             '<tr><th class="nowrap">Contract version</th><td>%s</td></tr></table>'
              % (identity_rows, esc(RATING_WORDS.get(rating, rating or "")),
-                subject_rows, esc(envelope.get("pack_hash", ""))))
+                subject_rows, esc(envelope.get("pack_hash", "")), esc(run["verdict_sha256"]),
+                esc(run["verdict"].get("schema_version", ""))))
     _atlas_audit_state(page, envelope)
     proportions = envelope.get("thesis_proportions") or []
     if proportions:
@@ -3700,8 +4633,7 @@ def _atlas_section(page, run):
                  % esc(envelope["for_atlas_note"]))
     page.add('<div class="muted small">The envelope also travels as its own file, and that file '
              "carries this verdict&#x27;s own hash, so the hand-off can be proved.</div>")
-    page.collapse("The machine hand-off to the portfolio system, Atlas &mdash; the rating, the "
-                  "audit state, the key numbers and the pack&#x27;s fingerprint", mark)
+    page.collapse("For Atlas, the portfolio system &mdash; no reading needed", mark)
 
 
 # --- Footer stamps -----------------------------------------------------------------------------
@@ -3709,16 +4641,13 @@ def _atlas_section(page, run):
 def _footer(page, run):
     verdict = run["verdict"]
     published = ((verdict.get("provenance") or {}).get("timestamps") or {}).get("published", "")
-    bits = [
-        "run <code>%s</code>" % esc(verdict.get("run_id", "")),
-        "publication hash <code>%s</code>" % esc(run["verdict_sha256"]),
-        "contract version <code>%s</code>" % esc(verdict.get("schema_version", "")),
-        "published %s" % esc(published),
-    ]
-    page.add('<div class="foot">%s<br>Rendered from the run directory by '
-             "<code>council/report/render_report.py</code>; the verdict file and the archives "
-             "are unchanged. The publication hash above is computed from the verdict file as it "
-             "sits on disk. Not investment advice.</div>" % " &middot; ".join(bits))
+    moment = _stamp(published)
+    # The publication hash and the contract version are in the hand-off fold; the program's own
+    # name is in the page's head, where the overwrite guard reads it (unit READ-A).
+    when = ("Published %d %s %d, %s UTC. " % (moment.day, _MONTHS[moment.month - 1], moment.year,
+                                              moment.strftime("%H:%M"))) if moment else ""
+    page.add('<div class="foot">%sNot investment advice.<br>Sitting <code>%s</code></div>'
+             % (when, esc(verdict.get("run_id", ""))))
 
 
 def _one_ladder(rows, horizon, currency=None):
@@ -3802,32 +4731,146 @@ def _about_sitting_section(page, run, now):
     has_cost = bool(seat_cost.get("per_seat"))
     if not has_clock and not has_cost:
         return
-    page.add('<h2 id="stamps">About this sitting</h2>')
+    page.add('<h3 id="stamps">About this sitting</h3>')
     mark = page.mark()
     _sitting_clocks(page, run, now)
+    _cost_estimate(page, run)
     if has_cost:
-        page.add("<h3>The sitting&#x27;s cost, seat by seat</h3>")
-        page.add('<div class="muted small">%s</div>' % esc(seat_cost.get("note", "")))
+        page.add("<h4>Each seat&#x27;s share</h4>")
+        page.add('<div class="muted small">Token counts are what each seat&#x27;s session '
+                 "reported; they are not a bill.</div>")
         rows = ['<table><thead><tr><th>Seat</th><th>Tokens</th>'
                 '<th>Tool turns</th><th>Tokens per turn</th>'
-                '<th>Brief bytes</th><th>Input tokens</th>'
-                '<th>Output tokens</th></tr></thead><tbody>']
+                '<th>Brief bytes</th></tr></thead><tbody>']
 
         def cell(value):
             return "&mdash;" if value is None else esc(format_number(value))
 
         for seat, cost in seat_cost["per_seat"].items():
-            rows.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td>"
-                        "<td>%s</td><td>%s</td><td>%s</td></tr>"
-                        % (esc(seat), cell(cost.get("tokens")),
-                           cell(cost.get("tool_calls")),
+            rows.append("<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                        % (esc(SEAT_WORDS.get(seat) or LENS_TITLES.get(seat, seat)),
+                           cell(cost.get("tokens")), cell(cost.get("tool_calls")),
                            cell(cost.get("tokens_per_tool_call")),
-                           cell(cost.get("brief_bytes")),
-                           cell(cost.get("input_tokens")),
-                           cell(cost.get("output_tokens"))))
+                           cell(cost.get("brief_bytes"))))
         rows.append("</tbody></table>")
         page.add("".join(rows))
+    page.add(_codex_stamp(run["verdict"].get("provenance") or {}))
     page.collapse("How long the sitting took, and what it cost", mark)
+
+
+# The seats that are not advisors, in plain words, for the seat table (unit READ-A).
+SEAT_WORDS = {"frame": "Framing the question", "reviewer": "The blind reviewer",
+              "chair_draft": "The chairman's draft", "chair_resolve": "The chairman's final answer"}
+
+
+def _list_prices():
+    with open(os.path.join(os.path.dirname(__file__), "list_prices.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+LIST_PRICES = _list_prices()
+
+
+def token_bins(parts):
+    """A cost row's token figures in their three bins (see `_cost_estimate`): `parts` is a list of
+    (part name, its figures, whether they are an estimate); returns the counted total, the
+    estimated total and the names of the parts with no figure."""
+    counted, estimated, missing = 0, 0, []
+    for name, figures, is_estimate in parts:
+        if any(not isinstance(figure, int) for figure in figures):
+            missing.append(name)
+        known = sum(figure for figure in figures if isinstance(figure, int))
+        if is_estimate:
+            estimated += known
+        else:
+            counted += known
+    return counted, estimated, missing
+
+
+_CENT = decimal.Decimal("0.01")
+
+
+def _dollars(amount):
+    # The market form; a zero keeps its cents, as the price form prints it.
+    return format_number(str(amount), "USD") if amount else format_price("0", "USD")
+
+
+def _about(amount):
+    return "under $0.01" if 0 < amount < _CENT else "about " + _dollars(amount.quantize(_CENT))
+
+
+def priced_tokens(key, parts):
+    """One cost row priced at the list price `key` names in list_prices.json: the money words and
+    the token words, by the three bins' rule (see `_cost_estimate`). The report's cost table and
+    the approval document's cost section (unit READ-B2) both read their rows from here."""
+    counted, estimated, missing = token_bins(parts)
+    price = decimal.Decimal(LIST_PRICES[key]["usd_per_million_tokens"])
+    counted_money = decimal.Decimal(counted) * price / _MILLION
+    estimated_money = decimal.Decimal(estimated) * price / _MILLION
+    if missing:
+        # A lower bound: the counted bin only, rounded down, never "under" anything.
+        shown = "at least " + _dollars(counted_money.quantize(_CENT, rounding=decimal.ROUND_DOWN))
+    elif estimated:
+        resting = estimated_money
+        shown = "%s, of which %s rests on an estimate" % (
+            _about(counted_money + estimated_money),
+            "under $0.01" if 0 < resting < _CENT else _dollars(resting.quantize(_CENT)))
+    else:
+        shown = _about(counted_money)
+    words = []
+    if counted or not estimated:
+        words.append("%s counted" % format_number(counted))
+    if estimated:
+        words.append("%s estimated" % format_number(estimated)
+                     + (" (left out of the figure)" if missing else ""))
+    if missing:
+        words.append("not counted: " + ", ".join(missing))
+    return shown, "; ".join(words)
+
+
+def _cost_estimate(page, run):
+    """The sitting's cost as a two-row money estimate (owner ruling AC41(4)): the council's
+    Claude sessions, the capture's included, and the outside model's two calls (the evidence
+    check and the outside challenge), priced at the list price in list_prices.json.
+
+    Each row first sorts its token figures into three bins (architect ruling, Step 0 of round 5
+    of READ-A, replacing rounds 1 to 3's patches whole): COUNTED, a figure the record carries as
+    counted; ESTIMATED, the capture session's own figure unless its record says in so many words
+    that it was counted (owner ruling AC15 (5)(b): an estimate never reads as a counted figure;
+    a record from before that flag existed cannot say so); UNCOUNTED, a part with no figure. The
+    money follows the bins: any uncounted part and the row reads "at least" the counted bin,
+    rounded down to the cent; else any estimated part and the row reads "about" the whole,
+    saying how much of it rests on an estimate; else "about" the counted whole. The tokens
+    column prints the counted and the estimated figures apart, never summed, and names an
+    uncounted part. Nothing where the record carries no token figure at all."""
+    provenance = run["verdict"].get("provenance") or {}
+    capture = ((provenance.get("evidence") or {}).get("capture") or {})
+    seats = ((provenance.get("seat_cost") or {}).get("per_seat") or {})
+    gathering_counted = capture.get("estimated") is False
+    # (part name, its figures, whether they are an estimate)
+    council = [("the advisors' and chairman's sessions",
+                [cost.get("tokens") for cost in seats.values()] if seats else [None], False),
+               ("the evidence gathering", [capture.get("tokens")], not gathering_counted)]
+    # The evidence check's figure is copied exactly from the outside model's own reply and
+    # checked against it by the host (RUNBOOK 1b); the estimate flag covers the capture
+    # session's own figures, not this one.
+    outside = [("the evidence check", [capture.get("evidence_challenge_tokens")], False),
+               ("the outside challenge",
+                [(run.get("challenge_result") or {}).get("usage_tokens")], False)]
+
+    if not any(token_bins(council)[:2]) and not any(token_bins(outside)[:2]):
+        return
+    rows = []
+    for label, parts, key in (
+            ("Council (Claude)", council, "council"), ("Outside model (OpenAI)", outside, "outside")):
+        shown, words = priced_tokens(key, parts)
+        rows.append('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'
+                    % (esc(label), esc(shown), esc(words), esc(LIST_PRICES[key]["basis"])))
+    page.add('<div class="card"><span class="lead">Estimated cost, at list prices</span>'
+             '<table><tr><th>who</th><th class="nowrap">estimate</th>'
+             '<th class="nowrap">tokens</th><th>priced at</th></tr>%s</table>'
+             '<div class="muted small">%s</div></div>'
+             % ("".join(rows), esc(LIST_PRICES["comment"])))
 
 
 def build_page(run, now):
@@ -3844,22 +4887,21 @@ def build_page(run, now):
     # A reader dives deeper the further they scroll (owner ruling AC16, audit C4). Tier 1: the
     # executive summary. Tier 2: the chairman's synthesis, directly after it (AC16(5)). Tier 3:
     # the decision in detail. Tier 4: the frozen evidence. Tier 5: the appendices, all folded.
-    _front_section(page, run, now)                 # tier 1
-    _synthesis_section(page, run)                  # tier 2
-    _detail_section(page, run)                     # tier 3
-    _evidence_section(page, run)                   # tier 4
-    # Tier 5. The "Appendices" divider is a plain signpost, not a menu entry - the navigation
-    # names the tiers and the main appendices (about nine entries), not every stamp.
-    page.add('<h2 id="appendices">Appendices — the full record</h2>')
-    page.add('<div class="muted small">The record behind the decision above, all folded: the '
-             "question as it was asked, the peer review, the five advisors, the challenger&#x27;s "
-             "own words, what changed after the outside audit, the hand-off to the portfolio "
-             "system, and the run stamps.</div>")
+    # The eight numbered sections (owner's finding 5; the order is the architect's
+    # mechanism ruling): the answer, the chairman, the five advisors, the peer review, the
+    # outside challenge, the decision in detail, the evidence, and the appendices.
+    _front_section(page, run, now)                 # 1
+    _synthesis_section(page, run)                  # 2
+    _advisors_section(page, run)                   # 3
+    _review_section(page, run)                     # 4
+    _challenge_section(page, run)                  # 5
+    _detail_section(page, run)                     # 6
+    _evidence_section(page, run)                   # 7
+    page.numbered("appendices", "8", "Appendices")
+    page.add('<div class="muted small">The record behind the decision, all folded: the owner&#x27;s '
+             "question as he asked it, the hand-off to the portfolio system, and how long the "
+             "sitting took and what it cost.</div>")
     _question_section(page, run)
-    _review_section(page, run)
-    _advisors_section(page, run)
-    _challenger_section(page, run)
-    _changes_section(page, run)
     _atlas_section(page, run)
     _about_sitting_section(page, run, now)
     _footer(page, run)
@@ -3879,6 +4921,7 @@ def render(run_dir, moment=None, subs_out=None):
     run = load_run(run_dir)
     run["prose_scores"] = _load_prose_scores(run_dir)
     run["heading_flags"] = _load_heading_flags(run_dir)
+    run["fields_flags"] = _load_fields_flags(run_dir)
     page = build_page(run, moment or first_render_moment(run_dir))
     if subs_out is not None:
         subs_out.extend(page.number_subs)
@@ -3888,6 +4931,9 @@ def render(run_dir, moment=None, subs_out=None):
         PREAMBLE.decode("ascii"),
         '<head>\n<meta charset="UTF-8">\n',
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n',
+        # The program's own name, which the overwrite guard reads back (unit READ-A moved it
+        # here from the footer, off the reading path).
+        '<meta name="generator" content="%s">\n' % RENDERER_SIGNATURE.decode("ascii"),
         "<title>", esc(title), "</title>\n<style>", CSS, "</style>\n</head>\n<body>\n",
         '<nav class="dock" id="dock">',
         '<button type="button" class="dockbtn" id="navbtn" aria-haspopup="true" '
@@ -3897,8 +4943,8 @@ def render(run_dir, moment=None, subs_out=None):
         '<a href="#top">Top of report</a>', page.menu(), "</div></div></nav>\n",
         '<button type="button" class="themebtn" id="themebtn" aria-label="Switch to light" '
         'title="Switch to light">&#x25D2;</button>\n',
-        '<div class="wrap" id="top">\n', page.body(), "\n</div>\n",
-        "<script>", SCRIPT, "</script>\n</body>\n</html>\n",
+        '<div class="wrap report" id="top">\n', page.body(), "\n</div>\n",
+        "<script>", SCRIPT, SECTION_SCRIPT, "</script>\n</body>\n</html>\n",
     ])
 
 

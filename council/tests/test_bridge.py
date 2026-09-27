@@ -48,6 +48,9 @@ def make_request(**overrides):
     return request
 
 
+# What the stand-in CLI answers to `codex --version` (INVENTED).
+FIXTURE_VERSION = "codex-cli fixture-version"
+
 _WHOLE_STREAM = ['{"type":"thread.started","thread_id":"t"}',
                  '{"type":"turn.started"}',
                  '{"type":"item.completed","item":{"id":"item_0",'
@@ -63,8 +66,13 @@ class FakeLauncher:
     def __init__(self, returncode=0, timed_out=False, response_text=None,
                  events_lines=None, stderr_text="",
                  smoke_returncode=0, smoke_stdout="OK\nNONE\n",
-                 sent_bytes=None):
+                 sent_bytes=None, version_stdout=FIXTURE_VERSION + "\n",
+                 version_returncode=0, version_raises=False):
         self.calls = []
+        # The unpaid `codex --version` call (owner ruling AC25(4)).
+        self.version_stdout = version_stdout
+        self.version_returncode = version_returncode
+        self.version_raises = version_raises
         self.returncode = returncode
         self.timed_out = timed_out
         self.response_text = response_text
@@ -87,6 +95,14 @@ class FakeLauncher:
     def __call__(self, argv, stdin_bytes, stdout_path, stderr_path, timeout_s):
         self.calls.append({"argv": list(argv), "stdin": stdin_bytes,
                            "timeout_s": timeout_s})
+        if "--version" in argv:
+            if self.version_raises:
+                raise OSError("no codex on this machine (fixture)")
+            with open(stdout_path, "wb") as handle:
+                handle.write(self.version_stdout.encode("utf-8"))
+            with open(stderr_path, "wb") as handle:
+                handle.write(b"")
+            return self.version_returncode, False, None
         if "-m" in argv:
             with open(stdout_path, "wb") as handle:
                 handle.write(self.smoke_stdout.encode("utf-8"))
@@ -110,6 +126,9 @@ class FakeLauncher:
 
     def smoke_calls(self):
         return [c for c in self.calls if "-m" in c["argv"]]
+
+    def version_calls(self):
+        return [c for c in self.calls if "--version" in c["argv"]]
 
 
 def pid_alive(pid):
@@ -2446,6 +2465,98 @@ class TestPostureOnTheEvidenceCall(EvidenceCase):
         self.assertEqual(block["status"], "failed")
         self.assertEqual(block["failure_status"], "malformed_output")
         self.assertIn("mcp_tool_call:x.y", block["failure_reason"])
+
+
+class TestTheCodexVersionIsRecorded(EvidenceCase):
+    """UPGRADE-2 U5(b), session 2 (owner ruling AC25(4), seed item 9): every
+    bridge invocation asks the CLI for its version ONCE, unpaid, beside the
+    smoke test, and records the first line of the answer on every result it
+    writes. A failed version call records null and never stops a sitting."""
+
+    def challenge_run_dir(self):
+        run_dir = os.path.join(self.tmp, "run")
+        challenge_dir = os.path.join(run_dir, "challenge")
+        os.makedirs(challenge_dir)
+        with open(os.path.join(challenge_dir, "casefile.md"), "wb") as handle:
+            handle.write(CASEFILE_BYTES)
+        with open(os.path.join(challenge_dir, "request.json"), "wb") as handle:
+            handle.write(json.dumps(make_request()).encode("utf-8"))
+        return run_dir, challenge_dir
+
+    def test_the_codex_version_is_recorded_beside_the_challenge_result(self):
+        run_dir, challenge_dir = self.challenge_run_dir()
+        fake = FakeLauncher(response_text=GOOD_TEXT,
+                            version_stdout=FIXTURE_VERSION + "\nsecond line\n")
+        code, printed = self.main_with(fake, ["challenge", run_dir])
+        self.assertEqual(code, 0, printed)
+        self.assertEqual(len(fake.version_calls()), 1)
+        self.assertEqual(fake.version_calls()[0]["argv"], ["codex", "--version"])
+        self.assertIsNone(fake.version_calls()[0]["stdin"])
+        written = canonical.read_json(
+            os.path.join(challenge_dir, bridge.RESULT_NAME))
+        self.assertEqual(written["status"], "success")
+        self.assertEqual(written["codex_version"], FIXTURE_VERSION)
+        # A fresh result carries the field before anything is known.
+        self.assertIn("codex_version", bridge._new_result())
+        self.assertIsNone(bridge._new_result()["codex_version"])
+
+    def test_the_codex_version_is_recorded_on_a_smoke_failure(self):
+        run_dir, challenge_dir = self.challenge_run_dir()
+        fake = FakeLauncher(response_text=GOOD_TEXT, smoke_returncode=1)
+        code, _ = self.main_with(fake, ["challenge", run_dir])
+        self.assertEqual(code, 3)
+        written = canonical.read_json(
+            os.path.join(challenge_dir, bridge.RESULT_NAME))
+        self.assertEqual(written["status"], "launch_failure")
+        self.assertEqual(written["codex_version"], FIXTURE_VERSION)
+        fake = EvidenceLauncher(smoke_returncode=1)
+        _, code, _ = self.run_evidence(fake)
+        self.assertEqual(code, 3)
+        for name in (bridge.RESULT_NAME, bridge.RESULT_PASS_TEMPLATE % 1):
+            result = canonical.read_json(os.path.join(self.out_path(), name))
+            self.assertEqual(result["status"], "launch_failure")
+            self.assertEqual(result["codex_version"], FIXTURE_VERSION)
+
+    def test_a_failed_version_call_records_none(self):
+        self.assertIsNone(bridge.codex_version(
+            launcher=FakeLauncher(version_returncode=1)))
+        self.assertIsNone(bridge.codex_version(
+            launcher=FakeLauncher(version_raises=True)))
+        self.assertIsNone(bridge.codex_version(
+            launcher=FakeLauncher(version_stdout="  \n")))
+        long_line = "v" * (bridge.VERSION_MAX_CHARS * 2)
+        self.assertEqual(bridge.codex_version(
+            launcher=FakeLauncher(version_stdout=long_line + "\n")),
+            long_line[:bridge.VERSION_MAX_CHARS])
+        # The sitting goes on: the paid call runs and records null.
+        run_dir, challenge_dir = self.challenge_run_dir()
+        fake = FakeLauncher(response_text=GOOD_TEXT, version_raises=True)
+        code, _ = self.main_with(fake, ["challenge", run_dir])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.challenge_calls()), 1)
+        written = canonical.read_json(
+            os.path.join(challenge_dir, bridge.RESULT_NAME))
+        self.assertIn("codex_version", written)
+        self.assertIsNone(written["codex_version"])
+
+    def test_the_evidence_pass_records_the_codex_version(self):
+        fake = EvidenceLauncher()
+        _, code, printed = self.run_evidence(fake)
+        self.assertEqual(code, 0, printed)
+        self.assertEqual(len(fake.version_calls()), 1)
+        for name in (bridge.RESULT_NAME, bridge.RESULT_PASS_TEMPLATE % 1):
+            result = canonical.read_json(os.path.join(self.out_path(), name))
+            self.assertEqual(result["status"], "success")
+            self.assertEqual(result["codex_version"], FIXTURE_VERSION)
+        # With the smoke test skipped the version is still asked for once.
+        shutil.rmtree(self.out_path())
+        fake = EvidenceLauncher()
+        _, code, _ = self.run_evidence(fake, ["--no-smoke"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.version_calls()), 1)
+        self.assertEqual(canonical.read_json(os.path.join(
+            self.out_path(), bridge.RESULT_NAME))["codex_version"],
+            FIXTURE_VERSION)
 
 
 if __name__ == "__main__":

@@ -29,11 +29,12 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.lib import canonical, prose, subjects, validate  # noqa: E402
-from council.engine import briefs, ladder, publisher  # noqa: E402
+from council.engine import briefs, chair_fields, ladder, publisher  # noqa: E402
 from council.engine import runrecord, seal  # noqa: E402
 from council.bridge import codex_bridge  # noqa: E402
 from council.evidence import brief, gate  # noqa: E402
 from council.evidence import sufficiency as sufficiency_check  # noqa: E402
+from council.report import chart, evidence_page  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCHEMA_DIR = os.path.join(ROOT, "council", "schemas")
@@ -84,6 +85,14 @@ BRIEF_NAME = "brief.md"
 # The document rides into the run's archive beside the one page. (Register
 # items P-U3d-3 and P-U3d-4.)
 FULL_DOCUMENT_NAME = "EVIDENCE-FULL.md"
+# Owner ruling AC40(2b): the owner cannot open Markdown, so the brief
+# command writes the full document a second time beside it as the page he
+# reads (council.report.evidence_page), rendered from the Markdown's own
+# bytes. The go stays recorded against the Markdown's sha256; in the
+# reviewed mode init refuses a missing page, or one whose bytes are not the
+# rendering of the approved Markdown, so what he read is provably what he
+# approved. The page rides into the run beside the Markdown.
+FULL_PAGE_NAME = "EVIDENCE-FULL.html"
 EVIDENCE_MODES = ("reviewed", "unattended")
 # How far ahead of this machine's own clock a stamp written by the
 # sitting may stand. The capture gate has carried exactly this allowance
@@ -385,6 +394,12 @@ def _require_full_document(evidence_dir, mode, captured_at, pack_sha256,
                 "it must BE the rendering of this pack. Regenerate it: python "
                 "-m council.evidence.brief <pack.json> --out %s --full."
                 % (path, actual, expected, path))
+        # The run files the page beside this record, so a page that is
+        # present must be this document's rendering too - a crash between
+        # the brief command's two writes leaves the new document beside the
+        # old page (audit r3-1). A missing page stays allowed here: the
+        # reviewed mode alone requires it (architect ruling 1).
+        _require_the_page(evidence_dir, path, required=False)
         return None
     if mode != "reviewed":
         return None
@@ -495,7 +510,47 @@ def _require_full_document(evidence_dir, mode, captured_at, pack_sha256,
             "on - render it with python -m council.evidence.brief <pack.json> "
             "--out %s --full and approve that." % (path, recorded_doc,
                                                     expected, path))
+    _require_the_page(evidence_dir, path)
     return actual
+
+
+def _require_the_page(evidence_dir, document_path, required=True):
+    """The page the owner read the approved full document on (owner ruling
+    AC40(2b)). He reads the page, not the Markdown, and the go is taken on
+    what he read (AC3); the approval records the Markdown's hash only. So the
+    page must BE the rendering of the approved Markdown: it is a pure
+    function of those bytes, and it is rendered here again and compared
+    byte for byte. Called only after the Markdown is proven to be the
+    approved one. A missing page, or any other bytes, refuses the sitting.
+    With `required` false (the unattended mode, which files the page as
+    record but approves nothing) a missing page passes and a present one
+    must meet the same byte-for-byte rule."""
+    page_path = os.path.join(evidence_dir, FULL_PAGE_NAME)
+    if not os.path.isfile(page_path):
+        if not required:
+            return
+        raise HostError(
+            "%s is missing - in the reviewed mode the full evidence is read "
+            "on this page, the one the brief command writes beside %s (owner "
+            "ruling AC40(2b)), so a go with no page is a go nobody could "
+            "have read. Generate both: python -m council.evidence.brief "
+            "<pack.json> --out %s --full" % (page_path, document_path,
+                                             document_path))
+    with open(document_path, "rb") as handle:
+        markdown = handle.read().decode("utf-8")
+    with open(page_path, "rb") as handle:
+        page = handle.read()
+    if page != evidence_page.render_page(markdown).encode("utf-8"):
+        raise HostError(
+            "%s is not the page of the %sfull document %s: its bytes "
+            "differ from that document's rendering. The owner reads the "
+            "page and the go is taken on what he read (owner rulings AC3, "
+            "AC40(2b)), so the page must BE the approved document. "
+            "Regenerate both with python -m council.evidence.brief "
+            "<pack.json> --out %s --full; the document's bytes, and so its "
+            "approval, stay the same." % (page_path,
+                                          "approved " if required else "",
+                                          document_path, document_path))
 
 
 def _real_minutes(value):
@@ -689,11 +744,17 @@ def _read_capture_usage(evidence_dir):
     result = _challenge_result(evidence_dir)
     challenge_tokens = _agreed_challenge_tokens(doc, result)
     prompt_bytes = _challenge_prompt_bytes(result)
+    # The codex version the bridge recorded beside the evidence audit's
+    # result (owner ruling AC25(4)): copied into the record here, never into
+    # the capture, and published in the provenance. Null where none.
+    version = (result or {}).get("codex_version")
     return {"tokens": tokens, "minutes": minutes,
             "model": brief.capture_model(doc),
             "estimated": estimated,
             "evidence_challenge_tokens": challenge_tokens,
-            "evidence_challenge_prompt_bytes": prompt_bytes}
+            "evidence_challenge_prompt_bytes": prompt_bytes,
+            "evidence_audit_codex_version": (
+                version if isinstance(version, str) else None)}
 
 
 def _read_evidence_stage(evidence_dir, captured_at, pack_sha256, pack_doc):
@@ -804,7 +865,7 @@ def init(runs_root, run_id, pack, pack_sha256, sufficiency, question_file,
     # are about; neither is inside the pack's hash, because the pack IS
     # the evidence and who chose and who approved is provenance.
     for name in (MODE_NAME, CAPTURE_USAGE_NAME, APPROVAL_NAME, BRIEF_NAME,
-                 FULL_DOCUMENT_NAME):
+                 FULL_DOCUMENT_NAME, FULL_PAGE_NAME):
         source = os.path.join(evidence_dir, name)
         if os.path.isfile(source):
             with open(source, "rb") as handle:
@@ -926,11 +987,14 @@ class _Ctx(object):
     def frame(self):
         return self.answer("frame")
 
-    def casefile(self):
+    def casefile(self, seat_kind=None):
+        """The run's case file; an advisor's (`seat_kind`) places the
+        passages its lens reads first ahead of the rest - order only."""
         frame = self.frame()
         return briefs.render_casefile(self.pack, self.sufficiency,
                                       frame["question_for_council"],
-                                      self.invocation["subject"])
+                                      self.invocation["subject"],
+                                      seat_kind=seat_kind)
 
     def advisor_markdowns(self):
         return {seat: self.answer(seat)["markdown"]
@@ -1155,6 +1219,45 @@ def _sizing_unit_reasons(entry):
     return _sizing_value_reasons(sizing_id, pinned, value)
 
 
+def _price_unit_reasons(trigger, pack):
+    """A price trigger's level is read against its instrument's price fact
+    (UPGRADE-2 U5(b), a HARD check: a level in another unit is a wrong
+    figure). The fact is found exactly as the chart finds it - the member's
+    own price fact for a trigger bound to a constituent, else the subject's
+    - and its unit must be the trigger's, character for character. Where
+    the pack has no price fact for the instrument there is nothing to read
+    the level against, and no unit check."""
+    capture = pack.get("capture") or {}
+    fact_id, fact = chart._price_fact(capture, trigger.get("constituent"))
+    if fact_id is None or trigger.get("unit") == fact.get("unit"):
+        return []
+    return ["the PRICE reopening trigger %r is in %r, but the price fact it "
+            "is read against (%s%s) is in %r - a price trigger's unit is the "
+            "unit of its instrument's price fact, exactly; a level on "
+            "anything else (an index, a benchmark) is an EVENT trigger"
+            % (trigger.get("detail"), trigger.get("unit"), fact_id,
+               "" if trigger.get("constituent") is None
+               else ", for %s" % trigger.get("constituent"),
+               fact.get("unit"))]
+
+
+def _price_units(pack, subject):
+    """Each price fact a price trigger is read against and its exact unit -
+    the subject's own, then each member's where it has its own - for the
+    chair's contract (UPGRADE-2 U5(b)). Found as `_price_unit_reasons`
+    finds them, so the brief names the unit the check will demand."""
+    capture = pack.get("capture") or {}
+    rows, seen = [], set()
+    for instrument in [None] + list(subjects.expression_tickers(subject)):
+        fact_id, fact = chart._price_fact(capture, instrument)
+        if fact_id is None or fact_id in seen:
+            continue
+        seen.add(fact_id)
+        rows.append({"instrument": instrument, "fact_id": fact_id,
+                     "unit": fact.get("unit")})
+    return rows
+
+
 def check_draft_verdict(draft, pack, schemas):
     """Every reason this draft verdict is refused, in plain words.
     Empty list = the draft stands."""
@@ -1191,6 +1294,8 @@ def check_draft_verdict(draft, pack, schemas):
                 reasons.append("a PRICE reopening trigger must carry a "
                                "usable level and unit; %r leaves one "
                                "null or blank" % trigger.get("detail"))
+            else:
+                reasons.extend(_price_unit_reasons(trigger, pack))
     for entry in draft["tripwires"]["invalidation_levels"]:
         for field in ("level", "unit", "meaning"):
             if not _visible(entry.get(field)):
@@ -1831,7 +1936,10 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
         kwargs["question_verbatim"] = ctx.invocation["question_verbatim"]
     else:
         frame = ctx.frame()
-        kwargs["casefile"] = ctx.casefile()
+        # Each advisor reads its own lens's passages first (UPGRADE-2
+        # U5(b), order only); every other seat reads capture order.
+        kwargs["casefile"] = ctx.casefile(
+            seat if seat in briefs.ADVISOR_SEATS else None)
         kwargs["for_atlas"] = frame["for_atlas"]
         # EVERY seat that reads the case file is told what the subject
         # IS. The advisors need it as much as the chair does: their
@@ -1854,7 +1962,17 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
             kwargs["advisor_answers"] = ctx.advisor_markdowns()
             kwargs["advisor_ladders"] = ctx.advisor_ladders()
             kwargs["blind_mapping"] = ctx.blind_mapping()
-        elif seat == "chair_draft":
+        if seat in ("chair_draft", "chair_resolve"):
+            kwargs["price_units"] = _price_units(ctx.pack,
+                                                 ctx.invocation["subject"])
+            # Owner ruling AC50(8): the chairman is told when a growth
+            # company's cash covers fewer months than the ruled line.
+            kwargs["runway_below"] = briefs.runway_below(ctx.pack)
+            # Owner ruling AC53(R9): and when a producer's reserves rest on a
+            # price above today's.
+            kwargs["reserve_price_below"] = briefs.reserve_price_below(
+                ctx.pack)
+        if seat == "chair_draft":
             kwargs["advisor_answers"] = ctx.advisor_markdowns()
             kwargs["advisor_ladders"] = ctx.advisor_ladders()
             kwargs["reviewer_answer"] = ctx.answer("reviewer")
@@ -2256,6 +2374,223 @@ def _resolve_chair_prose(ctx, seat):
     return "ready"
 
 
+# ------------------------------------------------- the chairman's fields
+
+
+# The chairman's ONE fields re-ask (UPGRADE-2 U5(b), owner rulings AC5 and
+# AC35(3)) travels, like the prose re-ask, on a DISTINCT seat per chair seat:
+# it carries only the fields asked for, which the host splices onto the
+# accepted original, so it is never validated or re-asked as a full chair
+# document and nothing else in the document can change.
+_FIELDS_REASK_SEATS = {"chair_draft": "chair_draft_fields",
+                       "chair_resolve": "chair_resolve_fields"}
+
+# Every splice seat and the chair seat it belongs to, so its tokens are
+# recorded under the chairman like any of his calls.
+_REASK_CHAIR = dict(_PROSE_REASK_CHAIR)
+_REASK_CHAIR.update({fields_seat: chair for chair, fields_seat
+                     in _FIELDS_REASK_SEATS.items()})
+
+
+def _field_figures(value):
+    """A field's figures in order, through the chairman's figure tripwire:
+    the text of a prose field, the canonical JSON of a structured one."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return _number_tokens(value)
+    return _number_tokens(json.dumps(value, sort_keys=True,
+                                     ensure_ascii=False))
+
+
+def _write_fields_reask(ctx, seat, original, problems):
+    """Issue the chairman's ONE fields re-ask on the ordinary request path,
+    as its own request kind: supply exactly the fields named, as a small
+    JSON object, changing no rating and no other field. Never itself
+    re-asked; its tokens are the chairman's."""
+    fields_seat = _FIELDS_REASK_SEATS[seat]
+    number = "%03d" % (len(ctx.requests) + 1)
+    answer_name = ctx.answer_name(number, fields_seat)
+    answer_path = os.path.abspath(ctx.rpc_path(answer_name))
+    verdict = _chair_verdict(original, seat)
+    material = (ctx.invocation["run_id"], answer_path, problems,
+                {problem["key"]: verdict.get(problem["key"])
+                 for problem in problems},
+                chair_fields.required_rows(ctx.pack.get("capture") or {}),
+                ctx.casefile(), ctx.advisor_markdowns())
+    for_atlas = ctx.frame()["for_atlas"]
+    try:
+        brief = briefs.build_fields_reask_brief(
+            *material, document=original, for_atlas=for_atlas)
+    except ValueError:
+        # The chairman's own words happen to carry the for_atlas text: an
+        # ordinary collision, not a leak. The ask travels without his
+        # document quoted, rather than stranding the run.
+        brief = briefs.build_fields_reask_brief(*material,
+                                                for_atlas=for_atlas)
+    brief_bytes = brief.encode("utf-8")
+    brief_name = "%s-brief-%s.md" % (number, fields_seat)
+    canonical.write_bytes_atomic(ctx.rpc_path(brief_name), brief_bytes)
+    request = {"run_id": ctx.invocation["run_id"], "request_id": number,
+               "seat": fields_seat, "brief": "rpc/" + brief_name,
+               "answer": "rpc/" + answer_name,
+               "retry_of": None, "reason": "fields re-ask"}
+    canonical.write_canonical_json(
+        ctx.rpc_path("%s-request-%s.json" % (number, fields_seat)), request)
+    runrecord.append_event(ctx.run_dir, "request_written",
+                           {"number": number, "seat": fields_seat,
+                            "retry_of": None, "brief_bytes": len(brief_bytes)})
+    ctx.refresh()
+    ctx.say("fields re-ask written for %s (request %s)" % (seat, number))
+    return number
+
+
+def _read_fields_answer(ctx, seat, original, asked, answer_path):
+    """The accepted ORIGINAL with the re-answer's fields spliced in, or why
+    the re-answer is not usable. Usable requires a JSON object carrying
+    EXACTLY the keys asked for and a spliced document that still passes
+    every chair check. A field that still misses is spliced as written:
+    after the one re-ask the answer stands. Returns (spliced, None) or
+    (None, reason)."""
+    try:
+        with open(answer_path, "rb") as handle:
+            obj = json.loads(handle.read().decode("utf-8"))
+    except (OSError, ValueError) as error:
+        return None, "the re-answer is not valid JSON (%s)" % error
+    if not isinstance(obj, dict):
+        return None, "the re-answer is not a JSON object"
+    if set(obj) != set(asked):
+        return None, ("the re-answer must carry EXACTLY the keys %s, not %s"
+                      % (sorted(asked), sorted(obj)))
+    spliced = copy.deepcopy(original)
+    _chair_verdict(spliced, seat).update(obj)
+    reasons = (_check_chair_resolve(spliced, ctx) if seat == "chair_resolve"
+               else _check_chair_draft(spliced, ctx))
+    if reasons:
+        return None, ("the spliced answer fails a chair check: %s"
+                      % "; ".join(reasons))
+    return spliced, None
+
+
+def _apply_fields_answer(ctx, seat, original, original_number, asked):
+    """Process the answer to the one fields re-ask: splice it, or keep the
+    accepted original. The disk state - the spliced answer and its accept,
+    or a rejection that disposes the re-ask - is written once; a resume
+    after it reads that state back rather than applying the answer again.
+    Returns (published answer, its number, outcome)."""
+    fields_seat = _FIELDS_REASK_SEATS[seat]
+    number = next(n for n, req in ctx.requests.items()
+                  if req["seat"] == fields_seat)
+    disposed = next((event for event in ctx.events
+                     if event["event"] in ("answer_accepted",
+                                           "answer_rejected")
+                     and event.get("number") == number), None)
+    if disposed is None:
+        spliced, reason = _read_fields_answer(
+            ctx, seat, original, asked,
+            ctx.rpc_path(ctx.answer_name(number, fields_seat)))
+        if spliced is not None:
+            canonical.write_canonical_json(
+                ctx.rpc_path(ctx.answer_name(number, seat)), spliced)
+            runrecord.append_event(ctx.run_dir, "answer_accepted", {
+                "number": number, "seat": seat,
+                "path": "rpc/" + ctx.answer_name(number, seat),
+                "fields_spliced": True})
+            ctx.say("fields re-answer spliced onto %s (request %s)"
+                    % (seat, number))
+        else:
+            runrecord.append_event(ctx.run_dir, "answer_rejected", {
+                "number": number, "seat": fields_seat, "reason": reason})
+            ctx.say("fields re-answer not usable (%s); the accepted "
+                    "original stands" % reason)
+        ctx.refresh()
+        disposed = ctx.events[-1]
+    if disposed["event"] == "answer_accepted":
+        return (canonical.read_json(ctx.rpc_path(ctx.answer_name(number,
+                                                                 seat))),
+                number, "spliced")
+    return original, original_number, "original_stands"
+
+
+def _resolve_chair_fields(ctx, seat):
+    """The soft check of the chairman's three fields and its ONE re-ask, as
+    a SPLICE (UPGRADE-2 U5(b), owner rulings AC5 and AC35(3); the U6
+    pattern). On the accepted chair document a field that is missing, in
+    the wrong shape, over its word cap or short of a decisive metric's row
+    is asked for ONCE on its own seat; the returned fields are spliced onto
+    the accepted original, so the rating and every other field are the
+    original's by construction. After that re-ask the answer stands - never
+    a refusal, never a freeze - and the re-answer's figures are compared
+    with the original field's and flagged, never refused. Runs BEFORE the
+    prose gate, which then measures whatever answer is accepted. Returns
+    'reasked' / 'wait' / 'ready'. Crash-safe by re-derivation: the outcome
+    event is the last write; a marker whose request never reached disk
+    re-issues the same re-ask."""
+    mine = [event for event in ctx.events
+            if event["event"] == "chair_fields_checked"
+            and event.get("seat") == seat]
+    if any(event["outcome"] != "reasked" for event in mine):
+        return "ready"
+    capture = ctx.pack.get("capture") or {}
+    marker = mine[0] if mine else None
+    if marker is None:
+        number = ctx.accepted[seat]
+        found = chair_fields.problems(_chair_verdict(ctx.answer(seat), seat),
+                                      capture)
+        runrecord.append_event(ctx.run_dir, "chair_fields_checked", {
+            "seat": seat, "number": number, "problems": found,
+            "outcome": "reasked" if found else "present"})
+        ctx.refresh()
+        if not found:
+            return "ready"
+        _write_fields_reask(ctx, seat, ctx.answer(seat), found)
+        return "reasked"
+    fields_seat = _FIELDS_REASK_SEATS[seat]
+    original_number = marker["number"]
+    original = canonical.read_json(
+        ctx.rpc_path(ctx.answer_name(original_number, seat)))
+    if not any(req["seat"] == fields_seat for req in ctx.requests.values()):
+        _write_fields_reask(ctx, seat, original, marker["problems"])
+        return "reasked"
+    number = next(n for n, req in ctx.requests.items()
+                  if req["seat"] == fields_seat)
+    if not os.path.exists(
+            ctx.rpc_path(ctx.answer_name(number, fields_seat))):
+        return "wait"
+    asked = [problem["key"] for problem in marker["problems"]]
+    published, published_number, outcome = _apply_fields_answer(
+        ctx, seat, original, original_number, asked)
+    before_verdict = _chair_verdict(original, seat)
+    after_verdict = _chair_verdict(published, seat)
+    before, after, by_field = [], [], {}
+    for key in asked:
+        if before_verdict.get(key) is None:
+            continue
+        first = _field_figures(before_verdict.get(key))
+        second = _field_figures(after_verdict.get(key))
+        before.extend(first)
+        after.extend(second)
+        if first != second:
+            # Per field, so the page names only a field that still stands
+            # as re-answered (architect ruling closing P-U5b-5).
+            by_field[key] = {
+                "first": list(dict.fromkeys(t for t in first
+                                            if t not in second)),
+                "rewrite": list(dict.fromkeys(t for t in second
+                                              if t not in first))}
+    runrecord.append_event(ctx.run_dir, "chair_fields_checked", {
+        "seat": seat, "number": published_number, "outcome": outcome,
+        "problems": chair_fields.problems(after_verdict, capture),
+        "figures_changed": before != after,
+        "figures_differing": {
+            "first": list(dict.fromkeys(t for t in before if t not in after)),
+            "rewrite": list(dict.fromkeys(t for t in after
+                                          if t not in before))},
+        "figures_by_field": by_field})
+    ctx.refresh()
+    return "ready"
+
+
 # ------------------------------------------------------- the heading check
 
 
@@ -2389,9 +2724,10 @@ def _ingest_answers(ctx):
     when anything changed. May end the run FAILED."""
     changed = _reissue_heading_reasks(ctx)
     for number, seat in ctx.pending():
-        if seat in _PROSE_REASK_SEATS.values():
-            # A prose re-ask is validated and spliced by the gate
-            # (_resolve_chair_prose), never by this ordinary seat-check path:
+        if seat in _REASK_CHAIR:
+            # A prose or fields re-ask is validated and spliced by its gate
+            # (_resolve_chair_prose, _resolve_chair_fields), never by this
+            # ordinary seat-check path:
             # it is not a chair document and must never be re-asked as one
             # (owner ruling AC6, the architect's splice ruling). But its tokens
             # still count toward the sitting budget - an owner acceptance
@@ -2407,7 +2743,7 @@ def _ingest_answers(ctx):
                           for event in ctx.events)
             if not already and os.path.exists(
                     ctx.rpc_path(ctx.answer_name(number, seat))):
-                _ingest_usage(ctx, number, _PROSE_REASK_CHAIR[seat])
+                _ingest_usage(ctx, number, _REASK_CHAIR[seat])
             continue
         path = ctx.rpc_path(ctx.answer_name(number, seat))
         if not os.path.exists(path):
@@ -2636,6 +2972,13 @@ def _advance(ctx):
         ctx.say("state: CHAIR_DRAFT")
         return True
     if state == "CHAIR_DRAFT" and "chair_draft" in have:
+        # The fields gate first; the prose gate then measures whatever
+        # answer is accepted (UPGRADE-2 U5(b)).
+        outcome = _resolve_chair_fields(ctx, "chair_draft")
+        if outcome == "reasked":
+            return True
+        if outcome == "wait":
+            return False
         outcome = _resolve_chair_prose(ctx, "chair_draft")
         if outcome == "reasked":
             return True
@@ -2674,6 +3017,11 @@ def _advance(ctx):
             ctx.say("state: PUBLISH (degraded)")
         return True
     if state == "CHAIR_RESOLVE" and "chair_resolve" in have:
+        outcome = _resolve_chair_fields(ctx, "chair_resolve")
+        if outcome == "reasked":
+            return True
+        if outcome == "wait":
+            return False
         outcome = _resolve_chair_prose(ctx, "chair_resolve")
         if outcome == "reasked":
             return True

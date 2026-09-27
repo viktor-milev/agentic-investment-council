@@ -122,18 +122,51 @@ class TestContractSchemas(unittest.TestCase):
             else:
                 validate.check_schema(doc, os.path.basename(path))
 
-    def test_verdict_schema_is_version_1_4_0(self):
+    def test_verdict_schema_is_version_1_7_0(self):
         # 1.3.0 was unit ENVELOPE-ATLAS (owner ruling AB23): the hand-off
         # gained identity, audit state, bound tags and pinned sizing
         # units. 1.3.1 is UPGRADE-2 U3 (owner ruling AC3): the
         # provenance gained what the sitting decided and spent before a
         # seat was paid. 1.4.0 is UPGRADE-2 U7 (owner ruling AC7): the
         # provenance names the ledger row this verdict is recorded under.
+        # 1.5.0 is UPGRADE-2 U5(b) (owner rulings AC5, AC35(3), AC25(4)):
+        # the chairman's three fields, required keys that may be null, and
+        # the codex version in the provenance. The envelope is untouched.
+        # 1.6.0 is UPGRADE-2 READ-C1 (owner rulings AC44, AC45): the
+        # chairman's one-line answer, a fourth such key, and a measure a
+        # tripwire entry may name; the envelope carries neither. 1.7.0 is
+        # UPGRADE-2 GROWTH-ARCHETYPE (b) (owner ruling AC50(8)): a change-
+        # appendix row may carry the runway_cap label; the envelope is
+        # untouched.
         # Runs already published keep the version they were written under
         # and are never rewritten.
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.4.0")
+        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.7.0")
+        for key in ("answer_line", "decisive_argument", "business_read",
+                    "decisive_metrics_read"):
+            self.assertIn(key, doc["required"])
+            self.assertEqual(validate.validate(None, doc["properties"][key]),
+                             [], key)
+            self.assertNotIn(key, doc["properties"]["atlas_envelope"][
+                "properties"])
+        self.assertIn("codex_version",
+                      doc["properties"]["provenance"]["required"])
+
+    def test_chair_fields_is_data_the_member_loaders_skip(self):
+        # UPGRADE-2 U5(b): the chairman's three fields are a top-level LIST
+        # in the seat-answer contracts, like required_headings, so the loop
+        # above that checks every member schema skips it.
+        with open(os.path.join(SCHEMA_DIR, "seat_answers.json"), "rb") as f:
+            doc = json.loads(f.read().decode("utf-8"))
+        self.assertIsInstance(doc["chair_fields"], list)
+        self.assertEqual([field["key"] for field in doc["chair_fields"]],
+                         ["answer_line", "decisive_argument", "business_read",
+                          "decisive_metrics_read"])
+        members = [name for name, value in doc.items()
+                   if isinstance(value, dict)]
+        self.assertNotIn("chair_fields", members)
+        self.assertIn("1.4.0", doc["title"])
 
     def test_the_evidence_finding_shape_is_written_once_in_two_files(self):
         """The auditor's answer and the capture's record of it carry the
@@ -164,7 +197,27 @@ class TestContractSchemas(unittest.TestCase):
 
         self.assertEqual(bare(recorded), bare(declared))
 
-    def test_capture_contract_is_version_1_8_0(self):
+    def test_capture_contract_is_version_1_11_0(self):
+        # MINOR, unit UPGRADE-2 RESOURCE-ARCHETYPE (owner rulings AC51-AC54):
+        # the seventh archetype, resource_producer, its measure, the
+        # optional frame fields producer_subtype and resource_base, the
+        # integrated oil major's optional block, and three more words a
+        # revenue line's nature may take. All optional in the contract; the
+        # gate and the sufficiency gate enforce them.
+        #
+        # Before that:
+        # MINOR, unit UPGRADE-2 GROWTH-ARCHETYPE (owner rulings AC49(1) and
+        # AC50): the sixth archetype, reinvesting_grower, its measure, the
+        # optional frame fields grower_subtype and growth_runway, and four
+        # more words a revenue line's nature may take. All optional in the
+        # contract; the gate and the sufficiency gate enforce them.
+        #
+        # Before that:
+        # MINOR, unit UPGRADE-2 U5(b) (owner ruling AC35(3)): an optional
+        # category on each tier-2 passage, so each advisor reads first the
+        # passages its lens reads first. Order only, never exclusion.
+        #
+        # Before that:
         # MINOR, unit UPGRADE-2 FI-ARCHETYPE (owner rulings AC28, AC30 and
         # AC32): the financial-institution archetype and its optional frame
         # fields, and the owner's one-line question. All optional in the
@@ -194,29 +247,100 @@ class TestContractSchemas(unittest.TestCase):
                   "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
         self.assertEqual(doc["properties"]["capture_version"]["const"],
-                         "1.8.0")
+                         "1.11.0")
         for optional in ("price_series", "benchmark_series", "benchmark",
                          "question_line"):
             self.assertIn(optional, doc["properties"])
             self.assertNotIn(optional, doc["required"])
+        # 1.9.0 is UPGRADE-2 U5(b) (owner ruling AC35(3)): a passage may say
+        # what it is about, from a closed list; absent reads as general.
+        passage = doc["properties"]["tier2"]["items"]
+        self.assertNotIn("category", passage["required"])
+        self.assertEqual(passage["properties"]["category"]["enum"],
+                         ["business", "peers", "price", "positioning",
+                          "calendar", "cycle", "general"])
+        # 1.10.0: the grower's two frame fields stay optional.
+        frame = doc["properties"]["business_frame"]["additionalProperties"]
+        for optional in ("grower_subtype", "growth_runway"):
+            self.assertIn(optional, frame["properties"])
+            self.assertNotIn(optional, frame.get("required") or [])
+        self.assertIn("reinvesting_grower",
+                      frame["properties"]["archetype"]["enum"])
+        # 1.11.0 (unit RESOURCE-ARCHETYPE, owner rulings AC51-AC54): the
+        # producer's two frame fields and the integrated oil major's block
+        # stay optional.
+        for optional in ("producer_subtype", "resource_base",
+                         "integrated_major"):
+            self.assertIn(optional, frame["properties"])
+            self.assertNotIn(optional, frame.get("required") or [])
+        self.assertIn("resource_producer",
+                      frame["properties"]["archetype"]["enum"])
 
-    def test_floors_data_is_version_1_7_0(self):
+    def test_floors_data_is_version_1_11_0(self):
         # MINOR, unit UPGRADE-2 FI-ARCHETYPE (owner rulings AC28 and AC30):
         # the financial-institution archetype row with its sub-types, the
         # capital and cost-of-risk families, and the sub-type floors. MINOR
         # again, unit U4(b) (owner ruling AC4): insiders' dealings and the
-        # company's own buying, two conditional single-stock floors.
+        # company's own buying, two conditional single-stock floors. MINOR
+        # again, unit U4(d) (owner ruling AC35(2)): those two read only a
+        # dated amount spent and dealings with a direction, date and size.
+        # MINOR again, unit U4(e) (owner ruling AC37(1)): the closed list
+        # of allowed units and the question line's decision words. MINOR
+        # again, unit U4(f) (the AC37 amendment): those words become a map
+        # of families with their inflections. MINOR again, unit
+        # SITTING-FIXES (owner ruling AC41(3)): the five-year ceiling on
+        # any freshness rule, the currency of a dated record of a finished
+        # period. MINOR again, unit INSIDER-DEPTH (owner rulings AC41(1)
+        # as amended, AC46(2) and AC47): the insider floor's depth follows
+        # what officers and directors own, and a single stock records its
+        # financial-year end. MINOR again, unit GROWTH-ARCHETYPE (owner
+        # rulings AC49(1) and AC50): the sixth archetype, the reinvesting
+        # grower, in two sub-types, and the four-profitable-quarters rule
+        # as data. MINOR again, its sub-charge (b) (owner ruling AC50(9)):
+        # a canonical test's words and answering facts as data per
+        # archetype - the grower's three standard tests, and the financial
+        # institution's free-cash answer moved into the same shape. MINOR
+        # again, unit RESOURCE-ARCHETYPE (owner rulings AC51-AC54): the
+        # seventh archetype, the resource producer, in three sub-types, the
+        # product list, the rule that a company reporting reserves is a
+        # producer as data, and the producer's evidence list as floors.
+        # MINOR again, its sub-charge (b) (owner rulings AC52-AC54): the
+        # producer's rule data - the fact families, the reserves' history
+        # prefix, the natures of its sales - one unit, and its standard
+        # tests with the royalty company's first test through a lift.
         with open(os.path.join(ROOT, "council", "floors", "floors.json"),
                   "rb") as f:
             floors = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(floors["floors_version"], "1.7.0")
+        self.assertEqual(floors["floors_version"], "1.17.0")
         table = floors["archetype_measures"]["table"]
         self.assertEqual(sorted(table["financial_institution"]["subtypes"]),
                          ["alternative_asset_manager", "bank",
                           "financial_holding", "insurer", "reinsurer",
                           "traditional_asset_manager"])
+        self.assertEqual(sorted(table["reinvesting_grower"]["subtypes"]),
+                         ["recurring_revenue", "transaction_platform"])
+        self.assertEqual(sorted(table["resource_producer"]["subtypes"]),
+                         ["miner", "oil_and_gas_producer",
+                          "royalty_and_streaming"])
+        for key in ("resource_products", "resource_rule"):
+            self.assertIn(key, floors["archetype_measures"])
+        for key in ("profitability_rule", "growth_runway"):
+            self.assertIn(key, floors["archetype_measures"])
         for key in ("fi_families", "archetype_floors"):
             self.assertIn(key, floors)
+        self.assertEqual(
+            sorted(floors["archetype_floors"]["reinvesting_grower"][
+                "canonical_tests"]),
+            ["free_cash_flow", "profit_growth", "revenue_growth"])
+        producer = floors["archetype_floors"]["resource_producer"]
+        self.assertEqual(sorted(producer["canonical_tests"]),
+                         ["free_cash_flow", "profit_growth"])
+        self.assertEqual(producer["lifts"]["subtypes"],
+                         ["royalty_and_streaming"])
+        self.assertNotIn("single_stock_floor_ids_lifted", producer["lifts"])
+        self.assertEqual(
+            sorted(floors["archetype_floors"]["financial_institution"][
+                "lifts"]["canonical_tests"]), ["free_cash_flow"])
 
     def test_rating_scale_is_the_owners_five_words(self):
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
@@ -459,6 +583,41 @@ class TestBriefsCarryTheVoice(unittest.TestCase):
         for kind, text in built.items():
             self.assertIn(briefs.MANNER_BLOCK, text,
                           "the %s brief does not carry the manner block" % kind)
+
+
+class TestTheBatteryRunsEveryTest(unittest.TestCase):
+    """UPGRADE-2 SITTING-FIXES item 10 (the JPM debrief's defect 10): the
+    battery's printed commands run every test. The script form stopped at a
+    main guard sitting mid-file, so the engine suite ran a subset and the
+    evidence suite loaded twice and failed; CHECKS.md now prints the module
+    form, and every suite's main guard is its last statement."""
+
+    SUITES = ("foundations", "evidence", "engine", "bridge", "report",
+              "e2e_rehearsal", "ledger")
+
+    def test_checks_prints_the_module_form_for_the_seven_suites(self):
+        with open(os.path.join(ROOT, "council", "CHECKS.md"),
+                  encoding="utf-8") as handle:
+            text = handle.read()
+        for suite in self.SUITES:
+            self.assertIn(
+                "PYTHONIOENCODING=utf-8 python -m unittest council.tests.test_%s\n"
+                % suite, text, suite)
+        self.assertIsNone(
+            re.search(r"python\S* council/tests/test_\w+\.py", text),
+            "CHECKS.md still prints a suite in the script form")
+        self.assertIn("script form is not supported", text)
+
+    def test_every_suites_main_guard_is_its_last_statement(self):
+        import ast
+        for suite in self.SUITES:
+            path = os.path.join(ROOT, "council", "tests", "test_%s.py" % suite)
+            with open(path, encoding="utf-8") as handle:
+                tree = ast.parse(handle.read(), path)
+            guards = [index for index, node in enumerate(tree.body)
+                      if isinstance(node, ast.If)
+                      and "__main__" in ast.unparse(node.test)]
+            self.assertEqual(guards, [len(tree.body) - 1], suite)
 
 
 if __name__ == "__main__":
