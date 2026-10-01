@@ -296,7 +296,7 @@ def _rows(items, what):
 
 
 def _facts_by_id(capture):
-    return {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    return holding_display_facts(capture)
 
 
 def _passages_by_id(capture):
@@ -324,6 +324,7 @@ def _figure(pack, facts, fact_id, passages=None):
     figures - a backlog written in prose is still a frozen answer - so
     the passage is rendered by the figures it declares, which are already
     checked to stand literally in its own words."""
+    fact_id = holding_display_id(pack.get("capture") or {}, fact_id)
     fact = facts.get(fact_id)
     if fact is None:
         passage = (passages or {}).get(fact_id)
@@ -335,7 +336,8 @@ def _figure(pack, facts, fact_id, passages=None):
             _passage_title(fact_id), figures or "no figure",
             _safe(_trim(passage.get("text"), SHORT_TRIM,
                         passage.get("figures"))))
-    return "%s: %s%s" % (_fact_name(fact), _shown(fact),
+    shown = _shown(fact)
+    return "%s: %s%s" % (_fact_name(fact), shown,
                          _freshness_mark(pack, fact_id))
 
 
@@ -701,6 +703,7 @@ _ARCHETYPE_WORDS = {
     "reinvesting_grower": "a growth company that does not yet make a profit",
     # Owner rulings AC51-AC54 (RESOURCE-ARCHETYPE (c)): the producer.
     "resource_producer": "an oil, gas or mining producer",
+    "investment_holding": "a holding company that owns other businesses",
 }
 _MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -761,6 +764,189 @@ FI_NATURE_WORDS = {
     "performance": "performance fees",
     "other": "other income",
 }
+# Owner rulings AC59-AC62: one wording for every holding reader.
+HOLDING_ARCHETYPE = "investment_holding"
+HOLDING_KIND_WORDS = _ARCHETYPE_WORDS[HOLDING_ARCHETYPE]
+VALUATION_BASIS_WORDS = {
+    "listed_peer_multiples": "against listed companies like it",
+    "latest_funding_round": "at its latest funding round",
+    "discounted_cash_flow": "on its forecast cash",
+    "fund_manager_statement": "on the fund manager's statement",
+    "cost": "at cost",
+    "other": "another way the company states",
+}
+HOLDING_POSITION_WORDS = {
+    "wider": "Today's discount on the company's latest published value is wider than {comparison}.",
+    "inside": "Today's discount on the company's latest published value is inside the range of {years}.",
+    "narrower": "Today's discount on the company's latest published value is narrower than {comparison}.",
+}
+HOLDING_COUNT_WORDS = ("zero", "one", "two", "three", "four", "five")
+HOLDING_CURRENCY_WORDS = {
+    "USD": "US dollars", "EUR": "euros", "SEK": "Swedish kronor",
+    "GBP": "pounds sterling", "CAD": "Canadian dollars", "AUD": "Australian dollars",
+    "CHF": "Swiss francs", "HKD": "Hong Kong dollars", "AED": "UAE dirhams",
+}
+ONE_HOLDING_SENTENCE = "Most of this company's value is one holding, %s, which this sitting did not rate."
+MOSTLY_PRIVATE_SENTENCE = "Most of what this company owns is private; private values move slowly and usually lag the market in a fall."
+HOLDING_LEAD = "Discount to net asset value"
+
+
+def holding_currency_words(unit):
+    """AC62(H16): the pack's currency, named once in plain words."""
+    unit = (_floors()["prose_figure_marks"].get("currency_aliases") or {}).get(unit, unit) or ""
+    return HOLDING_CURRENCY_WORDS.get(unit.split("_")[0], "")
+
+
+def holding_currency_line(capture):
+    frame = holding_subject_frame(capture)
+    facts = holding_display_facts(capture, recorded=True)
+    row = _floors()["archetype_measures"]["table"][frame["archetype"]]
+    unit = (facts.get(row["subject_numerator"]) or {}).get("unit")
+    return "All money figures are in %s." % holding_currency_words(unit)
+
+
+def holding_position_words(readings):
+    """Architect W1: name the compared discount and the complete pairs."""
+    count, word = len(readings["history"]), readings.get("range_word")
+    if not count or word not in HOLDING_POSITION_WORDS:
+        reason = readings.get("history_reason") or "; ".join(readings.get("errors") or [])
+        return reason[:1].upper() + reason[1:]
+    years = ("the last five year-ends" if count == 5 else
+             "the %s year-end%s recorded" % (HOLDING_COUNT_WORDS[count], "" if count == 1 else "s"))
+    comparison = ("at " if count == 1 else "at either of " if count == 2 else "at any of ") + years
+    return HOLDING_POSITION_WORDS[word].format(comparison=comparison, years=years)
+
+
+def holding_history_lead(readings):
+    count = len(readings["history"])
+    if not count:
+        return ""
+    return ("The discount at each of the last five financial year-ends" if count == 5 else
+            "The discount at each of the %s financial year-end%s recorded" % (
+                HOLDING_COUNT_WORDS[count], "" if count == 1 else "s"))
+
+def holding_subject_frame(capture):
+    frame = (capture.get("business_frame") or {}).get(
+        (capture.get("subject") or {}).get("ticker"))
+    return frame if frame and frame.get("archetype") == HOLDING_ARCHETYPE else None
+
+
+def holding_readings(pack):
+    return sufficiency.holding_readings(pack, _floors())
+
+
+def holding_percent(readings, key):
+    figure = readings.get(key)
+    if figure is None:
+        return "; ".join(readings.get("errors") or ["no published value"])
+    return "%s%% (calculated)" % figure["percent"]
+
+
+def holding_sentences(readings):
+    sentences = []
+    if readings.get("largest_above_half"):
+        sentences.append(ONE_HOLDING_SENTENCE % readings["largest"]["name"])
+    if readings.get("private_above_half"):
+        sentences.append(MOSTLY_PRIVATE_SENTENCE)
+    return sentences
+
+
+def holding_summary(readings):
+    return ("%s at today's prices (the one rated): %s; on the company's latest "
+            "published value (comparable with the history): %s. %s. Private holding "
+            "share: %s." % (HOLDING_LEAD, holding_percent(readings, "discount_today"),
+            holding_percent(readings, "discount_published"), holding_position_words(readings).rstrip("."),
+            holding_percent(readings, "private_share")))
+
+
+def holding_facts_read(capture, frame):
+    facts = holding_display_facts(capture, recorded=True)
+    rating = next((r for r in capture["sufficiency"]["requirements"]
+                   if r["id"] == "rating_vs_history_or_peers"), {})
+    tagged, _, _ = sufficiency._holding_roles(_floors(), frame, rating, facts)
+    return set(tagged)
+
+
+def holding_display_facts(capture, recorded=False):
+    """AC62(H16): ONE accessor for every by-id page reading.
+    Recorded provenance and rule operands retain their source values;
+    displayed money reads select the conversion vouched for by the rule."""
+    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    frame = holding_subject_frame(capture)
+    if frame is None or recorded:
+        return facts
+    tagged, _, _ = sufficiency._holding_roles(_floors(), frame, {}, facts,
+        sufficiency._as_of_moment(capture["captured_at"]).date())
+    displayed = dict(facts)
+    for fid, roles in tagged.items():
+        converted = sorted(r[len("native:"):] for r in roles if r.startswith("native:"))
+        if converted:
+            displayed[fid] = facts[converted[0]]
+    return displayed
+
+
+def holding_display_id(capture, fact_id):
+    fact = holding_display_facts(capture).get(fact_id)
+    return fact["id"] if fact is not None else fact_id
+
+def holding_tables(pack, frame, readings):
+    """AC60-AC62: build every holding table once from the ONE readings.
+    Fact cells keep their ids for the seats; authored words stay prose."""
+    capture, bridge = pack["capture"], frame.get("nav_bridge") or {}
+    facts = _facts_by_id(capture)
+
+    def value(fid):
+        return _id_cell(pack, facts, holding_display_id(capture, fid))
+
+    def percent(key, row=None):
+        return (_words if (row or readings).get(key) is not None else _prose)(holding_percent(row or readings, key))
+
+    rows = []
+    for part in readings["holdings"]:
+        method = part.get("method")
+        private = method in ("company_reported_value", "carrying_value")
+        rows.append([_prose(part.get("name")),
+            _words(FI_METHOD_WORDS[method]) if method in FI_METHOD_WORDS else _prose(method),
+            (_words(VALUATION_BASIS_WORDS[part["valuation_basis"]])
+             if part.get("valuation_basis") in VALUATION_BASIS_WORDS
+             else _prose(part.get("valuation_basis") or "not stated")) if private else _words("listed"),
+            _words(_format_date(part.get("as_of"))), value(part.get("value_fact")), percent("share", part)])
+    bridge_table = {"head": ["Holding", "How it is valued", "Private holding basis", "As of",
+                              "Value", "Share of gross value (calculated)"], "rows": rows, "below": []}
+    totals = [[_words(label), value(bridge.get(key))] for label, key in (
+        ("Holding-company net debt", "holdco_net_debt_fact"), ("Net asset value", "nav_total_fact"),
+        ("Published net asset value", "published_nav_fact"))]
+    totals += [[_words(label), percent(key)] for label, key in (
+        ("Discount to net asset value at today's prices (the one rated)", "discount_today"),
+        ("Discount to net asset value on the company's latest published value (comparable with the history)", "discount_published"),
+        ("Private holding share", "private_share"), ("Loan-to-value", "loan_to_value"),
+        ("Yearly costs against net asset value", "costs_to_nav"))]
+    block = _floors()["archetype_floors"][HOLDING_ARCHETYPE]
+    entries = block["all_subtypes"]
+    cash_prefix = block["canonical_tests"]["free_cash_flow"]["answered_by_prefix"]
+    cost_ids = {e["id"] for e in entries if e["kind"] == "id"
+                and e["why"].startswith("AC60(H8): yearly own costs")}
+    return_prefixes = tuple(e["prefix"] for e in entries if e["kind"] == "prefix"
+                            and e["why"].startswith("AC62(H16)"))
+    totals += [[_prose(_plain_name(facts, fid)), value(fid)] for fid in sorted(facts)
+               if fid in cost_ids or fid.startswith((cash_prefix,) + return_prefixes)]
+    history = [[_words(row["year"].removeprefix("fy")), value(row["nav_fact"]),
+                value(row["price_fact"]), percent("discount", row)]
+               for row in reversed(readings["history"])]
+    below = ([[_words("Average:"), percent("history_average")]] if history else [])
+    below += [[(_words if readings.get("range_word") else _prose)(holding_position_words(readings))]]
+    _, _, prefixes = sufficiency._holding_roles(_floors(), frame, {}, holding_display_facts(capture, recorded=True))
+    below += [[_prose(gap.get("reason"))] for gap in capture.get("gaps") or []
+              if any((gap.get("fact_class") or "").startswith(p) for p in prefixes)]
+    tables = [("The net asset value, part by part", bridge_table),
+              ("The holding company and its dividend cover", {"head": ["Figure", "Value"], "rows": totals, "below": []})]
+    if history:
+        tables.append((holding_history_lead(readings), {
+            "head": ["Year-end", "Published net asset value", "Price", "Discount (calculated)"],
+            "rows": history, "below": below}))
+    return tables
+
+
 FI_METHOD_WORDS = {
     "listed_at_market": "a listed stake at its market price",
     "company_reported_value": "the value the company itself reports",
@@ -874,7 +1060,7 @@ PRODUCER_BALANCE_IDS = sufficiency._PRODUCER_BALANCE
 PRODUCER_QUARTER_PREFIXES = ("production_quarter_", "realized_price_quarter_")
 PRODUCER_LATEST_PAIRS = tuple(zip(sufficiency._PRODUCER_HEADLINES,
                                  sufficiency._PRODUCER_YEAR_AGO))
-RESERVES_HEAD = ("Reserves", "Amount", "Standard", "Report date",
+RESERVES_HEAD = ("Reserves", "Amount", "Standard", "As of",
                  "Counted at", "Today's price")
 PRODUCER_QUARTERS_HEAD = ("Quarter", "Output", "Price received")
 # The rating row is the producer's third standard test (owner ruling
@@ -1282,7 +1468,7 @@ def integrated_major_ids(capture):
         "resource_products") or {}
     return (sufficiency._reserve_ids(_resource_rule(), order),
             [fid for fid, _ in sufficiency.integrated_major_prices(
-                _resource_rule(), products, order)])
+                _resource_rule(), products, order, _floors())])
 
 
 def integrated_major_words(pack):
@@ -1381,6 +1567,14 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
                                             producer_kind_words))
         lines.append("- " + _safe(producer_life_line(producer_readings(
             pack))))
+    elif holding_subject_frame(capture) is frame:
+        readings = holding_readings(pack)
+        lines.append("- Archetype: %s - rated on %s" % (
+            _ARCHETYPE_WORDS[HOLDING_ARCHETYPE], _MEASURE_WORDS[_rating_measure(capture)]))
+        lines.append("- Holding: " + _safe(holding_currency_line(capture)))
+        lines.append("- Holding: " + _safe(holding_summary(readings)))
+        lines.append("- Holding: " + FI_NOT_RATED_SENTENCE)
+        lines += ["- Holding: " + _marked(s, bases) for s in holding_sentences(readings)]
     elif archetype:
         measure = _rating_measure(capture)
         rated = ((" - rated on %s"
@@ -1611,7 +1805,7 @@ def _auditor_lines(capture):
                         or "no reason recorded"))
         lines.append("")
         return lines
-    facts = _facts_by_id(capture)
+    facts = holding_display_facts(capture, recorded=True)
     findings = block.get("findings") or []
     resolutions = block.get("resolutions") or {}
     lines.append("A model outside this council's own family (%s) read this "
@@ -2004,7 +2198,7 @@ INDENT = "  "
 SHAPE_PREFIXES = ("**", "- " + UNTRACED_LEAD, "- Archetype: ",
                   "- Capital beside its requirement: ", "- Cycle: ",
                   "- " + GROWER_MONTHS_LEAD, "- " + GROWER_UNDRAWN_LEAD,
-                  "- " + PRODUCER_LIFE_LEAD, "- " + INTEGRATED_BESIDE_LEAD)
+                  "- " + PRODUCER_LIFE_LEAD, "- " + INTEGRATED_BESIDE_LEAD, "- Holding: ")
 
 
 def _rows_to_cut(body, lines_wanted):
@@ -2715,7 +2909,7 @@ def _id_cell(pack, facts, fact_id):
     so the seats' case file can name it only where it is a tier-1 id of
     this pack (P-U3e-3); the pages ignore the id."""
     cell = _fact_cell(pack, facts, fact_id)
-    cell["id"] = fact_id
+    cell["id"] = (cell.get("fact") or {}).get("id", fact_id)
     return cell
 
 
@@ -2943,7 +3137,7 @@ def _commodities(frame):
 
 
 def _naming(fact_id, names):
-    return [name for name in names if "_%s_" % name in "_%s_" % fact_id]
+    return sufficiency.resource_product_names(fact_id, names)
 
 
 def _reserve_name(facts, fact_id, names, extras):
@@ -2969,7 +3163,7 @@ def producer_reserve_rows(pack, frame):
     per reported reserve the pack carries - every tier-1 fact the producer
     rule reads as a reserve, the rated figure, each other category, oil and
     gas apart and every by-product - never summed; each with the standard,
-    the report date, the price it was counted at and today's price beside.
+    its own fact's date, the price it was counted at and today's price beside.
     A row naming another commodity reads that commodity's own prices; a row
     naming none, or the main product, reads the prices the resource block
     cites - the ones the producer rule reads (audit round 1, r1-1: an
@@ -2987,19 +3181,13 @@ def producer_reserve_rows(pack, frame):
                 else _prose(standard or "not stated"))
 
     def own(field, fact_id):
-        named = _naming(fact_id, names)
-        cited = block.get(field)
-        cited = [cited] if isinstance(cited, str) else list(cited or ())
-        if not named or named == [block.get("product")]:
-            return [fid for fid in cited if isinstance(fid, str)]
-        prefixes = _family(field)
-        return [fid for fid in order if prefixes and fid.startswith(prefixes)
-                and _naming(fid, names) == named]
+        return sufficiency.resource_reserve_prices(_floors(), frame, facts, fact_id, field)
 
     rows = []
     for fact_id in sufficiency._reserve_ids(_resource_rule(), order):
         counted = own("reserve_price_facts", fact_id)
         today = own("reference_price_fact", fact_id)
+        counted_cell = _ids_cell(pack, facts, counted)
         units = {(facts.get(fid) or {}).get("unit") for fid in counted}
         if today and counted and units != {(facts.get(fid) or {}).get(
                 "unit") for fid in today}:
@@ -3009,10 +3197,9 @@ def producer_reserve_rows(pack, frame):
         rows.append([_name_cell(facts, fact_id, _reserve_name(
             facts, fact_id, names, block.get("by_products") or ())),
                      _id_cell(pack, facts, fact_id), standard,
-                     _ids_cell(pack, facts, [
-                         fid for fid in [block.get("reserve_report_date_fact")]
-                         if isinstance(fid, str)]),
-                     _ids_cell(pack, facts, counted), today_cell])
+                     dict(_words(_format_date(facts[fact_id].get("as_of"))),
+                          date_of=fact_id),
+                     counted_cell, today_cell])
     # The architect's ruling on P-RESOURCEc-4 (AC56(1)): each by-product's
     # output on a row of its own beside its reserves, in its own unit; every
     # by-product row carries its marking for the seats' case file too.
@@ -3266,6 +3453,7 @@ CYCLE_DEPENDENCE_WORDS = {
 
 def _full_frame_lines(pack, capture):
     facts = _facts_by_id(capture)
+    recorded = holding_display_facts(capture, recorded=True)
     passages = _passages_by_id(capture)
     frames = capture.get("business_frame") or {}
     if not frames:
@@ -3311,7 +3499,7 @@ def _full_frame_lines(pack, capture):
                 # back-ticked key) ONLY when it is one of the pack's own
                 # tier-1 fact ids; send anything else through _safe, as data.
                 lines.append("**The rating divides by** %s."
-                             % "; ".join(_fact_ref(facts, fid)
+                             % "; ".join(_fact_ref(recorded, fid)
                                          for fid in denoms))
             lines.append("")
         lines.append("**What it does.** %s"
@@ -3328,6 +3516,8 @@ def _full_frame_lines(pack, capture):
         if archetype == FI_ARCHETYPE:
             lines.extend(_full_fi_lines(pack, capture, ticker, frame,
                                         facts, bases))
+        elif holding_subject_frame(capture) is frame:
+            lines.extend(_full_nav_bridge_lines(pack, frame, facts, bases))
         elif grower_subject_frame(capture) is frame:
             lines.extend(_full_grower_lines(pack, frame, bases))
         elif producer_subject_frame(capture) is frame:
@@ -3343,7 +3533,7 @@ def _full_frame_lines(pack, capture):
             lines.append("**A fallen headline figure:** %s (%s)"
                          % (_DECLINE_WORDS.get(reading.get("reading"))
                             or _safe(reading.get("reading")),
-                            "; ".join(_fact_ref(facts, fid)
+                            "; ".join(_fact_ref(recorded, fid)
                                       for fid in reading.get("facts") or [])
                             or "no facts named"))
         lines.append("")
@@ -3361,7 +3551,7 @@ def _full_frame_lines(pack, capture):
             lines.append("- %s: %s - %s"
                          % (_marked(row.get("name"), bases),
                             _marked(row.get("why_it_decides"), bases), answer))
-        lines.extend(_full_peer_lines(frame, facts, bases))
+        lines.extend(_full_peer_lines(frame, recorded, bases))
         lines.append("")
         guidance = guidance_rows(pack, frame)
         said = _management_words(pack, facts, frame, guidance=False)
@@ -3447,6 +3637,19 @@ def _full_fi_lines(pack, capture, ticker, frame, facts, bases):
         if table:
             lines.append("")
             lines.extend(table_lines(table, bases))
+    lines.extend(_full_nav_bridge_lines(pack, frame, facts, bases))
+    return lines
+
+
+def _full_nav_bridge_lines(pack, frame, facts, bases):
+    """AC30(3), AC60: the bridge shared by both kinds of holding."""
+    lines = []
+    if holding_subject_frame(pack["capture"]) is frame:
+        readings = holding_readings(pack)
+        for lead, table in holding_tables(pack, frame, readings):
+            lines += ["", "**%s.**" % lead, ""] + table_lines(table, bases)
+        return lines + ["", FI_NOT_RATED_SENTENCE] + [
+            _marked(sentence, bases) for sentence in holding_sentences(readings)]
     bridge = frame.get("nav_bridge")
     if isinstance(bridge, dict):
         lines.append("")
@@ -3940,7 +4143,7 @@ def _full_auditor_lines(capture):
         lines.append("No %s is on this record." % EVIDENCE_CHECK)
         lines.append("")
         return lines
-    facts = _facts_by_id(capture)
+    facts = holding_display_facts(capture, recorded=True)
     lines.extend(_audit_pass_lines(block, facts, current=True))
     for prior in block.get("prior_passes") or []:
         lines.append("### An earlier pass of the %s, kept whole"
@@ -3962,7 +4165,8 @@ def checklist_description(capture, req, escape):
     capture's words alone, through the renderer's own `escape`."""
     words = escape(req.get("description"))
     producer = producer_subject_frame(capture) is not None
-    if grower_subject_frame(capture) is not None or producer:
+    if (grower_subject_frame(capture) is not None or producer
+            or holding_subject_frame(capture) is not None):
         # Owner ruling AC50(9) as amended: a growth company's three
         # standard tests, each named in the floors' own words; a producer's
         # two in the floors' words and its third, the yardstick, in the
@@ -3971,6 +4175,10 @@ def checklist_description(capture, req, escape):
             _floors(), sufficiency._declared_archetype(_floors(), capture)
         ).get(req.get("id")) or {}
         ruled = (term.get("words") or [None])[0]
+        if (holding_subject_frame(capture) is not None
+                and req.get("id") == "rating_vs_history_or_peers"):
+            # AC62(H13): the third holding test, beside the first two in data.
+            ruled = "the discount against its own history and its peers"
         if (producer and not ruled and req.get("id") == PRODUCER_THIRD_TEST[0]
                 and _rating_measure(capture) in _MEASURE_WORDS):
             ruled = PRODUCER_THIRD_TEST[1] % _MEASURE_WORDS[
@@ -4003,7 +4211,7 @@ def _full_checklist_lines(capture):
     name - no keys (audit round 1 of UPGRADE2-READ-B2: which fact answers
     which test is a record the approved document keeps)."""
     lines = ["## The sufficiency checklist", ""]
-    facts = _facts_by_id(capture)
+    facts = holding_display_facts(capture, recorded=True)
     passages = _passages_by_id(capture)
     for req in (capture.get("sufficiency") or {}).get("requirements") or []:
         kind = req.get("kind")

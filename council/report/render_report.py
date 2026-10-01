@@ -719,6 +719,9 @@ MISPRICING_WORDS = {"cheap": "cheap", "fair": "fair", "rich": "rich", "no_view":
 
 # Owner ruling AC15 (P2, unit U3e): the archetype and the rating measure
 # it calls for, in plain words on the front and in the appendix.
+VALUATION_BASIS_WORDS = brief.VALUATION_BASIS_WORDS
+HOLDING_POSITION_WORDS = brief.HOLDING_POSITION_WORDS
+
 ARCHETYPE_WORDS = {
     "profitable_operator": "profitable operator",
     "ramping_infrastructure_builder": "ramping infrastructure builder",
@@ -730,6 +733,7 @@ ARCHETYPE_WORDS = {
     "reinvesting_grower": "a growth company that does not yet make a profit",
     # Owner rulings AC51-AC54 (RESOURCE-ARCHETYPE (c)): worded as the evidence brief words them.
     "resource_producer": "an oil, gas or mining producer",
+    "investment_holding": "a holding company that owns other businesses",
 }
 MEASURE_WORDS = {
     "earnings_vs_history_and_peers":
@@ -907,7 +911,8 @@ def _load_glossary():
 
 
 GLOSSARY = _load_glossary()
-_TERM_NOTES = {row["term"].lower(): row["note"] for row in GLOSSARY["terms"]}
+_TERM_NOTES = {row["term"].lower(): row["note"] for row in GLOSSARY["terms"]
+               if not row.get("scope")}
 _TERM_PATTERN = re.compile(
     r"(?<![\w-])(%s)(?![\w-])" % "|".join(
         re.escape(term) for term in sorted(_TERM_NOTES, key=len, reverse=True)), re.IGNORECASE)
@@ -920,16 +925,22 @@ def _note_span(words, note):
     return '<span class="gl" tabindex="0" data-note="%s">%s</span>' % (esc(note), esc(words))
 
 
-def _glossed(text):
+def _glossed(text, scope=None):
     """A label as HTML, each glossary term in it carrying its note the first time it appears."""
     text = "" if text is None else str(text)
     out, last, seen = [], 0, set()
-    for match in _TERM_PATTERN.finditer(text):
+    notes, pattern = _TERM_NOTES, _TERM_PATTERN
+    if scope:
+        notes = dict(notes, **{row["term"].lower(): row["note"] for row in GLOSSARY["terms"]
+                               if row.get("scope") == scope})
+        pattern = re.compile(r"(?<![\w-])(%s)(?![\w-])" % "|".join(
+            re.escape(term) for term in sorted(notes, key=len, reverse=True)), re.IGNORECASE)
+    for match in pattern.finditer(text):
         key = match.group(1).lower()
         if key in seen:
             continue
         seen.add(key)
-        out.append(esc(text[last:match.start()]) + _note_span(match.group(1), _TERM_NOTES[key]))
+        out.append(esc(text[last:match.start()]) + _note_span(match.group(1), notes[key]))
         last = match.end()
     return "".join(out) + esc(text[last:])
 
@@ -2491,9 +2502,9 @@ def _fact_label(run, entry_id):
         if parts[1] == "business_frame":
             return "The business description (%s)" % words
         return "The %s" % " ".join(part.replace("_", " ") for part in parts[1:])
-    for fact in capture.get("tier1") or []:
-        if fact.get("id") == entry_id and str(fact.get("label") or "").strip():
-            return str(fact["label"]).strip()
+    fact = brief.holding_display_facts(capture, recorded=True).get(entry_id) or {}
+    if str(fact.get("label") or "").strip():
+        return str(fact["label"]).strip()
     return tape.LABELS.get(entry_id, entry_id.replace("_", " "))
 
 
@@ -2765,6 +2776,9 @@ def _front_archetype(page, run):
     holding = (" %s" % esc(brief.FI_NOT_RATED_SENTENCE)
                if archetype == brief.FI_ARCHETYPE
                and frame.get("fi_subtype") == brief.FI_HOLDING else "")
+    if brief.holding_subject_frame(capture) is frame:
+        _front_holding(page, run, frame, measure)
+        return
     if brief.grower_subject_frame(capture) is frame:
         _front_grower(page, run, frame, measure)
         return
@@ -2779,6 +2793,37 @@ def _front_archetype(page, run):
                                          esc(brief.integrated_major_words(run.get("pack") or {})))
     page.add('<div class="card"><span class="lead">What kind of business, '
              "and how it is rated</span>%s%s%s</div>" % (kind, rated, holding))
+
+
+def _holding_glossed(text):
+    return _glossed(text, brief.HOLDING_ARCHETYPE)
+
+
+def _front_holding(page, run, frame, measure):
+    """AC59-AC62, AC47(3): holding evidence and each ruled sentence on the front."""
+    readings = brief.holding_readings(run["pack"])
+    page.add('<div class="card"><span class="lead">What kind of business, and how it is rated</span>'
+             '%s &mdash; rated on %s.<div>%s</div><div>%s</div><div>%s</div></div>' % (
+                 esc(ARCHETYPE_WORDS[brief.HOLDING_ARCHETYPE]), _holding_glossed(MEASURE_WORDS[measure]),
+                 esc(brief.holding_currency_line(run["pack"]["capture"])),
+                 _holding_glossed(brief.holding_summary(readings)), esc(brief.FI_NOT_RATED_SENTENCE)))
+    capture = run["pack"]["capture"]
+    bases = brief._frame_bases(capture, capture["subject"]["ticker"])
+    for sentence in brief.holding_sentences(readings):
+        page.add('<div class="card prominent"><p>%s</p></div>' %
+                 trace.mark(sentence, bases, brief._marks_config(), esc))
+
+
+def _holding_section(page, run):
+    capture = (run.get("pack") or {}).get("capture") or {}
+    frame = brief.holding_subject_frame(capture)
+    if frame is None:
+        return
+    page.add("<h3>What the holding company owns and how it is rated</h3>")
+    bases = brief._frame_bases(capture, capture["subject"]["ticker"])
+    def prose(text):
+        return trace.mark(text, bases, brief._marks_config(), esc)
+    _nav_bridge_section(page, run, frame, prose, None, None)
 
 
 def _front_grower(page, run, frame, measure):
@@ -3220,9 +3265,7 @@ def _constituents_section(page, run):
                  "one per name. Prices and market values are frozen pack "
                  "facts; the metric and note beside each name are the "
                  "chairman&#x27;s own.</div>")
-        facts_by_id = {fact.get("id"): fact for fact in
-                       ((run["pack"].get("capture") or {}).get("tier1")
-                        or [])}
+        facts_by_id = brief.holding_display_facts(run["pack"].get("capture") or {})
         notes_by_ticker = {}
         for note in verdict.get("constituent_notes") or []:
             notes_by_ticker.setdefault(note.get("constituent"), note)
@@ -3362,6 +3405,7 @@ def _detail_section(page, run):
     _detail_calendar(page, run)
     _front_downside(page, run)
     _fi_section(page, run)
+    _holding_section(page, run)
     _grower_section(page, run)
     _producer_section(page, run)
     _cycle_section(page, run)
@@ -3648,8 +3692,7 @@ def _change_row(change, decisive, run):
     if entry_id.startswith("capture."):
         return ("<li><strong>%s</strong>%s &mdash; revised after the evidence check.</li>"
                 % (label, turns))
-    facts = {fact.get("id"): fact for fact in
-             ((run.get("pack") or {}).get("capture") or {}).get("tier1") or []}
+    facts = brief.holding_display_facts((run.get("pack") or {}).get("capture") or {}, recorded=True)
     fact = facts.get(entry_id) or {}
 
     def shown(value):
@@ -3784,7 +3827,7 @@ def _fi_value(facts, fact_id):
                                  esc(format_date(fact.get("as_of", ""))))
 
 
-def _business_cell(cell, prose):
+def _business_cell(cell, prose, terms=esc):
     """One cell of a business table (unit READ-B1): the capture's words marked (AC19), a cycle
     reading with its date in small print, anything else as the brief reads it, escaped."""
     if cell["kind"] == "prose":
@@ -3792,27 +3835,27 @@ def _business_cell(cell, prose):
     if cell["kind"] == "reading":
         return '%s <span class="muted small">(%s)</span>' % (
             esc(format_number(cell["value"], cell["unit"])), esc(format_date(cell["date"])))
-    return esc(brief.cell_text(cell))
+    return terms(brief.cell_text(cell))
 
 
-def _business_table(table, prose, fold=None, names=None):
+def _business_table(table, prose, fold=None, names=None, terms=esc):
     """A business table as HTML: the table, then the lines under it - inside a closed fold named
     `fold` where one is given. `names`, where given, prints each row's first cell of plain words
     (a growth company's tables carry their terms' hover notes, GROWTH-ARCHETYPE (c))."""
     def first(cell):
         if names is not None and cell["kind"] == "words":
             return names(brief.cell_text(cell))
-        return _business_cell(cell, prose)
+        return _business_cell(cell, prose, terms)
     rows = "".join("<tr>%s</tr>" % "".join(
-        "<td>%s</td>" % (first(cell) if not index else _business_cell(cell, prose))
+        "<td>%s</td>" % (first(cell) if not index else _business_cell(cell, prose, terms))
         for index, cell in enumerate(row)) for row in table["rows"])
-    below = "".join("<div>%s</div>" % " ".join(_business_cell(cell, prose) for cell in line)
+    below = "".join("<div>%s</div>" % " ".join(_business_cell(cell, prose, terms) for cell in line)
                     for line in table["below"])
     if below and fold:
         below = '<details><summary>%s</summary><div class="body">%s</div></details>' % (fold,
                                                                                       below)
     return "<table><tr>%s</tr>%s</table>%s" % (
-        "".join("<th>%s</th>" % esc(name) for name in table["head"]), rows, below)
+        "".join("<th>%s</th>" % terms(name) for name in table["head"]), rows, below)
 
 
 def _grower_section(page, run):
@@ -3918,7 +3961,7 @@ def _fi_section(page, run):
     if frame is None:
         return
     ticker = (capture.get("subject") or {}).get("ticker")
-    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    facts = brief.holding_display_facts(capture)
     bases = brief._frame_bases(capture, ticker)
 
     def prose(text):
@@ -3968,6 +4011,18 @@ def _fi_section(page, run):
                              fold="Each line in the capture&#x27;s own words"))
     for table in brief.guidance_rows(pack, frame):
         card(esc(brief.GUIDANCE_LEAD % table["period"]), _business_table(table, prose))
+    _nav_bridge_section(page, run, frame, prose, value, card)
+
+
+def _nav_bridge_section(page, run, frame, prose, value, card):
+    """AC30(3), AC60-AC62: one bridge section, preserving the FI's bytes."""
+    if brief.holding_subject_frame(run["pack"]["capture"]) is frame:
+        readings = brief.holding_readings(run["pack"])
+        for lead, table in brief.holding_tables(run["pack"], frame, readings):
+            page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+                _holding_glossed(lead), _business_table(table, prose, names=_holding_glossed, terms=_holding_glossed)))
+        page.add('<div class="card">%s</div>' % esc(brief.FI_NOT_RATED_SENTENCE))
+        return
     bridge = frame.get("nav_bridge")
     if isinstance(bridge, dict):
         rows = "".join("<tr><td>%s</td><td>%s</td><td>%s</td></tr>"

@@ -843,7 +843,7 @@ def _archetype_lifts(floors, declared):
         return {}
     lifts = (((floors.get("archetype_floors") or {}).get(declared[0]) or {})
              .get("lifts") or {})
-    return lifts if declared[1] in (lifts.get("subtypes") or ()) else {}
+    return lifts if ("subtypes" not in lifts or declared[1] in lifts["subtypes"]) else {}
 
 
 def _merged_floors(floors, subject, capture=None):
@@ -934,7 +934,10 @@ def _miscount(steps, want):
     return None
 
 
-def _nav_bridge_failures(frame, rating, facts_by_id):
+def _nav_bridge_failures(frame, rating, facts_by_id,
+                         ruling="owner rulings AC28 and AC30 (G3)",
+                         who="a financial holding", floors=None, tagged=None, pairs=None,
+                         holding_context=None):
     """Why a financial holding's net-asset-value bridge is not a real
     chain of captured facts - one (what, why, where) per breach - or
     nothing where it holds (owner rulings AC28 and AC30 (G3)).
@@ -951,15 +954,15 @@ def _nav_bridge_failures(frame, rating, facts_by_id):
     auditor and the owner carry that."""
     bridge = frame.get("nav_bridge")
     if not isinstance(bridge, dict):
-        return [(
-            "the bridge a financial holding's net asset value is struck "
-            "through",
-            "owner rulings AC28 and AC30 (G3): a financial holding is rated "
-            "on its discount to what it owns at today's prices, and this "
+        failures = [(
+            "the bridge %s's net asset value is struck through" % who,
+            (ruling + ": %s is rated " % who
+             + "on its discount to what it owns at today's prices, and this "
             "frame names no nav_bridge, so nothing shows what that value "
-            "is made of",
+            "is made of"),
             "the business frame's nav_bridge: each holding with its value "
             "fact, the holding company's net debt and the total")]
+        return failures
     failures = []
     total = bridge.get("nav_total_fact")
     denominators = (rating or {}).get("subject_denominator_facts") or []
@@ -967,18 +970,18 @@ def _nav_bridge_failures(frame, rating, facts_by_id):
         failures.append((
             "the net asset value the rating divides by, struck through the "
             "bridge",
-            "owner rulings AC28 and AC30 (G3): a financial holding is rated "
+            ruling + ": %s is rated "
             "on its discount to what it owns at today's prices, so the one "
             "figure the rating divides by is the total its bridge strikes - "
             "the rating names %s and the bridge's total is '%s'"
-            % (", ".join("'%s'" % fid for fid in denominators) or "nothing",
+            % (who, ", ".join("'%s'" % fid for fid in denominators) or "nothing",
                total),
             "the rating_vs_history_or_peers row: 'subject_denominator_facts' "
             "naming the nav_bridge's nav_total_fact alone"))
     if not (facts_by_id.get(total) or {}).get("derived"):
         failures.append((
             "a net asset value struck from its parts",
-            "owner rulings AC28 and AC30 (G3): '%s' carries no arithmetic - "
+            ruling + ": '%s' carries no arithmetic - "
             "a total typed in shows nothing of the holdings and the debt it "
             "claims to add up, so the discount would rest on a figure no "
             "one can follow" % total,
@@ -995,7 +998,7 @@ def _nav_bridge_failures(frame, rating, facts_by_id):
         if outside:
             failures.append((
                 "every part of the bridge inside the net asset value",
-                "owner rulings AC28 and AC30 (G3): the bridge names %s, and "
+                ruling + ": the bridge names %s, and "
                 "'%s' is not struck from it at any step - a part left out "
                 "of the total makes the discount a figure of some other "
                 "company" % ("; ".join(outside), total),
@@ -1017,7 +1020,7 @@ def _nav_bridge_failures(frame, rating, facts_by_id):
             failures.append((
                 "every holding added into the net asset value and the "
                 "holding company's net debt taken off it",
-                "owner rulings AC28 and AC30 (G3): the net asset value is "
+                ruling + ": the net asset value is "
                 "the holdings' values less the holding company's net debt, "
                 "and '%s' does not strike %s that way - the total would "
                 "recompute exactly and still be the wrong figure to divide "
@@ -1029,13 +1032,378 @@ def _nav_bridge_failures(frame, rating, facts_by_id):
             holder, label = unsourced
             failures.append((
                 "a net asset value resting on recorded readings",
-                "owner rulings AC28 and AC30 (G3): followed down, '%s' "
+                ruling + ": followed down, '%s' "
                 "rests on %r - a number written into the capture, resting "
                 "on no captured reading at all. The arithmetic would "
                 "recompute exactly and still show nothing" % (holder, label),
                 "capture the figure itself as a fact, dated and sourced, "
                 "and strike the total from it"))
+    if tagged is None:
+        floors = floors or canonical.read_json(_DEFAULT_FLOORS_PATH)
+        tagged, pairs, _ = _holding_roles(floors, frame, rating or {}, facts_by_id)
+    failures.extend(_holding_fact_failures(tagged, pairs, facts_by_id, ruling, holding_context))
     return failures
+
+
+def _holding_id(tagged, role):
+    return next((fid for fid, roles in tagged.items() if role in roles), None)
+
+
+def _holding_roles(floors, frame, rating, facts_by_id, captured_day=None, requirements=()):
+    """AC62(H16), a2: ONE reading of currencies and each conversion use."""
+    measures = floors["archetype_measures"]
+    kind = (measures.get("holding_rule") or {}).get("holding_archetype")
+    entries = floors["archetype_floors"].get(kind, {}).get("all_subtypes") or []
+    history = next((e["prefixes"] for e in entries if e["kind"] == "parallel_prefixes"), None)
+    if history is None:
+        history = next(e["prefixes"] for e in floors["archetype_floors"][
+            "financial_institution"]["financial_holding"] if e["kind"] == "parallel_prefixes")
+    codes = {u.removesuffix("_per_share") for u in floors["allowed_units"] if u.endswith("_per_share")}
+    rates = {a + " per " + b for a in codes for b in codes}
+    aliases = floors["prose_figure_marks"].get("currency_aliases") or {}
+    units = {u: c for u in floors["allowed_units"] for c in codes
+             if (v := aliases.get(u, u)) not in rates and (v == c or v.startswith((c + "_", c + " per ")))}
+    bridge, tagged, pairs = frame.get("nav_bridge") or {}, {}, {}
+
+    def tag(fid, role):
+        if isinstance(fid, str):
+            tagged.setdefault(fid, set()).add(role)
+
+    for field, role in (("nav_total_fact", "nav"), ("holdco_net_debt_fact", "debt"),
+                        ("discount_fact", "discount"), ("published_nav_fact", "published")):
+        tag(bridge.get(field), role)
+    row = measures["table"].get(frame.get("archetype"), {})
+    row = row.get("subtypes", {}).get(frame.get(row.get("subtype_field")), row)
+    tag(row.get("subject_numerator"), "market")
+    tag(next(e["id"] for e in floors["classes"]["single_stock"]["floors"] if e.get("id") == "price_last"), "price")
+    tag("holdco_costs_ttm", "costs")
+    for part in bridge.get("components") or ():
+        tag(part.get("value_fact"), "component")
+        if part.get("method") in ("company_reported_value", "carrying_value"):
+            tag(part.get("value_fact"), "private")
+    prefix = floors["archetype_floors"].get(kind, {}).get("canonical_tests", {}).get("free_cash_flow", {}).get("answered_by_prefix")
+    for fid in rating.get("cash_answered_by") or ():
+        if prefix and fid.startswith(prefix):
+            tag(fid, "cash_cover")
+    for fid, fact in facts_by_id.items():
+        if fact.get("unit") in units:
+            tag(fid, "currency:" + units[fact["unit"]])
+        for index, prefix in enumerate(history):
+            if fid.startswith(prefix) and len(fid) > len(prefix):
+                suffix = fid[len(prefix):]
+                tag(fid, "history:" + str(index))
+                pairs.setdefault(suffix, [None, None])[index] = fid
+    # Architect rulings A/B and AC62(H16): resolve aliases before comparing
+    # currencies or suffixes. Exemptions name the parent AND its operand.
+    if captured_day is not None:
+        rule = measures["holding_rule"]
+        fx = rule["fx_rate_prefix"]
+        def references(tree):
+            if isinstance(tree, dict):
+                for key, value in tree.items():
+                    references(key)
+                    references(value)
+            elif isinstance(tree, (list, tuple)):
+                for value in tree:
+                    references(value)
+            elif isinstance(tree, str) and tree in facts_by_id:
+                tag(tree, "referenced")
+
+        references(frame)
+        references(requirements)
+        # AC62(H16), fix round two: the rating also reads peers by name.
+        for peer in frame.get("peers") or ():
+            for metric in ([row.get("peer_numerator_metric")]
+                           + list(rating.get("peer_denominator_metrics") or ())):
+                if metric:
+                    tag("peer_%s__%s" % (metric, subjects.slug(peer["ticker"])), "referenced")
+        market = _holding_id(tagged, "market")
+        pack_currency = units.get((facts_by_id.get(market) or {}).get("unit"))
+        uses, exemptions = {}, set()
+        for fid, fact in facts_by_id.items():
+            derived = fact.get("derived") or {}
+            refs = [o.get("fact_id") for o in derived.get("operands") or ()]
+            for ref in refs:
+                if ref:
+                    uses.setdefault(ref, set()).add(fid)
+            rate_refs = [r for r in refs if r and (r.startswith(fx)
+                         or (facts_by_id.get(r) or {}).get("unit") in rates)]
+            money_refs = [r for r in refs if r not in rate_refs
+                          and (facts_by_id.get(r) or {}).get("unit") in units]
+            target = units.get(fact.get("unit"))
+            natives = [r for r in money_refs if units[facts_by_id[r]["unit"]] != target]
+            # AC65(1): judge the class, including unnamed rates and plain
+            # multipliers changing a money operand's currency.
+            if not rate_refs and not (target and natives):
+                continue
+            rate_refs = rate_refs or [r for r in refs if r and r not in money_refs]
+            # AC65(1): every conversion ends in the pack's rated currency.
+            # An outward leg also invalidates a round trip through two rates.
+            if target != pack_currency:
+                for rate in rate_refs or natives:
+                    tag(rate, "rate_fault:AC65(1): '%s' converts into %s, "
+                        "required the pack currency %s"
+                        % (rate, target or fact.get("unit"), pack_currency))
+                continue
+            if not target or not natives:
+                # Ruling C: every rate use is judged, even without native money.
+                currency = target or pack_currency or "no rated currency"
+                pair = currency + " per " + currency
+                for rate in rate_refs:
+                    tag(rate, "rate_fault:'%s' is in %s, required %s"
+                        % (rate, (facts_by_id.get(rate) or {}).get("unit"), pair))
+                continue
+            shape = (derived.get("operation") == "multiply" and len(rate_refs) == 1
+                     and len(money_refs) == 1 and len(refs) == 2)
+            if len(rate_refs) != 1 or len(money_refs) != 1:
+                for native in natives:
+                    tag(native, "currency_fault:AC65(1): one currency throughout: '%s' is in %s, "
+                        "result '%s' is in %s; needs one native figure and one dated %s fact"
+                        % (native, facts_by_id[native]["unit"], fid, fact.get("unit"), fx))
+                continue
+            rate, native = rate_refs[0], money_refs[0]
+            native_unit = aliases.get(facts_by_id[native]["unit"], facts_by_id[native]["unit"])
+            result_unit = aliases.get(fact["unit"], fact["unit"])
+            source = units[facts_by_id[native]["unit"]]
+            same_scale = native_unit[len(source):] == result_unit[len(target):]
+            if not same_scale:
+                tag(native, "currency_fault:one currency throughout: '%s' is in %s, "
+                    "the conversion '%s' is in %s with a different scale suffix"
+                    % (native, native_unit, fid, result_unit))
+            elif not shape:
+                tag(native, "currency_fault:one currency throughout: '%s' is in %s, "
+                    "the pack also uses %s" % (native, native_unit, result_unit))
+            pair, rate_fact, faults = target + " per " + source, facts_by_id.get(rate) or {}, []
+            if not rate.startswith(fx):
+                faults.append("AC65(1): '%s' is not a dated %s fact" % (rate, fx))
+            try:
+                age = (captured_day - _as_of_moment(rate_fact["as_of"]).date()).days
+            except (KeyError, ValueError, TypeError, AttributeError):
+                age = None
+                faults.append("'%s' is absent or undated" % rate)
+            if age is not None and age < 0:
+                faults.append("'%s' is dated after the capture" % rate)
+            elif age is not None and age > rule["max_price_freshness_days"]:
+                faults.append("'%s' is %s days old against %s days" % (rate, age, rule["max_price_freshness_days"]))
+            if rate_fact.get("unit") != pair:
+                faults.append("'%s' is in %s, required %s" % (rate, rate_fact.get("unit"), pair))
+            for fault in faults:
+                tag(rate, "rate_fault:" + fault)
+            if shape and same_scale and not faults and target == pack_currency:
+                exemptions.add((fid, native))
+                tag(native, "native:" + fid)
+        for fid, roles in list(tagged.items()):
+            currency = units.get((facts_by_id.get(fid) or {}).get("unit"))
+            if currency and currency != pack_currency:
+                direct = roles - {r for r in roles if r.startswith(("currency:", "native:", "currency_fault:"))}
+                if (direct or not uses.get(fid)
+                        or any((parent, fid) not in exemptions for parent in uses[fid])):
+                    tag(fid, "unconverted")
+    return tagged, pairs, history
+
+
+def _holding_history(pairs, gaps, history):
+    """HA7: the ONE annual reading for checks, figures and floor gaps."""
+    years = sorted((s for s in pairs if re.fullmatch(r"fy\d{4}", s)
+                    and gate.period_order(s) is not None), key=gate.period_order, reverse=True)
+    gap = [g.get("reason_kind") for g in gaps if g["fact_class"] == history[0]]
+    return {"complete": [(s, *pairs[s]) for s in years if None not in pairs[s]],
+            "incomplete": [s for s in years if None in pairs[s]],
+            "gap": bool(gap and all(k == "absent_by_design" for k in gap))}
+
+
+def _holding_fact_failures(tagged, pairs, facts_by_id, ruling, holding_context=None):
+    """Every property keeps its own ground and shopping-list source."""
+    failures = []
+    market, nav, price = (_holding_id(tagged, r) for r in ("market", "nav", "price"))
+    currency = next((r for r in tagged.get(market, ()) if r.startswith("currency:")), None)
+    if holding_context:
+        rule, captured_day, decisive_ids = holding_context
+
+    def broken(fid, why, ground, where):
+        failures.append(("a holding reading: '%s'" % fid, ground + ": " + why, where))
+
+    if holding_context and _holding_id(tagged, "published") is None:
+        broken("published_nav_fact", "the bridge must name published_nav_fact", "owner ruling AC60(H5)", "the company's own latest NAV")
+    for fid, roles in tagged.items():
+        fact = facts_by_id.get(fid) or {}
+        if holding_context:
+            for role in sorted(roles):
+                if role.startswith("rate_fault:"):
+                    broken(fid, role[len("rate_fault:"):], "owner ruling AC62(H16)", "the dated exchange-rate source")
+                elif role.startswith("currency_fault:"):
+                    broken(fid, role[len("currency_fault:"):], "owner ruling AC62(H16)", "the money figure and its dated conversion arithmetic")
+        if not fact:
+            continue
+        counterparts = [market] if roles & {"component", "debt", "nav"} else []
+        if "costs" in roles:
+            counterparts.append(nav)
+        if "published" in roles and holding_context:
+            counterparts.append(price if fact.get("unit") == (facts_by_id.get(price) or {}).get("unit") else market)
+        if "history:1" in roles:
+            counterparts += [left for left, right in pairs.values() if right == fid]
+        for other in counterparts:
+            expected = (facts_by_id.get(other) or {}).get("unit")
+            if expected is not None and fact.get("unit") != expected:
+                failures.append(("one unit for '%s' and '%s'" % (fid, other),
+                    ruling + ": '%s' is in %s and '%s' is in %s; the council normalises no units" % (fid, fact.get("unit"), other, expected),
+                    "both readings in one unit, any conversion shown in arithmetic"))
+        if not holding_context:
+            continue
+        value = gate._decimal_or_none(fact["value"])
+        if roles & {"component", "debt", "nav", "published", "costs", "cash_cover", "history:0", "history:1"} and value is None:
+            broken(fid, "a numeric reading, recorded as '%s'" % fact["value"], "architect ruling HA8", "the numeric source reading")
+        if "nav" in roles and value is not None and value <= 0:
+            broken(fid, "net asset value above zero, recorded as %s" % value, "architect ruling HA8/F5", "the bridge's positive NAV total")
+        if "published" in roles and roles & {"history:0", "history:1"}:
+            broken(fid, "the latest published NAV is not a history member", "owner ruling AC60(H5)", "the company's own latest NAV")
+        if "private" in roles:
+            age = (captured_day - _as_of_moment(fact["as_of"]).date()).days
+            if age > rule["private_valuation_max_age_days"]:
+                broken(fid, "a private value dated %s, %s days old against %s days" % (fact["as_of"], age, rule["private_valuation_max_age_days"]),
+                       "owner ruling AC60(H6)", "the company's latest dated private valuation")
+        if roles & {"nav", "discount", "cash_cover"} and fid not in decisive_ids:
+            failures.append(("a decisive holding fact: '%s'" % fid,
+                "owner ruling AC62(H13), HA10: '%s' must be named in a decisive metric's answered_by" % fid,
+                "the business frame's decisive metrics"))
+        if "unconverted" in roles:
+            broken(fid, "one currency throughout: '%s' is in %s, the pack also uses %s" % (fid, fact["unit"], currency[9:] if currency else "no rated currency"),
+                   "owner ruling AC62(H16)", "the money figure and its dated conversion arithmetic")
+    return failures
+
+
+def _holding_failures(floors, frame, rating, capture, facts_by_id, captured_day,
+                      decisive_ids, gap_kinds, tagged, pairs, history):
+    """HA7/HA8: relationships over the shared reading, freshness unchanged."""
+    rule = floors["archetype_measures"]["holding_rule"]
+    if captured_day < date.fromisoformat(rule["applies_from"]):
+        return []
+    failures = []
+    for target in (_holding_id(tagged, "market"), _holding_id(tagged, "nav")):
+        if target and not _rests_on(_holding_id(tagged, "discount"), {target}, facts_by_id):
+            failures.append(("a discount resting on '%s'" % target,
+                "architect ruling HA8: the discount must rest on both the market value and the bridge total",
+                "the discount fact's declared arithmetic"))
+    annual = _holding_history(pairs, capture["gaps"], history)
+    for suffix in annual["incomplete"]:
+        failures.append(("a year-end pair: '%s'" % suffix,
+            "owner ruling AC61(H9): NAV per share and the share price that day must both be recorded",
+            "the published financial year-end NAV and closing price"))
+    if len(annual["complete"]) < rule["history_year_ends"] and not annual["gap"]:
+        failures.append(("the holding's financial year-end history",
+            "owner ruling AC61(H9): %s year-end pairs are required; the pack carries %s, with no absent-by-design gap" % (rule["history_year_ends"], len(annual["complete"])),
+            "the last published financial year-end NAV and share prices"))
+    return failures
+
+
+def holding_readings(pack, floors):
+    """HA8: exact ratio halves plus percent displays cut toward zero.
+    Returns None for other subjects. Unreadable holding figures are None
+    with reasons in errors. No value is written into the frozen pack.
+    Comparisons use Decimal cross products, never displayed percentages."""
+    capture = (pack or {}).get("capture") or {}
+    if not capture.get("subject") or _declared_archetype(floors, capture) != (
+            floors["archetype_measures"]["holding_rule"]["holding_archetype"], None):
+        return None
+    frame = capture["business_frame"][capture["subject"]["ticker"]]
+    facts = {f["id"]: f for f in capture["tier1"]}
+    rating = next((r for r in capture["sufficiency"]["requirements"]
+                   if r["id"] == "rating_vs_history_or_peers"), {})
+    captured_day = _as_of_moment(capture["captured_at"]).date()
+    tagged, pairs, history = _holding_roles(floors, frame, rating, facts, captured_day,
+        capture["sufficiency"]["requirements"])
+    decisive = {fid for m in frame["decisive_metrics"] for fid in m.get("answered_by") or []}
+    context = (floors["archetype_measures"]["holding_rule"], _as_of_moment(capture["captured_at"]).date(), decisive)
+    errors = [why for _, why, _ in _holding_fact_failures(tagged, pairs, facts, "HA6", context)]
+    bridge = frame.get("nav_bridge") or {}
+    result = {"errors": errors}
+
+    def amount(fid):
+        value = gate._decimal_or_none((facts.get(fid) or {}).get("value"))
+        if value is None:
+            errors.append("missing or unreadable '%s'" % fid)
+        return value
+
+    def ratio(numerator, denominator):
+        if numerator is None or denominator is None or denominator <= 0:
+            errors.append("ratio needs both halves and a denominator above zero")
+            return None
+        with decimal.localcontext() as exact:
+            exact.prec = max(100, len(numerator.as_tuple().digits)
+                             + len(denominator.as_tuple().digits) + 20)
+            display = (numerator * 1000 // denominator / 10).quantize(
+                decimal.Decimal("0.1"))
+        return {"numerator": numerator, "denominator": denominator,
+                "percent": display}
+
+    # All arithmetic shares one precision chosen from the recorded class.
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(facts[fid]["value"]))
+                               for fid in tagged if fid in facts)
+        holdings = []
+        for part in bridge.get("components") or ():
+            holdings.append(dict(part, value=amount(part.get("value_fact")),
+                                 as_of=(facts.get(part.get("value_fact")) or {}).get("as_of")))
+        values = [p["value"] for p in holdings]
+        gross = sum(values) if values and None not in values else None
+        private = sum(p["value"] for p in holdings
+                      if "private" in tagged[p["value_fact"]]) if gross is not None else None
+        for part in holdings:
+            part["share"] = ratio(part["value"], gross)
+        holdings.sort(key=lambda p: p["value"] if p["value"] is not None
+                      else decimal.Decimal("-Infinity"), reverse=True)
+        nav, market = amount(_holding_id(tagged, "nav")), amount(_holding_id(tagged, "market"))
+        published_id = _holding_id(tagged, "published")
+        published = amount(published_id)
+        pub_unit = (facts.get(published_id) or {}).get("unit")
+        comparable = market if pub_unit == (facts.get(_holding_id(tagged, "market")) or {}).get("unit") else amount(_holding_id(tagged, "price"))
+        today = ratio(nav - market if None not in (nav, market) else None, nav)
+        company = ratio(published - comparable if None not in (published, comparable)
+                        else None, published)
+        rows = []
+        annual = _holding_history(pairs, capture["gaps"], history)
+        if annual["incomplete"]:
+            errors.append("missing year-end members: " + ", ".join(annual["incomplete"]))
+        for suffix, left, right in annual["complete"][:floors["archetype_measures"]["holding_rule"]["history_year_ends"]]:
+            a, b = amount(left), amount(right)
+            rows.append({"year": suffix, "nav_fact": left, "price_fact": right,
+                         "discount": ratio(a - b if None not in (a, b) else None, a)})
+        average = word = None
+        if rows and company and all(r["discount"] for r in rows) and not errors:
+            numerator, denominator = decimal.Decimal(0), decimal.Decimal(1)
+            for row in rows:
+                r = row["discount"]
+                numerator = numerator * r["denominator"] + r["numerator"] * denominator
+                denominator *= r["denominator"]
+            average = ratio(numerator, denominator * len(rows))
+            comparisons = [company["numerator"] * r["discount"]["denominator"]
+                           - r["discount"]["numerator"] * company["denominator"]
+                           for r in rows]
+            word = "wider" if all(c > 0 for c in comparisons) else "narrower" if all(
+                c < 0 for c in comparisons) else "inside"
+        result.update(gross_value=gross, private_share=ratio(private, gross),
+                      holdings=holdings, largest=holdings[0] if holdings else None,
+                      largest_above_half=(holdings[0]["value"] * 2 > gross
+                                          if holdings and gross is not None else None),
+                      private_above_half=(private * 2 > gross if gross is not None else None),
+                      loan_to_value=ratio(amount(_holding_id(tagged, "debt")), gross),
+                      costs_to_nav=ratio(amount(_holding_id(tagged, "costs")), nav),
+                      discount_today=today, discount_published=company,
+                      history=rows, history_average=average, range_word=word,
+                      history_reason=None if rows else "no financial year-end pairs are recorded")
+        if errors:
+            # A unit breach must never leave a printable bogus ratio behind.
+            for key in ("private_share", "loan_to_value", "costs_to_nav",
+                        "discount_today", "discount_published", "history_average"):
+                result[key] = None
+            for part in holdings:
+                part["share"] = None
+            for row in rows:
+                row["discount"] = None
+            result["range_word"] = None
+            result["gross_value"] = result["largest"] = None
+            result["largest_above_half"] = result["private_above_half"] = None
+        return result
 
 
 def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
@@ -1055,7 +1423,7 @@ def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
     # A financial holding is rated on its net asset value, so the bridge
     # that value is struck through is checked whole.
     if row.get("requires_nav_bridge"):
-        failures.extend(_nav_bridge_failures(frame, rating, facts_by_id))
+        failures.extend(_nav_bridge_failures(frame, rating, facts_by_id, floors=floors))
 
     # Where the capital may be a gap: a manager holds no regulatory
     # capital of its own; a holding only where no principal holding is
@@ -1759,29 +2127,46 @@ def _profitability_failures(floors, declared, capture, facts_by_id,
     return []
 
 
-def _producer_rule_failures(floors, declared, frame, capture, facts_by_id,
-                            captured_day, stale_words_of):
-    """The rule both ways (owner ruling AC51(R4); architect ruling B8), read
-    from the floors' resource_rule: a single name captured on or after its
-    applies_from whose frame declares an archetype the rule refuses, and
-    whose pack carries any tier-1 fact whose id starts with reserve_prefix
-    (a class, never a list of ids), is refused and pointed at the producer -
-    unless it is a profit-maker whose integrated_major block passes the
-    three-arm test (owner ruling AC52(1) as amended), which a profit-maker's
-    block meets wherever it is declared. The four-quarters rule is not
-    touched: a producer steps outside it by not being governed (AC54(R13)).
-    `stale_words_of(fact_id)` is the check's own: None for a fact fresh at
-    capture through every operand, else the words saying it is stale.
-    One (what, why, where) per breach."""
-    rule = ((floors.get("archetype_measures") or {}).get("resource_rule")
-            or {})
-    if not rule or not declared or (
-            rule.get("applies_from") and captured_day
-            < date.fromisoformat(rule["applies_from"])):
+def _archetype_rule_failures(floors, declared, frame, capture, facts_by_id,
+                             captured_day, stale_words_of, freshness):
+    """Owner rulings AC51(R4), AC59(H4), HA5: one reader of both rules.
+    Marker membership is a class over tier one; the resource exception
+    keeps its own three-arm checks and its original words."""
+    if not declared:
         return []
+    measures = floors.get("archetype_measures") or {}
+    failures = []
+    for key in ("resource_rule", "holding_rule"):
+        rule = measures.get(key) or {}
+        if (not rule or declared[0] not in (rule.get("refuses") or ())
+                or (rule.get("applies_from") and captured_day
+                    < date.fromisoformat(rule["applies_from"]))):
+            continue
+        markers = (_reserve_ids(rule, facts_by_id) if key == "resource_rule"
+                   else [fid for fid in facts_by_id
+                         if fid.startswith(tuple(rule.get("marker_prefixes")
+                                                 or ()))])
+        if key == "resource_rule":
+            failures.extend(_producer_fit_failures(
+                rule, markers, floors, declared, frame, capture, facts_by_id,
+                stale_words_of, freshness))
+        elif markers:
+            failures.append((
+                "the holding archetype for a company whose value is stakes",
+                "owner ruling AC59(H4): a company whose value is the stakes "
+                "it owns is rated on its discount to what it owns - never "
+                "on earnings, never as a growth company - and the frame "
+                "declares '%s' while the pack carries %s"
+                % (declared[0], ", ".join("'%s'" % fid for fid in markers)),
+                "the archetype '%s' in the business frame, with nav_bridge"
+                % rule["holding_archetype"]))
+    return failures
+
+
+def _producer_fit_failures(rule, reserves, floors, declared, frame, capture,
+                           facts_by_id, stale_words_of, freshness):
+    """AC51(R4): the resource rule's exception and original refusal."""
     archetype = declared[0]
-    if archetype not in (rule.get("refuses") or ()):
-        return []
     block = frame.get("integrated_major")
     if (archetype == gate._INTEGRATED_MAJOR_ARCHETYPE
             and isinstance(block, dict)):
@@ -1790,8 +2175,7 @@ def _producer_rule_failures(floors, declared, frame, capture, facts_by_id,
         return _integrated_major_failures(
             rule, block, facts_by_id, stale_words_of, products,
             integrated_major_prices(rule, products, [
-                fact["id"] for fact in capture["tier1"]]))
-    reserves = _reserve_ids(rule, [fact["id"] for fact in capture["tier1"]])
+                fact["id"] for fact in capture["tier1"]], floors), floors, freshness)
     if not reserves:
         return []
     why = ("owner ruling AC51(R4): a company that reports reserves and earns "
@@ -1816,10 +2200,17 @@ def _producer_rule_failures(floors, declared, frame, capture, facts_by_id,
 # commodity price shown beside"): today's price of an integrated oil major is
 # a price of one of these products, named in its id as a whole word (the name
 # rule of sub-charge (b)), in the product's price unit from the floors.
-_INTEGRATED_MAJOR_PRODUCTS = ("crude_oil", "natural_gas")
+def integrated_major_kind(floors):
+    """Architect fix round 2 item 8: the subtype with oil-equivalent units,
+    and its product list, read from the producer's existing measure data."""
+    measures = floors.get("archetype_measures") or {}
+    rule = measures.get("resource_rule") or {}
+    row = (measures.get("table") or {}).get(rule.get("producer_archetype")) or {}
+    return next((name, data) for name, data in (row.get("subtypes") or {}).items()
+                if data.get("boe_unit"))
 
 
-def integrated_major_prices(rule, products, tier1_order):
+def integrated_major_prices(rule, products, tier1_order, floors):
     """[(fact id, product)] in the pack's order: every today's-price fact
     (the resource rule's reference_price_fact family) naming crude oil or
     natural gas as a whole word - the one set the three-arm test reads and
@@ -1828,7 +2219,7 @@ def integrated_major_prices(rule, products, tier1_order):
         "reference_price_fact") or ())
     found = []
     for fid in tier1_order:
-        named = [product for product in _INTEGRATED_MAJOR_PRODUCTS
+        named = [product for product in integrated_major_kind(floors)[1]["products"]
                  if product in products and "_%s_" % product in "_%s_" % fid]
         if prefixes and fid.startswith(prefixes) and named:
             found.append((fid, named[0]))
@@ -1836,7 +2227,7 @@ def integrated_major_prices(rule, products, tier1_order):
 
 
 def _integrated_major_failures(rule, block, facts_by_id, stale_words_of,
-                               products, prices):
+                               products, prices, floors, freshness):
     """The integrated oil major's three-arm test (owner ruling AC52(1) as
     amended; the architect's session-2 ruling on the arms): each arm's share
     fact is known by its id's prefix, as data; upstream production and
@@ -1879,8 +2270,37 @@ def _integrated_major_failures(rule, block, facts_by_id, stale_words_of,
     named += [(None, fid) for fid in
               block.get("midstream_evidence_facts") or ()]
     named += [(("price", product), fid) for fid, product in prices]
+    # P-RESOURCEc-6..9: the same role-tagged class includes every printed
+    # reserve, in its own product's physical unit, with its own date.
+    reserves = _reserve_ids(rule, facts_by_id)
+    named += [("reserve", fid) for fid in reserves]
+    tagged = {}
+    for arm, fid in named:
+        if isinstance(fid, str) and fid in facts_by_id:
+            tagged.setdefault(fid, set()).add(
+                "reported_reserve" if arm == "reserve" else
+                "reference_price_fact" if isinstance(arm, tuple) else
+                "integrated_" + (arm or "evidence"))
+    if _ROLE_SINK is not None:
+        _ROLE_SINK.update(tagged)
+    subtype, subtype_row = integrated_major_kind(floors)
+    units = _producer_units(floors, (rule["producer_archetype"], subtype),
+                            {"resource_base": {"product": subtype_row["products"][0]}})
     for arm, fid in named:
         if not isinstance(fid, str):
+            continue
+        if arm == "reserve":
+            fact = facts_by_id[fid]
+            own = [product for product in products
+                   if "_%s_" % product in "_%s_" % fid]
+            allowed = ({products[own[0]]["unit"]} if len(own) == 1
+                       else units["quantities"])
+            failures.extend(_resource_reserve_failures(
+                fid, fact, rule, freshness, allowed))
+            stale = stale_words_of(fid)
+            if stale is not None:
+                failures.append(("a fresh reading of '%s'" % fid, stale,
+                                 "a fresher reading of '%s' from the reserve report" % fid))
             continue
         price = arm[1] if isinstance(arm, tuple) else None
         today = ("today's price of %s beside an integrated oil major"
@@ -1979,7 +2399,45 @@ def _integrated_major_failures(rule, block, facts_by_id, stale_words_of,
             "a today's-price fact such as 'reference_price_crude_oil' or "
             "'reference_price_natural_gas', dated at the sitting, in %s"
             % " or ".join(products[product]["price_unit"] for product in
-                          _INTEGRATED_MAJOR_PRODUCTS if product in products)))
+                          subtype_row["products"] if product in products)))
+    return failures
+
+
+def _resource_reserve_failures(fid, fact, rule, freshness, allowed=None):
+    """AC53(R12), P-RESOURCEc-6..9: the per-reserve properties of the ONE
+    printed-fact class, shared by producers and integrated majors. Units
+    for producers are checked with their other role units in the caller."""
+    failures = []
+    value = gate._decimal_or_none(fact["value"])
+    if value is None:
+        failures.append((
+            "a number the council can read as '%s'" % fid,
+            "owner rulings AC52(R5) and AC53(R9): reserves are printed as "
+            "numbers, and '%s' reads '%s'" % (fid, fact["value"]),
+            "'%s' as the figure its source states, a plain number" % fid))
+    elif value < 0:
+        failures.append((
+            "reserves at or above zero: '%s'" % fid,
+            "owner ruling AC52(R5): '%s' is %s - below zero, which no "
+            "reserve report can show" % (fid, value),
+            "'%s' as the reserves the report states, in its own unit" % fid))
+    if allowed is not None and fact.get("unit") not in allowed:
+        failures.append((
+            "'%s' in its product's physical unit" % fid,
+            "owner ruling AC52(R6): reserves are a physical amount, and "
+            "'%s' is recorded in %s; the council converts no units"
+            % (fid, fact.get("unit")),
+            "'%s' recorded in %s" % (fid, " or ".join(sorted(allowed)))))
+    most = rule.get("reserve_max_age_days")
+    age = (freshness.get(fid) or {}).get("age_days")
+    if most is not None and age is not None and age > most:
+        failures.append((
+            "a reserve figure no older than %s days: '%s'" % (most, fid),
+            "owner ruling AC53(R12): reserve figures are at most %s days "
+            "old at the sitting, and '%s' is dated %d days before the "
+            "capture" % (most, fid, age),
+            "the latest annual reserve report, dated within %s days of "
+            "the sitting" % most))
     return failures
 
 
@@ -2077,6 +2535,74 @@ def _producer_units(floors, declared, frame):
             "costs": {unit for unit in (data["price_unit"],
                                         row.get("boe_price_unit")) if unit},
             "product_data": data}
+
+
+def resource_product_names(fid, commodities):
+    """Round 4: consume each whole compound occurrence, longest first,
+    retaining a shorter commodity when it also occurs separately."""
+    alternatives = "|".join(re.escape(name) for name in sorted(
+        commodities, key=lambda name: (-len(name), name)))
+    return sorted(set(re.findall(r"(?<![^_])(%s)(?=_|$)" % alternatives, fid))) if alternatives else []
+
+
+def _resource_reserve_naming_failure(fid, named, product, main):
+    """AC52(R6), round 4: ONE naming class for every subject reserve role."""
+    if len(named) == 1 and (not main or named == [product]):
+        return None
+    return (("a fact of the main product, '%s', naming no other commodity: '%s'"
+             % (product, fid) if main else "a reserve naming exactly one commodity: '%s'" % fid),
+            "owner rulings AC52(R6) and AC53(R9): '%s' names %s; every reserve "
+            "names exactly one listed or declared commodity, shown apart"
+            % (fid, ", ".join("'%s'" % name.replace("_", " ") for name in named)
+               or "no listed or declared commodity"),
+            "'%s' for one listed or declared commodity alone, from its reserve report" % fid)
+
+
+def _by_product_units_seen(rule, product, tier1_order, facts_by_id):
+    """AC56(1), fix round 3: the ONE reading of a by-product's quantity units."""
+    named = [fid for fid in tier1_order if "_%s_" % product in "_%s_" % fid]
+    counted = _reserve_ids(rule, named) + [fid for fid in named
+                                         if fid.startswith(_PRODUCER_OUTPUT_PREFIX)]
+    return sorted({str(facts_by_id[fid].get("unit")) for fid in counted})
+
+
+def resource_price_terms(floors, frame, facts_by_id, product):
+    """AC56(1), AC37, architect fix round 2: the ONE decision whether a
+    product's prices are checkable, with their unit and freshness data."""
+    measures = floors.get("archetype_measures") or {}
+    products = measures.get("resource_products") or {}
+    if product in products:
+        return products[product]
+    rule = measures.get("resource_rule") or {}
+    block = frame.get("resource_base") or {}
+    if product not in (block.get("by_products") or ()):
+        return None
+    units = _by_product_units_seen(rule, product, facts_by_id, facts_by_id)
+    if len(units) != 1 or units[0] not in (rule.get("by_product_units") or ()):
+        return None
+    return {"unit": units[0],
+            "price_unit": rule["by_product_price_unit_prefix"] + units[0],
+            "max_price_freshness_days": rule["by_product_price_freshness_days"]}
+
+
+def resource_reserve_prices(floors, frame, facts_by_id, reserve_id, field):
+    """AC53(R9), architect fix round 2: the price ids beside this reserve,
+    shared by the rule's missing-price check and the row builder."""
+    block = frame.get("resource_base") or {}
+    measures = floors.get("archetype_measures") or {}
+    rule = measures.get("resource_rule") or {}
+    commodities = set(measures.get("resource_products") or {}) | set(
+        block.get("by_products") or ())
+    named = resource_product_names(reserve_id, commodities)
+    if not named or named == [block.get("product")]:
+        cited = block.get(field)
+        return [fid for fid in ([cited] if isinstance(cited, str) else cited or ())
+                if isinstance(fid, str)]
+    if len(named) != 1 or not resource_price_terms(floors, frame, facts_by_id, named[0]):
+        return []
+    prefixes = tuple((rule.get("block_families") or {}).get(field) or ())
+    return [fid for fid in facts_by_id if prefixes and fid.startswith(prefixes)
+            and resource_product_names(fid, commodities) == named]
 
 
 def _producer_frame(floors, capture):
@@ -2363,7 +2889,7 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                 tagged.setdefault(fid, set()).add(role)
 
     def names(fid, others):
-        return [name for name in others if "_%s_" % name in "_%s_" % fid]
+        return resource_product_names(fid, others)
 
     for field in sorted(set(block) - {"product", "by_products",
                                       "reserves_standard",
@@ -2452,7 +2978,7 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
         unit = data.get("unit") if isinstance(data, dict) else None
         counted = _reserve_ids(rule, named) + [
             fid for fid in named if fid.startswith(_PRODUCER_OUTPUT_PREFIX)]
-        seen = sorted({str(facts_by_id[fid].get("unit")) for fid in counted})
+        seen = _by_product_units_seen(rule, extra, tier1_order, facts_by_id)
         if unit is None and len(seen) == 1 and seen[0] in by_product_units:
             unit = seen[0]
         elif unit is None and len(seen) > 1:
@@ -2585,13 +3111,16 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
             tag("component_reserve", [fid])
         else:
             tag("reported_reserve", [fid])
+    components = set(parts.values())
     for field in ("reserve_price_facts", "reference_price_fact"):
         for fid in tier1_order:
             named = names(fid, commodities)
             if (fid.startswith(tuple(families.get(field) or ()))
-                    and len(named) == 1 and named[0] in parts.values()):
+                    and len(named) == 1 and named[0] in components | set(extras)
+                    and resource_price_terms(floors, frame, facts_by_id, named[0])):
                 parts[fid] = named[0]
-                tag("component_" + field, [fid])
+                tag(("by_product_" if named[0] in extras else "component_")
+                    + field, [fid])
     if _ROLE_SINK is not None:
         _ROLE_SINK.update(tagged)
     reserve_roles = {"reserve_facts", "by_product_reserve", "peer_reserve",
@@ -2600,10 +3129,42 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
         "product")]
     for fid, role in tagged.items():
         fact, value = facts_by_id[fid], value_of(fid)
+        if role & (reserve_roles - {"peer_reserve"}):
+            main_reserve = not role & {"by_product_reserve", "component_reserve"}
+            named = names(fid, commodities) or ([product] if main_reserve else [])
+            naming = _resource_reserve_naming_failure(fid, named, product, main_reserve)
+            if naming:
+                failures.append(naming)
+            for field in ("reserve_price_facts", "reference_price_fact"):
+                if naming:
+                    continue
+                own_product = named[0] if len(named) == 1 else product
+                terms = resource_price_terms(floors, frame, facts_by_id, own_product)
+                if terms and not any(fid in facts_by_id for fid in resource_reserve_prices(
+                        floors, frame, facts_by_id, fid, field)):
+                    missing = "%s%s" % ((families.get(field) or [""])[0], own_product)
+                    said = ("the price the reserves were counted at" if field ==
+                            "reserve_price_facts" else "today's price")
+                    lacking = ("the price its %s reserves were counted at" if field ==
+                               "reserve_price_facts" else "today's %s price") % own_product.replace("_", " ")
+                    source = ("the reserve report" if field == "reserve_price_facts" else
+                              terms.get("benchmark_words") or "the source recording today's price")
+                    failures.append((
+                        "'%s', %s beside '%s'" % (missing, said, fid),
+                        "owner ruling AC53(R9), P-RESOURCEc-6: every reserve "
+                        "figure prints beside its own reserve price and today's "
+                        "price, and '%s' lacks %s" % (fid, lacking),
+                        "'%s' from %s" % (missing, source)))
+            failures.extend(_resource_reserve_failures(fid, fact, rule, freshness))
+        elif "peer_reserve" in role and value is not None and value < 0:
+            failures.append((
+                "reserves at or above zero: '%s'" % fid,
+                "owner ruling AC52(R5): '%s' is %s - below zero, which no reserve report can show"
+                % (fid, value), "'%s' as the reserves the report states, in its own unit" % fid))
         if role == {"peer_reserve"}:
             role = set()
         elif value is None and role - (set(block) - set(words)) - {
-                "by_product_other"}:
+                "by_product_other"} and not role & reserve_roles:
             failures.append((
                 "a number the council can read as '%s'" % fid,
                 "owner rulings AC52(R5) and AC53(R9)-(R11): the producer's "
@@ -2621,7 +3182,7 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                         listing(allowed), fid, fact.get("unit")),
                     "'%s' recorded in %s" % (fid, listing(allowed))))
                 break
-        part = products.get(parts.get(fid)) or {}
+        part = resource_price_terms(floors, frame, facts_by_id, parts.get(fid)) or {}
         allowed = part.get("unit" if "component_reserve" in role
                            else "price_unit")
         if part and fact.get("unit") != allowed:
@@ -2635,6 +3196,21 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                     fid, parts[fid].replace("_", " "), parts[fid].replace(
                         "_", " "), said, allowed, fact.get("unit")),
                 "'%s' recorded in %s" % (fid, allowed)))
+        data = (part if role & {"component_reference_price_fact",
+                               "by_product_reference_price_fact"}
+                else (units or {}).get("product_data", {})
+                if "reference_price_fact" in role else {})
+        ceiling = data.get("max_price_freshness_days")
+        if ceiling is not None and fact["freshness_rule_days"] > ceiling:
+            failures.append((
+                "today's price read under a rule no looser than %s days" % ceiling,
+                "architect ruling B4 under owner ruling AC53(R9): every reserve "
+                "figure is read beside today's price, current within %s days as "
+                "the product list rules it, and '%s' declares a %s-day rule - "
+                "so a price that old would still read as today's"
+                % (ceiling, fid, fact["freshness_rule_days"]),
+                "'%s' dated at the sitting from %s, its freshness rule at most "
+                "%s days" % (fid, data.get("benchmark_words") or "the source recording today's price", ceiling)))
         if role and stale_words_of(fid) is not None:
             said = dict(_PRODUCER_QUARTERS)
             failures.append((
@@ -2648,9 +3224,9 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                 "a fresher reading of '%s' from the source that produced it"
                 % (stale_source(fid) or fid)))
         age = (freshness.get(fid) or {}).get("age_days")
-        if (role & {"reserve_facts", "reserve_price_facts",
-                    "by_product_reserve", "reported_reserve",
-                    "component_reserve", "component_reserve_price_facts"}
+        if (role & {"reserve_price_facts", "component_reserve_price_facts",
+                    "by_product_reserve_price_facts"}
+                and not role & reserve_roles
                 and most is not None
                 and age is not None and age > most):
             failures.append((
@@ -2658,19 +3234,12 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                 "owner ruling AC53(R12): reserve figures are at most %s days "
                 "old at the sitting, and '%s' is dated %d days before the "
                 "capture" % (most, fid, age), renew))
-        if (tagged[fid] & reserve_roles and value is not None
-                and value < 0):
-            failures.append((
-                "reserves at or above zero: '%s'" % fid,
-                "owner ruling AC52(R5): the producer's yardstick divides "
-                "enterprise value by the reserves, and '%s' is %s - below "
-                "zero, which no reserve report can show" % (fid, value),
-                "'%s' as the reserves the report states, in its own unit"
-                % fid))
         main = role - {"by_product", "by_product_reserve",
                        "by_product_other", "component_reserve",
                        "component_reserve_price_facts",
-                       "component_reference_price_fact"}
+                       "component_reference_price_fact",
+                       "by_product_reserve_price_facts",
+                       "by_product_reference_price_fact"}
         field = min(main & {"reserve_price_facts", "reference_price_fact"},
                     default=None)
         if units is None or not main:
@@ -2686,7 +3255,7 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
                 "its own" % (units["product"], fid),
                 "resource_base.%s: a fact whose id names '%s'"
                 % (field, units["product"])))
-        elif names(fid, others):
+        elif not role & reserve_roles and names(fid, others):
             failures.append((
                 "a fact of the main product, '%s', naming no other "
                 "commodity: '%s'" % (units["product"], fid),
@@ -2722,29 +3291,6 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
             % (headline, latest)))
     # Architect ruling B4, P-RESOURCEa-7: today's price is read under a rule
     # no looser than the product's own; its staleness is the freshness loop's.
-    # A component's today's price the pages print, likewise under its own
-    # product's (the architect's ruling on P-RESOURCEc-5).
-    todays = [(block.get("reference_price_fact"),
-               (units or {}).get("product_data", {}))] + [
-        (fid, products[part]) for fid, part in sorted(parts.items())
-        if fid.startswith(tuple(families.get("reference_price_fact") or ()))]
-    for today_id, data in todays:
-        reference = (facts_by_id.get(today_id)
-                     if isinstance(today_id, str) else None)
-        ceiling = data.get("max_price_freshness_days")
-        if (reference is None or ceiling is None
-                or reference["freshness_rule_days"] <= ceiling):
-            continue
-        failures.append((
-            "today's price read under a rule no looser than %s days"
-            % ceiling,
-            "architect ruling B4 under owner ruling AC53(R9): every reserve "
-            "figure is read beside today's price, current within %s days as "
-            "the product list rules it, and '%s' declares a %s-day rule - "
-            "so a price that old would still read as today's"
-            % (ceiling, today_id, reference["freshness_rule_days"]),
-            "'%s' dated at the sitting from %s, its freshness rule at most "
-            "%s days" % (today_id, data.get("benchmark_words"), ceiling)))
     reference_id = block.get("reference_price_fact")
     # Owner ruling AC53(R11), P-RESOURCEa-13: hedges shown, never netted -
     # 'none' only where no hedge figure is carried and the gap is declared.
@@ -3012,6 +3558,17 @@ def check(pack, floors):
             gap.get("reason_kind"))
     freshness = pack.get("freshness", {})
     facts_by_id = {fact["id"]: fact for fact in capture["tier1"]}
+    holding_kind = (floors["archetype_measures"].get("holding_rule") or {}).get("holding_archetype")
+    holding_data = None
+    if declared == (holding_kind, None):
+        holding_frame = capture["business_frame"][subject["ticker"]]
+        holding_rows = {r["id"]: r for r in capture["sufficiency"]["requirements"]}
+        holding_rating = dict(holding_rows.get("rating_vs_history_or_peers") or {})
+        holding_rating["cash_answered_by"] = (holding_rows.get("free_cash_flow") or {}).get("answered_by") or []
+        holding_day = _as_of_moment(capture["captured_at"]).date()
+        holding_data = _holding_roles(floors, holding_frame, holding_rating, facts_by_id,
+            holding_day if holding_day >= date.fromisoformat(floors["archetype_measures"]["holding_rule"]["applies_from"]) else None,
+            capture["sufficiency"]["requirements"])
 
     def stale_dependency(fact_id, seen=None):
         """The first fact this one actually rests on - itself, an
@@ -3424,7 +3981,9 @@ def check(pack, floors):
             members = set()
             for prefix in prefixes:
                 members |= suffixes[prefix]
-            if minimum is not None and len(members) < minimum:
+            holding_gap = (holding_data is not None and prefixes == holding_data[2]
+                           and _holding_history(holding_data[1], capture["gaps"], holding_data[2])["gap"])
+            if minimum is not None and len(members) < minimum and not holding_gap:
                 refuse("at least %d members of the family named %s"
                        % (minimum,
                           ", ".join("'%s...'" % p for p in prefixes)),
@@ -3999,18 +4558,16 @@ def check(pack, floors):
                                "a dated numeric reading of '%s' for %s, or a "
                                "declared gap for the fact class '%s'"
                                % (den_id, peer["ticker"], _PEER_GAP_CLASS))
-        # Owner rulings AC49(1) and AC50 (1)-(3): the latest quarters choose
-        # between earnings and the growth path, in both directions.
-        for what, why, where in _profitability_failures(
-                floors, declared, capture, facts_by_id, captured_day):
-            refuse(what, why, where)
-        # Owner ruling AC51(R4), architect ruling B8: a company that reports
-        # reserves is rated as a producer, unless an integrated oil major's
-        # three arms pass (AC52(1) as amended). Where the capture also meets
-        # the four-quarters refusal, both print: each is true.
-        for what, why, where in _producer_rule_failures(
-                floors, declared, frame, capture, facts_by_id, captured_day,
-                stale_or_none):
+        # HA5: false-fit rules run once; where one refuses, a pointer to
+        # the growth archetype would send this company to a second false fit.
+        fit_failures = _archetype_rule_failures(
+            floors, declared, frame, capture, facts_by_id, captured_day,
+            stale_or_none, freshness)
+        if not fit_failures:
+            for what, why, where in _profitability_failures(
+                    floors, declared, capture, facts_by_id, captured_day):
+                refuse(what, why, where)
+        for what, why, where in fit_failures:
             refuse(what, why, where)
         changing = (frame.get("what_is_changing") or {}).get("kind")
         # Unit GROWTH-ARCHETYPE, D1: the per-role denominator check is the
@@ -4024,6 +4581,26 @@ def check(pack, floors):
                     entry, rating, archetype.replace("_", " "),
                     entry.get("continuing_suffix") or ""):
                 refuse(what, why, where)
+            # HA3: any resolved non-FI row requiring the bridge uses the
+            # same check; the FI call remains inside its own rules.
+            if entry.get("requires_nav_bridge"):
+                context = None
+                if declared[0] == holding_kind:
+                    decisive = {fid for m in frame["decisive_metrics"] for fid in m.get("answered_by") or []}
+                    rule = floors["archetype_measures"]["holding_rule"]
+                    if captured_day >= date.fromisoformat(rule["applies_from"]):
+                        context = (rule, captured_day, decisive)
+                tagged, pairs, history = holding_data or _holding_roles(floors, frame, rating or {}, facts_by_id)
+                for what, why, where in _nav_bridge_failures(
+                        frame, rating, facts_by_id,
+                        "owner rulings AC59-AC62, extending AC30(3)",
+                        "an investment holding", floors, tagged, pairs, context):
+                    refuse(what, why, where)
+                if declared[0] == holding_kind:
+                    for what, why, where in _holding_failures(
+                            floors, frame, rating, capture, facts_by_id,
+                            captured_day, decisive, gap_kinds, tagged, pairs, history):
+                        refuse(what, why, where)
             # Architect ruling A9 (audit finding r1-2): a row naming the
             # roles its exited business touches rates a changing company
             # on the continuing business's figures only.

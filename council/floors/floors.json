@@ -1,6 +1,6 @@
 {
-  "floors_version": "1.17.0",
-  "authority": "Evidence floors per docs/REBUILD-SPEC.md Appendix A, carrying OWNER-RULINGS W1/W2 (generic core), W4 (Apple), W5+W8.1 (Galaxy), W6/W8.3 (Bitcoin) and the AB2 mandate additions, plus the etf/basket/theme classes per docs/THEMES-BASKETS-SPEC.md section 4 (the W2.5 vehicle floor; AB12 thematic vehicles; basket tests at the thesis level). Floors are minimums for these subjects, never the ceiling: the evidence stage still derives what THIS question needs. Version 1.1.0 adds the ANCHORLESS registry per docs/ANCHORLESS-SPEC.md sections 2-4 (owner rulings AB13.4 and AB15): the gold and commodity subject SHAPES, the asset_classes anchor sets that decide sufficiency for an asset without earnings, and the anchorless_rating constants that fix the rating bar and its bands in data. Version 1.1.1 adds the `substitute` terms on the single_stock capital-spending floor, carrying owner ruling AB19: a filer that publishes no capital-spending line does not stop the council, but the stand-in must declare itself and be labelled, and this data is what the sufficiency gate enforces it against. Version 1.3.0 carries owner ruling AC1 into the single_stock class: segment revenue, the guided figure beside the delivered one, a peer set, and what management owns are conditional minimums - present, or declared absent with a reason - and how long the chief executive has been in the job and what the published consensus expects are advisory. The third canonical test, rating against own history or peers, keeps its id and its meaning; the runbook now says peers are expected wherever a peer set exists. Version 1.3.1 carries owner ruling AC12.3: `revenue_families` below names, as data rather than as code, the fact families a business frame's revenue line may point at - the whole-business revenue figures, any segment revenue line, and their prior-year pairs - so a seat cannot be shown the mix of the business argued from a number that is not revenue. A derived fact struck from facts in those families counts as one of them; the provenance gate reads this entry and enforces it. Version 1.4.0 carries owner ruling AC15 (P2 and P4), unit U3e: `archetype_measures` below is the rule, as data, that a subject's rating measure follows its business archetype; and `cycle` below carries the one data constant that scales a cycle series' freshness to the class's own price-freshness rule. Version 1.4.1 carries owner ruling AC19, unit U3f: `prose_figure_marks` below holds, as data rather than as code, the tolerances and the exemption list the render-time scanner uses to trace every number in a business frame's prose to a recorded fact - the relative tolerance, the year range, the plain-count ceiling, the ordinal suffixes, the scale words, the percent words, the month words, and the units that count as percent, as fraction, and as a currency scale. A number that traces to no fact is MARKED where the prose is shown and the pack is never refused for it. Version 1.5.0 carries owner ruling AC4, unit U4(a): `price_series` below holds the rules a captured daily price series is checked against - the bar count, the longest gap, the freshness of the last bar, and the exchange-holiday lists as data - and `benchmarks` holds the benchmark per asset class (spec U4.2): US equity against SPY, a non-US listing against the broad-index ETF of its primary listing named for the sitting, a coin, bullion and a commodity against nothing (absolute), a basket or theme against its members' class benchmark, and a per-sitting override in the capture that wins over all of it. Version 1.6.0 carries owner rulings AC28 and AC30, unit FI-ARCHETYPE: the archetype table gains a fifth archetype, the financial institution, in six sub-types each carrying its own measure; `fi_families` names the capital and cost-of-risk fact families as data; `archetype_floors` holds the floors merged on top of the single_stock class for each sub-type, with the one lift that makes distributable capital, not capital spending, answer the free-cash test for a bank, an insurer, a reinsurer or a financial holding; and the exited-business ban reaches the profits and client money of a financial institution. Version 1.7.0 carries owner ruling AC4, unit U4(b): a single stock gains two conditional floors - insiders' dealings over the last twelve months (`insider_flow_`) and the company's own buying of its shares (`buyback_`), the market-structure seat's second examination - each present, or declared absent by design with the prefix itself as the gap's class; the prefix is `insider_flow_`, not a bare `insider_`, so what management owns cannot stand in for what insiders did. Version 1.8.0 carries owner ruling AC35(2), unit U4(d): the buyback floor reads only a dated amount actually spent on repurchases (`buyback_spend_`), never an authorisation alone, and the insider floor reads only dealings that each carry a direction, a date and a size (`insider_flow_direction_`, `insider_flow_date_`, `insider_flow_size_` sharing one suffix), the gap classes being `buyback_spend_` and `insider_flow_direction_`; each part is checked for its shape and its unit (`shapes` below): a spend is a positive dated amount in a currency unit, and a dealing reads buy or sell, is dated within the twelve months before the capture, and has a positive size counted in shares; any malformed fact under either prefix refuses by name, a zero spend beside one that counts excepted. Version 1.9.0 carries owner ruling AC37, unit U4(e): `allowed_units` below is the closed list of units a capture may use, seeded from every unit on record in the fixtures and the sittings; the provenance gate refuses a tier-1 fact or a cycle series whose unit is not on it, naming the unit, and the short-token bound stays beneath the list, so a unit must pass both. The architect adds, without asking, a unit that is plainly a measure of the asset in focus - a physical quantity, a currency per such quantity or per share, a count, a rate, a period - naming each addition in this note; any other unit comes to the owner. Architect additions: `direction` (an insider dealing's direction, buy or sell - the unit version 1.8.0 already prescribes for `insider_flow_direction_`), the first; `bars` and `fraction_of_range`, the two units the freeze itself writes on the tape figures it computes from the price series (a count of trading days, and where the last close sits in its range) - no capture on record carries a frozen tape, so the record could not seed them, both ratified by the architect as additions; and `USD_bn` (billions of US dollars, a plain currency scale the floors' own prose marks already name), added by the architect at the first audit round. `question_line_decision_words` below names, as data, the short words that carry a decision (architect ruling on AC37(2)): each is a content word whatever its length when the gate reads the one-line question against the owner's full question. Version 1.10.0 carries the AC37 amendment, unit U4(f): the one-line question is checked for contradiction, not vocabulary - only its figures (whole, with their signs), its tickers (in the thesis, or the subject's own) and its decision words are read against the owner's full question, and ordinary words are free; `question_line_decision_words` becomes a map of families, each head word to its inflections with the head first, the negation family carries its plain words and every word ending in n't is read as it by rule, and a decision word in the line passes when the full question uses some inflection of its family; the past tense of hold is deliberately not listed, being a word the council's language rule bars from the council tree, so a thesis saying only that answers no hold in the line and the error falls on the refusing side. Version 1.11.0 carries owner ruling AC41(3), unit SITTING-FIXES: `freshness_ceiling` below holds, as data, the longest a fact may be ruled current - five calendar years, 1,826 days; across a century year that is not a leap year the span is one day shorter, so a record could count as current one day past its fifth anniversary, first reachable by a sitting in 2101, accepted - the currency of a dated record of a finished period (a first guide or a revision for a period now reported, a delivered figure, a filed report for a finished quarter or year, a past year-end balance); the provenance gate refuses any tier-1 fact whose freshness rule is longer, naming the number, and a fact that moves keeps a rule matching how often it is republished. Version 1.11.0 also carries owner ruling AC41(2), unit SITTING-FIXES (architect ruling on audit finding r1-1): `rounded_quotient_families` below names, as data, the only fact families whose division may be recorded rounded once - a share (a revenue line's share of the period) and a yield - and the gate accepts such a rounding only where the capture declares it on the fact's own arithmetic; every other derived figure stays exact. Version 1.12.0 carries owner ruling AC41(1) as amended of record and owner ruling AC47, unit INSIDER-DEPTH: the single-stock insider floor gains a `depth` block - the holder-structure test comes before the insider gathering, its threshold is data here, and under it a twelve-month summary plus the chief executive's, the finance chief's and the chair's own dealings meet the floor, at or over it every dealing, and where the ownership cannot be established the insider evidence is not considered at all. Version 1.12.0 also carries owner ruling AC46(2): every single-stock capture made from `applies_from` on records the company's financial-year end as one fact, `fiscal_year_end`, MM-DD in the unit `month_day`; the gate tells an earlier capture by its own recorded capture date, so no capture on record is judged by it and the capture contract is unchanged. Version 1.13.0 carries owner rulings AC49(1) and AC50, unit GROWTH-ARCHETYPE (sub-charge a, the rule): the archetype table gains a sixth archetype, the reinvesting grower, in two sub-types rated on enterprise value over gross profit beside sales growth; `profitability_rule` holds, as data, the rule that a company without four profitable quarters behind it is rated on the growth path and one with four on its earnings; `growth_runway` holds the months-of-cash data the grower is judged by; the profit-maker, the landlord and the grower each carry the four latest quarters as a floor from `applies_from` on, so no capture on record is judged by it; the two rows whose denominator is already a ratio say so (`denominator_is_a_ratio`); and the trailing-revenue ban reaches the quarterly revenue family by prefix. Version 1.14.0 carries owner ruling AC50(9) as amended, unit GROWTH-ARCHETYPE (sub-charge b, the measure and the gate that bites): a canonical test's words and the facts that must answer it are data per archetype (`canonical_tests`) - the growth company's three standard tests (revenue with annual recurring revenue where reported, gross profit, the months of cash) under archetype_floors.reinvesting_grower, and the financial institution's distributable-capital answer to the free-cash test moved into its lifts block in the same shape, its words and its refusal unchanged. Version 1.15.0 carries owner rulings AC51-AC54, unit RESOURCE-ARCHETYPE (sub-charge a, the rule): the archetype table gains a seventh archetype, the resource producer, in three sub-types (oil and gas producers, miners, royalty and streaming companies) rated on enterprise value per unit of reserves beside what the market pays for the last four quarters' operating cash flow; `resource_products` names the five commodities with the units their reserves and prices are counted in; `resource_rule` holds, as data, the rule that a company reporting reserves is rated as a producer and never as a profit-maker, a landlord or a growth company, with the integrated oil major's three-arm test; the producer's evidence list is its floors from `applies_from` on, so no capture on record is judged by them; and the allowed units gain the reserves' and prices' own units. Version 1.16.0 carries owner rulings AC52(R6), AC53(R9)-(R12) and AC54(R13)-(R14), unit RESOURCE-ARCHETYPE (sub-charge b, the measure): `resource_rule` gains the prefixes the producer's resource block names its facts by, the reserves' history prefix set aside from the reserves, and the three natures of a producer's sales, which carry more than half of revenue; the oil and gas sub-type may state a unit cost per barrel of oil equivalent (`USD per boe`, added to the allowed units by the architect as a currency per a physical quantity of the asset in focus); and a producer's standard tests are data under archetype_floors.resource_producer - output and what each unit earns, the cash left after all capital spending - with a royalty or streaming company's first test through its lifts block, which lifts no class floor. Version 1.17.0 carries owner ruling AC56, unit RESOURCE-ARCHETYPE (sub-charge b2): only a producer's main commodity must be on `resource_products`; a by-product off that list is shown apart in the one unit its own reserve and output figures are recorded in, a unit on `allowed_units`, never converted and never counted in the rating; and a royalty or streaming company's first standard test is answered by every stream payment its resource block cites. No unit is added by this version: the existing `tonnes` serves an unlisted by-product metal such as zinc or lead (architect ruling at the first audit round); `resource_rule.by_product_units` names the units of quantity an unlisted by-product may be shown in (audit r1-1).",
+  "floors_version": "1.20.0",
+  "authority": "Evidence floors per docs/REBUILD-SPEC.md Appendix A, carrying OWNER-RULINGS W1/W2 (generic core), W4 (Apple), W5+W8.1 (Galaxy), W6/W8.3 (Bitcoin) and the AB2 mandate additions, plus the etf/basket/theme classes per docs/THEMES-BASKETS-SPEC.md section 4 (the W2.5 vehicle floor; AB12 thematic vehicles; basket tests at the thesis level). Floors are minimums for these subjects, never the ceiling: the evidence stage still derives what THIS question needs. Version 1.1.0 adds the ANCHORLESS registry per docs/ANCHORLESS-SPEC.md sections 2-4 (owner rulings AB13.4 and AB15): the gold and commodity subject SHAPES, the asset_classes anchor sets that decide sufficiency for an asset without earnings, and the anchorless_rating constants that fix the rating bar and its bands in data. Version 1.1.1 adds the `substitute` terms on the single_stock capital-spending floor, carrying owner ruling AB19: a filer that publishes no capital-spending line does not stop the council, but the stand-in must declare itself and be labelled, and this data is what the sufficiency gate enforces it against. Version 1.3.0 carries owner ruling AC1 into the single_stock class: segment revenue, the guided figure beside the delivered one, a peer set, and what management owns are conditional minimums - present, or declared absent with a reason - and how long the chief executive has been in the job and what the published consensus expects are advisory. The third canonical test, rating against own history or peers, keeps its id and its meaning; the runbook now says peers are expected wherever a peer set exists. Version 1.3.1 carries owner ruling AC12.3: `revenue_families` below names, as data rather than as code, the fact families a business frame's revenue line may point at - the whole-business revenue figures, any segment revenue line, and their prior-year pairs - so a seat cannot be shown the mix of the business argued from a number that is not revenue. A derived fact struck from facts in those families counts as one of them; the provenance gate reads this entry and enforces it. Version 1.4.0 carries owner ruling AC15 (P2 and P4), unit U3e: `archetype_measures` below is the rule, as data, that a subject's rating measure follows its business archetype; and `cycle` below carries the one data constant that scales a cycle series' freshness to the class's own price-freshness rule. Version 1.4.1 carries owner ruling AC19, unit U3f: `prose_figure_marks` below holds, as data rather than as code, the tolerances and the exemption list the render-time scanner uses to trace every number in a business frame's prose to a recorded fact - the relative tolerance, the year range, the plain-count ceiling, the ordinal suffixes, the scale words, the percent words, the month words, and the units that count as percent, as fraction, and as a currency scale. A number that traces to no fact is MARKED where the prose is shown and the pack is never refused for it. Version 1.5.0 carries owner ruling AC4, unit U4(a): `price_series` below holds the rules a captured daily price series is checked against - the bar count, the longest gap, the freshness of the last bar, and the exchange-holiday lists as data - and `benchmarks` holds the benchmark per asset class (spec U4.2): US equity against SPY, a non-US listing against the broad-index ETF of its primary listing named for the sitting, a coin, bullion and a commodity against nothing (absolute), a basket or theme against its members' class benchmark, and a per-sitting override in the capture that wins over all of it. Version 1.6.0 carries owner rulings AC28 and AC30, unit FI-ARCHETYPE: the archetype table gains a fifth archetype, the financial institution, in six sub-types each carrying its own measure; `fi_families` names the capital and cost-of-risk fact families as data; `archetype_floors` holds the floors merged on top of the single_stock class for each sub-type, with the one lift that makes distributable capital, not capital spending, answer the free-cash test for a bank, an insurer, a reinsurer or a financial holding; and the exited-business ban reaches the profits and client money of a financial institution. Version 1.7.0 carries owner ruling AC4, unit U4(b): a single stock gains two conditional floors - insiders' dealings over the last twelve months (`insider_flow_`) and the company's own buying of its shares (`buyback_`), the market-structure seat's second examination - each present, or declared absent by design with the prefix itself as the gap's class; the prefix is `insider_flow_`, not a bare `insider_`, so what management owns cannot stand in for what insiders did. Version 1.8.0 carries owner ruling AC35(2), unit U4(d): the buyback floor reads only a dated amount actually spent on repurchases (`buyback_spend_`), never an authorisation alone, and the insider floor reads only dealings that each carry a direction, a date and a size (`insider_flow_direction_`, `insider_flow_date_`, `insider_flow_size_` sharing one suffix), the gap classes being `buyback_spend_` and `insider_flow_direction_`; each part is checked for its shape and its unit (`shapes` below): a spend is a positive dated amount in a currency unit, and a dealing reads buy or sell, is dated within the twelve months before the capture, and has a positive size counted in shares; any malformed fact under either prefix refuses by name, a zero spend beside one that counts excepted. Version 1.9.0 carries owner ruling AC37, unit U4(e): `allowed_units` below is the closed list of units a capture may use, seeded from every unit on record in the fixtures and the sittings; the provenance gate refuses a tier-1 fact or a cycle series whose unit is not on it, naming the unit, and the short-token bound stays beneath the list, so a unit must pass both. The architect adds, without asking, a unit that is plainly a measure of the asset in focus - a physical quantity, a currency per such quantity or per share, a count, a rate, a period - naming each addition in this note; any other unit comes to the owner. Architect additions: `direction` (an insider dealing's direction, buy or sell - the unit version 1.8.0 already prescribes for `insider_flow_direction_`), the first; `bars` and `fraction_of_range`, the two units the freeze itself writes on the tape figures it computes from the price series (a count of trading days, and where the last close sits in its range) - no capture on record carries a frozen tape, so the record could not seed them, both ratified by the architect as additions; and `USD_bn` (billions of US dollars, a plain currency scale the floors' own prose marks already name), added by the architect at the first audit round. `question_line_decision_words` below names, as data, the short words that carry a decision (architect ruling on AC37(2)): each is a content word whatever its length when the gate reads the one-line question against the owner's full question. Version 1.10.0 carries the AC37 amendment, unit U4(f): the one-line question is checked for contradiction, not vocabulary - only its figures (whole, with their signs), its tickers (in the thesis, or the subject's own) and its decision words are read against the owner's full question, and ordinary words are free; `question_line_decision_words` becomes a map of families, each head word to its inflections with the head first, the negation family carries its plain words and every word ending in n't is read as it by rule, and a decision word in the line passes when the full question uses some inflection of its family; the past tense of hold is deliberately not listed, being a word the council's language rule bars from the council tree, so a thesis saying only that answers no hold in the line and the error falls on the refusing side. Version 1.11.0 carries owner ruling AC41(3), unit SITTING-FIXES: `freshness_ceiling` below holds, as data, the longest a fact may be ruled current - five calendar years, 1,826 days; across a century year that is not a leap year the span is one day shorter, so a record could count as current one day past its fifth anniversary, first reachable by a sitting in 2101, accepted - the currency of a dated record of a finished period (a first guide or a revision for a period now reported, a delivered figure, a filed report for a finished quarter or year, a past year-end balance); the provenance gate refuses any tier-1 fact whose freshness rule is longer, naming the number, and a fact that moves keeps a rule matching how often it is republished. Version 1.11.0 also carries owner ruling AC41(2), unit SITTING-FIXES (architect ruling on audit finding r1-1): `rounded_quotient_families` below names, as data, the only fact families whose division may be recorded rounded once - a share (a revenue line's share of the period) and a yield - and the gate accepts such a rounding only where the capture declares it on the fact's own arithmetic; every other derived figure stays exact. Version 1.12.0 carries owner ruling AC41(1) as amended of record and owner ruling AC47, unit INSIDER-DEPTH: the single-stock insider floor gains a `depth` block - the holder-structure test comes before the insider gathering, its threshold is data here, and under it a twelve-month summary plus the chief executive's, the finance chief's and the chair's own dealings meet the floor, at or over it every dealing, and where the ownership cannot be established the insider evidence is not considered at all. Version 1.12.0 also carries owner ruling AC46(2): every single-stock capture made from `applies_from` on records the company's financial-year end as one fact, `fiscal_year_end`, MM-DD in the unit `month_day`; the gate tells an earlier capture by its own recorded capture date, so no capture on record is judged by it and the capture contract is unchanged. Version 1.13.0 carries owner rulings AC49(1) and AC50, unit GROWTH-ARCHETYPE (sub-charge a, the rule): the archetype table gains a sixth archetype, the reinvesting grower, in two sub-types rated on enterprise value over gross profit beside sales growth; `profitability_rule` holds, as data, the rule that a company without four profitable quarters behind it is rated on the growth path and one with four on its earnings; `growth_runway` holds the months-of-cash data the grower is judged by; the profit-maker, the landlord and the grower each carry the four latest quarters as a floor from `applies_from` on, so no capture on record is judged by it; the two rows whose denominator is already a ratio say so (`denominator_is_a_ratio`); and the trailing-revenue ban reaches the quarterly revenue family by prefix. Version 1.14.0 carries owner ruling AC50(9) as amended, unit GROWTH-ARCHETYPE (sub-charge b, the measure and the gate that bites): a canonical test's words and the facts that must answer it are data per archetype (`canonical_tests`) - the growth company's three standard tests (revenue with annual recurring revenue where reported, gross profit, the months of cash) under archetype_floors.reinvesting_grower, and the financial institution's distributable-capital answer to the free-cash test moved into its lifts block in the same shape, its words and its refusal unchanged. Version 1.15.0 carries owner rulings AC51-AC54, unit RESOURCE-ARCHETYPE (sub-charge a, the rule): the archetype table gains a seventh archetype, the resource producer, in three sub-types (oil and gas producers, miners, royalty and streaming companies) rated on enterprise value per unit of reserves beside what the market pays for the last four quarters' operating cash flow; `resource_products` names the five commodities with the units their reserves and prices are counted in; `resource_rule` holds, as data, the rule that a company reporting reserves is rated as a producer and never as a profit-maker, a landlord or a growth company, with the integrated oil major's three-arm test; the producer's evidence list is its floors from `applies_from` on, so no capture on record is judged by them; and the allowed units gain the reserves' and prices' own units. Version 1.16.0 carries owner rulings AC52(R6), AC53(R9)-(R12) and AC54(R13)-(R14), unit RESOURCE-ARCHETYPE (sub-charge b, the measure): `resource_rule` gains the prefixes the producer's resource block names its facts by, the reserves' history prefix set aside from the reserves, and the three natures of a producer's sales, which carry more than half of revenue; the oil and gas sub-type may state a unit cost per barrel of oil equivalent (`USD per boe`, added to the allowed units by the architect as a currency per a physical quantity of the asset in focus); and a producer's standard tests are data under archetype_floors.resource_producer - output and what each unit earns, the cash left after all capital spending - with a royalty or streaming company's first test through its lifts block, which lifts no class floor. Version 1.17.0 carries owner ruling AC56, unit RESOURCE-ARCHETYPE (sub-charge b2): only a producer's main commodity must be on `resource_products`; a by-product off that list is shown apart in the one unit its own reserve and output figures are recorded in, a unit on `allowed_units`, never converted and never counted in the rating; and a royalty or streaming company's first standard test is answered by every stream payment its resource block cites. No unit is added by this version: the existing `tonnes` serves an unlisted by-product metal such as zinc or lead (architect ruling at the first audit round); `resource_rule.by_product_units` names the units of quantity an unlisted by-product may be shown in (audit r1-1). Architect additions in RESOURCE-ARCHETYPE(c2) fix round 2 under AC56(1) and AC37: USD per bbl, USD per lb, USD per mcf, USD per oz and USD per tonnes, prices per reported quantity of an off-list by-product; USD per boe is already allowed. The resource_rule carries their prefix and the standing B4 freshness ceiling as data. Version 1.18.0 records RESOURCE-ARCHETYPE(c2) round 3 under AC53(R9), AC56(1) and AC37: off-list by-product price units and the standing B4 freshness ceiling are ruled data, beside the subtype product list. Version 1.19.0, UPGRADE2-LISTINGS under owner rulings AC59(1) rank zero and AC37(1), adds listing calendars and CAD, SEK, AUD, HKD, AED, GBP and CHF as currency units: a currency unit carries the same magnitude suffixes as USD. Round two architect ruling under AC37(1): the magnitude class includes every currency on allowed_units, EUR included, and each currency carries the per-share form on the USD_per_share pattern; the grader supplied the corrected ADX and SIX full-day closures. Version 1.20.0, HOLDING-ARCHETYPE(a), owner rulings AC59-AC62 extending AC30(3): investment holdings use the net asset value bridge beyond finance, with the rule both ways, private-value age, five year-ends, dividend cover and a flat-row lift; applies_from protects earlier captures. Architect dispatch carries P-LISTINGS-2: every currency magnitude is read by the prose matcher on the USD pattern.",
   "entry_kinds": {
     "id": "the exact fact id must be present in tier1",
     "one_of": "at least one of the listed fact ids must be present in tier1",
@@ -354,10 +354,26 @@
         "subtype_field": "producer_subtype",
         "note": "Owner rulings AC51-AC54 (unit RESOURCE-ARCHETYPE; research brief 2026-09-24 section 2.2). A listed company that earns most of its sales from a commodity it extracts under a recognised reserve standard, or from royalties and streams on others' output: rated on what the market pays per unit of its reserves, in the commodity's own unit, and for the last four quarters' operating cash flow, each printed beside the price it rests on - the price the reserves were counted at, the price the cash was earned at, today's price. The council never assumes an average price of its own. The numerator is enterprise value (net debt and clean-up obligations are declared operands where the capture strikes it). Two denominators, both AMOUNTS: the reserves and the trailing cash flow. On a model transition both are the continuing business's, the id ending in the row's continuing_suffix.",
         "subtypes": {
-          "oil_and_gas_producer": {"measure": "ev_to_reserves_against_cash_flow_at_the_recorded_price", "subject_numerator": "enterprise_value", "peer_numerator_metric": "enterprise_value", "denominators_required": 2, "denominator_roles": ["reserves", "cash_flow"], "denominator_ids": [["reserves_proved_boe"], ["operating_cash_flow_ttm"]], "exited_business_roles": ["reserves", "cash_flow"], "continuing_suffix": "_continuing", "boe_unit": "boe", "boe_price_unit": "USD per boe", "boe_words": "barrels of oil equivalent, six thousand cubic feet of gas counted as one barrel - the convention the filings use (owner ruling AC52(R6)); oil and gas are also shown apart", "note": "Exploration and production companies. Proved reserves in barrels of oil equivalent; the SEC standardized measure is required evidence beside, never the denominator (architect ruling B2)."},
+          "oil_and_gas_producer": {"measure": "ev_to_reserves_against_cash_flow_at_the_recorded_price", "subject_numerator": "enterprise_value", "peer_numerator_metric": "enterprise_value", "denominators_required": 2, "denominator_roles": ["reserves", "cash_flow"], "denominator_ids": [["reserves_proved_boe"], ["operating_cash_flow_ttm"]], "exited_business_roles": ["reserves", "cash_flow"], "continuing_suffix": "_continuing", "products": ["crude_oil", "natural_gas"], "products_why": "Architect fix round 2 item 8, AC52(1): the integrated major reads the subtype and its product list from data", "boe_unit": "boe", "boe_price_unit": "USD per boe", "boe_words": "barrels of oil equivalent, six thousand cubic feet of gas counted as one barrel - the convention the filings use (owner ruling AC52(R6)); oil and gas are also shown apart", "note": "Exploration and production companies. Proved reserves in barrels of oil equivalent; the SEC standardized measure is required evidence beside, never the denominator (architect ruling B2)."},
           "miner": {"measure": "ev_to_reserves_against_cash_flow_at_the_recorded_price", "subject_numerator": "enterprise_value", "peer_numerator_metric": "enterprise_value", "denominators_required": 2, "denominator_roles": ["reserves", "cash_flow"], "denominator_ids": [["reserves_pp_attributable"], ["operating_cash_flow_ttm"]], "exited_business_roles": ["reserves", "cash_flow"], "continuing_suffix": "_continuing", "note": "Gold, silver and copper miners: attributable proven and probable reserves of the main metal, in its own unit."},
           "royalty_and_streaming": {"measure": "ev_to_reserves_against_cash_flow_at_the_recorded_price", "subject_numerator": "enterprise_value", "peer_numerator_metric": "enterprise_value", "denominators_required": 2, "denominator_roles": ["reserves", "cash_flow"], "denominator_ids": [["reserves_pp_attributable"], ["operating_cash_flow_ttm"]], "exited_business_roles": ["reserves", "cash_flow"], "continuing_suffix": "_continuing", "note": "Companies that finance mines and wells for a share of the output: the reserves attributable to their royalties and streams."}
         }
+      },
+      "investment_holding": {
+        "measure": "price_to_net_asset_value",
+        "subject_numerator": "market_cap",
+        "peer_numerator_metric": "market_cap",
+        "denominators_required": 1,
+        "denominator_roles": [
+          "net_asset_value"
+        ],
+        "denominator_ids": [
+          [
+            "nav_total"
+          ]
+        ],
+        "requires_nav_bridge": true,
+        "note": "Owner rulings AC59-AC62 (unit HOLDING-ARCHETYPE), extending AC30(3) beyond financial holdings. A listed company whose value is mostly stakes in other companies, mostly not financial institutions, owned as investments and not run day to day: rated on the discount between its market value - every participating class - and its net asset value, a DERIVED chain the frame's nav_bridge declares: each listed stake at today's market price, each private stake at the company's own latest valuation with its date and basis, less the holding company's own net debt. The company's own published figure is shown beside; the discount is read against its own five year-ends. The owned companies are not rated in the same sitting. No sub-types: one measure, one denominator."
       }
     },
     "profitability_rule": {
@@ -396,6 +412,10 @@
       "refuses": ["profitable_operator", "stabilised_lessor", "reinvesting_grower"],
       "by_product_units": ["bbl", "boe", "lb", "mcf", "oz", "tonnes"],
       "by_product_units_why": "Owner ruling AC56(1), audit r1-1 of sub-charge b2, and the architect's ruling on P-RESOURCEb2-3 (the list stated as a class): a by-product off resource_products is shown apart in the one unit the company reports its reserve and output in, and that unit counts a physical quantity of the metal or the fuel - never money, a percentage or a count of shares. The list is a class: every unit a product on resource_products counts its reserves and output in, the oil and gas sub-type's boe_unit, and tonnes, each on allowed_units; a test in the evidence suite reads this membership from the data, so a quantity unit added elsewhere and forgotten here fails the suite instead of refusing a company.",
+      "by_product_price_unit_prefix": "USD per ",
+      "by_product_price_unit_prefix_why": "Architect ruling RESOURCE-ARCHETYPE(c2) fix round 2 under owner rulings AC56(1) and AC37: an off-list by-product price uses USD per its own reported quantity unit on by_product_units, never converted.",
+      "by_product_price_freshness_days": 3,
+      "by_product_price_freshness_days_why": "Architect ruling RESOURCE-ARCHETYPE(c2) fix round 2 and standing rule B4: today's price of an off-list by-product has the same three-day ceiling as every listed resource product.",
       "reserve_max_age_days": 456,
       "reserve_max_age_why": "Owner ruling AC53(R12): reserve figures are at most fifteen months old at the sitting, counted from the latest annual reserve report's own date; older, the sitting is refused with a shopping list. The five-year currency of a finished period (AC41(3)) does not apply to reserves, which are re-counted every year.",
       "integrated_major_min_share": 10,
@@ -418,6 +438,24 @@
     "cycle": {
       "why": "Owner ruling AC15 (P4), unit U3e. A single name whose thesis rests on an identifiable capital or commodity cycle carries three to five dated series for it, or declares the gap. Each series' as-of freshness is judged against the subject class's own price-freshness rule times the multiple below - a data constant - so a cycle series is measured against a rule scaled from the price the sitting turns on, never a number invented on its own.",
       "series_freshness_price_multiple": 10
+    },
+    "holding_rule": {
+      "fx_rate_prefix": "fx_rate_",
+      "max_price_freshness_days": 3,
+      "why": "Architect rulings A-C, session 3: dated currency conversions and property operators excluded. Owner rulings AC59(H4), AC60(H6) and AC61(H9), architect rulings HA4-HA7: a company whose value is the stakes it owns is always rated on its discount, never on earnings or as a growth company. Every private value is the company's own latest dated value, no older than fifteen months; the history is the latest five published financial year-ends. The marker class is read from the data and applies_from protects earlier captures.",
+      "holding_archetype": "investment_holding",
+      "marker_prefixes": [
+        "nav_component_",
+        "nav_published_"
+      ],
+      "refuses": [
+        "profitable_operator",
+        "reinvesting_grower",
+        "resource_producer"
+      ],
+      "private_valuation_max_age_days": 456,
+      "history_year_ends": 5,
+      "applies_from": "2026-10-02"
     }
   },
   "fi_families": {
@@ -588,9 +626,127 @@
         {"kind": "prefix", "prefix": "stream_payment_", "level": "required", "applies_from": "2026-09-28", "likely_source": "the stream agreements as the annual report summarises them: the fixed price paid per unit under each stream", "why": "AC52(R8): a royalty or streaming company's evidence in place of a mining cost"},
         {"kind": "prefix", "prefix": "operator_concentration_", "level": "required", "applies_from": "2026-09-28", "likely_source": "the annual report: the share of income from the largest mine or operator", "why": "AC52(R8): how much of its income rests on one mine or operator"}
       ]
+    },
+    "investment_holding": {
+      "why": "Owner rulings AC59-AC62 extending AC30(3), unit HOLDING-ARCHETYPE: the bridge and the holding company's own cash evidence, never subsidiary regulatory capital.",
+      "all_subtypes": [
+        {
+          "kind": "id",
+          "id": "nav_total",
+          "level": "required",
+          "likely_source": "derived: the nav_bridge's components summed, less holding-company net debt and preferred - arithmetic declared, every operand a fact",
+          "why": "AC60(H5): the council NAV, derived from every component less own net debt",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "prefix",
+          "prefix": "nav_component_",
+          "level": "required",
+          "likely_source": "per holding: stake times the holding's market value (listed) or the company's reported value (unlisted)",
+          "why": "AC62(H15): every holding in the published value table, completeness checked outside the machine",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "id",
+          "id": "holdco_net_debt",
+          "level": "required",
+          "likely_source": "the MD&A holding-company (non-consolidated) information",
+          "why": "AC60(H8): the holding company's own debt, printed as a calculated share",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "prefix",
+          "prefix": "nav_published_",
+          "level": "required",
+          "likely_source": "the quarterly MD&A or investor presentation",
+          "why": "AC60(H5): the company's own latest figure beside the council NAV",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "parallel_prefixes",
+          "prefixes": [
+            "nav_published_hist_",
+            "price_hist_"
+          ],
+          "level": "conditional",
+          "min_members": 5,
+          "condition": "where five financial year-ends are published; a younger listing declares the gap absent by design",
+          "likely_source": "the latest five financial year-end published NAV per share and the closing share price that day, members ending _fy2025 or their own financial year",
+          "why": "AC61(H9): the last five published financial year-end NAV per share and share-price pairs",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "prefix",
+          "prefix": "holdco_cash_flow_",
+          "level": "required",
+          "likely_source": "the MD&A holding-company cash flows: dividends received, dividends paid, holding-company costs",
+          "why": "AC62(H13): dividends and interest received, own costs, interest paid and dividends paid",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "id",
+          "id": "holdco_costs_ttm",
+          "level": "required",
+          "likely_source": "the annual non-consolidated holding company cost statement",
+          "why": "AC60(H8): yearly own costs printed as a calculated share of NAV",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "prefix",
+          "prefix": "capital_return_",
+          "level": "required",
+          "likely_source": "the latest results release and 10-Q issuer-repurchase table: dividends declared and net buybacks, quarter and trailing four quarters",
+          "why": "AC62(H16): dividends and buybacks",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "id",
+          "id": "participating_share_count",
+          "level": "conditional",
+          "condition": "where the common equity has more than one participating class or exchangeable units; declare absent-by-design for a single listed class",
+          "likely_source": "the latest filing's share-count disclosure (all participating classes and exchangeable units)",
+          "why": "AC62(H16): every participating share class counted in market value",
+          "applies_from": "2026-10-02"
+        },
+        {
+          "kind": "prefix",
+          "prefix": "credit_rating_",
+          "level": "advisory",
+          "likely_source": "the credit-ratings table of the latest 10-K/10-Q liquidity section, or the agencies' own pages",
+          "why": "AC62: credit ratings beside the holding company debt",
+          "applies_from": "2026-10-02"
+        }
+      ],
+      "canonical_tests": {
+        "profit_growth": {
+          "words": [
+            "a holding company's first standard test - is net asset value per share growing, the dividends paid shown beside and never added in",
+            "the company published NAV per share this year beside last, with dividends paid beside it - nav_published_ facts"
+          ],
+          "answered_by_prefix": "nav_published_",
+          "authority": "owner ruling AC62(H13)"
+        },
+        "free_cash_flow": {
+          "words": [
+            "a holding company's second standard test - do the dividends it receives cover its own costs, its interest and the dividend it pays",
+            "the holding company's cash flows: dividends and interest received, own costs, interest paid and dividends paid - holdco_cash_flow_ facts"
+          ],
+          "answered_by_prefix": "holdco_cash_flow_",
+          "authority": "owner ruling AC62(H13)"
+        }
+      },
+      "lifts": {
+        "why": "Owner ruling AC62(H13), architect ruling HA9: dividend cover answers the cash test, so the capital-spending floor is lifted for this flat archetype.",
+        "single_stock_floor_ids_lifted": [
+          "capital_expenditure_q"
+        ],
+        "lift_words": "The capital-spending floor ({ids}) is lifted for {who}: its free-cash test is answered by dividend cover (owner ruling AC62(H13))."
+      }
     }
   },
   "prose_figure_marks": {
+    "currency_aliases": {"US$m": "USD_m"},
+    "currency_aliases_why": "Architect ruling B, HOLDING-ARCHETYPE session 3: the sole legacy currency alias.",
     "why": "Owner ruling AC19, unit U3f. The render-time scanner (council/evidence/trace.py) traces every number written into a business frame's prose to a recorded fact of the pack, allowing for rounding and for a change of scale or unit wording; a number that traces to nothing is MARKED where the prose is shown and the pack is NEVER refused for it. Every tolerance and every exemption the scanner uses lives here as data, not as a constant in the code (AC19(4)).",
     "relative_tolerance": "0.005",
     "relative_tolerance_note": "The fallback match when the prose number and a fact value do not agree to the prose's own significant figures: they still match when they are within this fraction of each other.",
@@ -625,9 +781,84 @@
       "USD_million": 6,
       "USD_b": 9,
       "USD_bn": 9,
-      "USD_billion": 9
+      "USD_billion": 9,
+      "EUR_billion": 9,
+      "EUR_billions": 9,
+      "EUR_bn": 9,
+      "EUR_m": 6,
+      "EUR_million": 6,
+      "EUR_millions": 6,
+      "EUR_thousand": 3,
+      "EUR_trillion": 12,
+      "CAD_b": 9,
+      "CAD_billion": 9,
+      "CAD_billions": 9,
+      "CAD_bn": 9,
+      "CAD_m": 6,
+      "CAD_million": 6,
+      "CAD_millions": 6,
+      "CAD_thousand": 3,
+      "CAD_trillion": 12,
+      "SEK_b": 9,
+      "SEK_billion": 9,
+      "SEK_billions": 9,
+      "SEK_bn": 9,
+      "SEK_m": 6,
+      "SEK_million": 6,
+      "SEK_millions": 6,
+      "SEK_thousand": 3,
+      "SEK_trillion": 12,
+      "AUD_b": 9,
+      "AUD_billion": 9,
+      "AUD_billions": 9,
+      "AUD_bn": 9,
+      "AUD_m": 6,
+      "AUD_million": 6,
+      "AUD_millions": 6,
+      "AUD_thousand": 3,
+      "AUD_trillion": 12,
+      "HKD_b": 9,
+      "HKD_billion": 9,
+      "HKD_billions": 9,
+      "HKD_bn": 9,
+      "HKD_m": 6,
+      "HKD_million": 6,
+      "HKD_millions": 6,
+      "HKD_thousand": 3,
+      "HKD_trillion": 12,
+      "AED_b": 9,
+      "AED_billion": 9,
+      "AED_billions": 9,
+      "AED_bn": 9,
+      "AED_m": 6,
+      "AED_million": 6,
+      "AED_millions": 6,
+      "AED_thousand": 3,
+      "AED_trillion": 12,
+      "GBP_b": 9,
+      "GBP_billion": 9,
+      "GBP_billions": 9,
+      "GBP_bn": 9,
+      "GBP_m": 6,
+      "GBP_million": 6,
+      "GBP_millions": 6,
+      "GBP_thousand": 3,
+      "GBP_trillion": 12,
+      "CHF_b": 9,
+      "CHF_billion": 9,
+      "CHF_billions": 9,
+      "CHF_bn": 9,
+      "CHF_m": 6,
+      "CHF_million": 6,
+      "CHF_millions": 6,
+      "CHF_thousand": 3,
+      "CHF_trillion": 12,
+      "EUR_b": 9,
+      "USD_billions": 9,
+      "USD_millions": 6,
+      "USD_trillion": 12
     },
-    "currency_scale_units_note": "A recorded fact whose unit states a currency scale is read in base units by this power of ten before it is compared to a prose number; a unit not listed here (USD, USD_per_share, MW, years, x) is read at its face value."
+    "currency_scale_units_note": "A recorded fact whose unit states a currency scale is read in base units by this power of ten before it is compared to a prose number; a unit not listed here (USD, USD_per_share, MW, years, x) is read at its face value. Architect dispatch P-LISTINGS-2 under AC59(1) and AC37(1): every allowed currency magnitude follows the USD pattern."
   },
   "price_series": {
     "authority": "Owner ruling AC4; spec U4.1 (unit U4(a)). The capture may carry the subject's daily closes (price_series) and its ruled benchmark's (benchmark_series); the provenance gate refuses a series that contradicts itself, in plain words, against these numbers. They are data so a ruling can move them without a code change.",
@@ -652,9 +883,36 @@
       "Nasdaq Global Market": "XNYS",
       "Nasdaq Capital Market": "XNYS",
       "Cboe BZX": "XNYS",
-      "IEX": "XNYS"
+      "IEX": "XNYS",
+      "Toronto Stock Exchange": "XTSE",
+      "TSX": "XTSE",
+      "TSX Venture": "XTSX",
+      "TSX Venture Exchange": "XTSX",
+      "TSXV": "XTSX",
+      "Xetra": "XETR",
+      "Frankfurt Stock Exchange": "XETR",
+      "Frankfurt": "XETR",
+      "Euronext Brussels": "XBRU",
+      "Brussels": "XBRU",
+      "Euronext Paris": "XPAR",
+      "Paris": "XPAR",
+      "Euronext Amsterdam": "XAMS",
+      "Amsterdam": "XAMS",
+      "Nasdaq Stockholm": "XSTO",
+      "Stockholm": "XSTO",
+      "ASX": "XASX",
+      "Australian Securities Exchange": "XASX",
+      "Hong Kong Stock Exchange": "XHKG",
+      "HKEX": "XHKG",
+      "SEHK": "XHKG",
+      "Abu Dhabi Securities Exchange": "XADS",
+      "ADX": "XADS",
+      "London Stock Exchange": "XLON",
+      "LSE": "XLON",
+      "SIX Swiss Exchange": "XSWX",
+      "SIX": "XSWX"
     },
-    "calendars_by_listing_note": "The calendar a LISTED subject's price series must name, by its listing (architect ruling closing P-U4a1-5): a stock, a fund, or a basket or theme whose members list, trades on its exchange's calendar whatever it holds - a US-listed fund holding coins trades on the US calendar. Matched ignoring case and extra spaces, whole name only. A listing not named here refuses: add the exchange and its calendar (with the calendar's holidays below) as data before the first sitting that carries such a series.",
+    "calendars_by_listing_note": "The calendar a LISTED subject's price series must name, by its listing (architect ruling closing P-U4a1-5): a stock, a fund, or a basket or theme whose members list, trades on its exchange's calendar whatever it holds - a US-listed fund holding coins trades on the US calendar. Matched ignoring case and extra spaces, whole name only. A listing not named here refuses: add the exchange and its calendar (with the calendar's holidays below) as data before the first sitting that carries such a series. AC59 rank zero, UPGRADE2-LISTINGS adds the named non-US exchanges and their broker or filing aliases, each bound to its own calendar.",
     "exchange_calendars": {
       "CRYPTO_24_7": {
         "name": "All days - a market that trades every calendar day (crypto)",
@@ -673,6 +931,150 @@
           "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"
         ],
         "note": "Full-day market closures, 2023 to 2027, from the exchanges' published holiday calendars, including the national day of mourning on 2025-01-09. Early closes are trading days and are not listed. Extend this list, as data, before a series runs past its last year."
+      },
+      "XTSE": {
+        "name": "Toronto Stock Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-02-19", "2024-03-29", "2024-05-20", "2024-07-01", "2024-08-05", "2024-09-02", "2024-10-14", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-02-17", "2025-04-18", "2025-05-19", "2025-07-01", "2025-08-04", "2025-09-01", "2025-10-13", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-02-16", "2026-04-03", "2026-05-18", "2026-07-01", "2026-08-03", "2026-09-07", "2026-10-12", "2026-12-25", "2026-12-28",
+          "2027-01-01", "2027-02-15", "2027-03-26", "2027-05-24", "2027-07-01", "2027-08-02", "2027-09-06", "2027-10-11", "2027-12-27", "2027-12-28"
+        ],
+        "note": "TMX full-day closures, 2024 to 2027, including Family Day and the Civic Holiday; early closes remain trading days. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XTSX": {
+        "name": "TSX Venture Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-02-19", "2024-03-29", "2024-05-20", "2024-07-01", "2024-08-05", "2024-09-02", "2024-10-14", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-02-17", "2025-04-18", "2025-05-19", "2025-07-01", "2025-08-04", "2025-09-01", "2025-10-13", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-02-16", "2026-04-03", "2026-05-18", "2026-07-01", "2026-08-03", "2026-09-07", "2026-10-12", "2026-12-25", "2026-12-28",
+          "2027-01-01", "2027-02-15", "2027-03-26", "2027-05-24", "2027-07-01", "2027-08-02", "2027-09-06", "2027-10-11", "2027-12-27", "2027-12-28"
+        ],
+        "note": "The TMX Toronto calendar, identical to XTSE, including Family Day and the Civic Holiday; early closes remain trading days. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XETR": {
+        "name": "Xetra (Frankfurt)",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-01", "2024-12-24", "2024-12-25", "2024-12-26", "2024-12-31",
+          "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-01", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-31",
+          "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-24", "2026-12-25", "2026-12-31",
+          "2027-01-01", "2027-03-26", "2027-03-29", "2027-12-24", "2027-12-31"
+        ],
+        "note": "Deutsche Boerse Xetra full-day closures; Christmas Eve and New Year Eve close fully, German Unity Day and other regional public holidays trade. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XBRU": {
+        "name": "Euronext Brussels",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-01", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-01", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-25",
+          "2027-01-01", "2027-03-26", "2027-03-29"
+        ],
+        "note": "Euronext cash-market full-day closures; Christmas Eve and New Year Eve are trading days when weekdays, including shortened sessions. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XPAR": {
+        "name": "Euronext Paris",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-01", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-01", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-25",
+          "2027-01-01", "2027-03-26", "2027-03-29"
+        ],
+        "note": "Euronext cash-market full-day closures; Christmas Eve and New Year Eve are trading days when weekdays, including shortened sessions. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XAMS": {
+        "name": "Euronext Amsterdam",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-01", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-01", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-01", "2026-12-25",
+          "2027-01-01", "2027-03-26", "2027-03-29"
+        ],
+        "note": "Euronext cash-market full-day closures; Christmas Eve and New Year Eve are trading days when weekdays, including shortened sessions. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XSTO": {
+        "name": "Nasdaq Stockholm",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-01", "2024-05-09", "2024-06-06", "2024-06-21", "2024-12-24", "2024-12-25", "2024-12-26", "2024-12-31",
+          "2025-01-01", "2025-01-06", "2025-04-18", "2025-04-21", "2025-05-01", "2025-05-29", "2025-06-06", "2025-06-20", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-31",
+          "2026-01-01", "2026-01-06", "2026-04-03", "2026-04-06", "2026-05-01", "2026-05-14", "2026-06-19", "2026-12-24", "2026-12-25", "2026-12-31",
+          "2027-01-01", "2027-01-06", "2027-03-26", "2027-03-29", "2027-05-06", "2027-06-25", "2027-12-24", "2027-12-31"
+        ],
+        "note": "Nasdaq Nordic Stockholm full-day closures, including Midsummer Eve, Christmas Eve and New Year Eve; shortened sessions remain trading days. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XASX": {
+        "name": "Australian Securities Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-01-26", "2024-03-29", "2024-04-01", "2024-04-25", "2024-06-10", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-01-27", "2025-04-18", "2025-04-21", "2025-04-25", "2025-06-09", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-01-26", "2026-04-03", "2026-04-06", "2026-06-08", "2026-12-25", "2026-12-28",
+          "2027-01-01", "2027-01-26", "2027-03-26", "2027-03-29", "2027-06-14", "2027-12-27", "2027-12-28"
+        ],
+        "note": "ASX cash-equity full-day closures; Australia Day is observed on Monday when on a weekend; Anzac Day on a weekend has no substitute exchange closure; the June King birthday holiday closes the market. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XHKG": {
+        "name": "Hong Kong Stock Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-02-12", "2024-02-13", "2024-03-29", "2024-04-01", "2024-04-04", "2024-05-01", "2024-05-15", "2024-06-10", "2024-07-01", "2024-09-18", "2024-10-01", "2024-10-11", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-01-29", "2025-01-30", "2025-01-31", "2025-04-04", "2025-04-18", "2025-04-21", "2025-05-01", "2025-05-05", "2025-07-01", "2025-10-01", "2025-10-07", "2025-10-29", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-02-17", "2026-02-18", "2026-02-19", "2026-04-03", "2026-04-06", "2026-04-07", "2026-05-01", "2026-05-25", "2026-06-19", "2026-07-01", "2026-10-01", "2026-10-19", "2026-12-25",
+          "2027-01-01", "2027-02-08", "2027-02-09", "2027-03-26", "2027-03-29", "2027-04-05", "2027-05-13", "2027-06-09", "2027-07-01", "2027-09-16", "2027-10-01", "2027-10-08", "2027-12-27"
+        ],
+        "note": "HKEX securities full-day closures, with lunar holidays and weekday substitutes; half-day sessions remain trading days. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XADS": {
+        "name": "Abu Dhabi Securities Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-04-08", "2024-04-09", "2024-04-10", "2024-04-11", "2024-04-12", "2024-06-17", "2024-06-18", "2024-12-02", "2024-12-03",
+          "2025-01-01", "2025-03-31", "2025-04-01", "2025-06-05", "2025-06-06", "2025-06-27", "2025-09-05", "2025-12-01", "2025-12-02",
+          "2026-01-01", "2026-03-02", "2026-03-03", "2026-03-19", "2026-03-20", "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29", "2026-06-15", "2026-08-28", "2026-12-02", "2026-12-03",
+          "2027-01-01", "2027-12-02", "2027-12-03"
+        ],
+        "note": "Monday to Friday trading since 2022-01-03. The government moved the 2026 Hijri New Year holiday to 2026-06-15 and the Prophet's Birthday holiday to 2026-08-28; market-authority closures on 2026-03-02 and 2026-03-03 are included. The 2027 list uses the seed's standard fixed-holiday fallback; lunar closures remain to be supplied from ADX when announced. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XLON": {
+        "name": "London Stock Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-03-29", "2024-04-01", "2024-05-06", "2024-05-27", "2024-08-26", "2024-12-25", "2024-12-26",
+          "2025-01-01", "2025-04-18", "2025-04-21", "2025-05-05", "2025-05-26", "2025-08-25", "2025-12-25", "2025-12-26",
+          "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-04", "2026-05-25", "2026-08-31", "2026-12-25", "2026-12-28",
+          "2027-01-01", "2027-03-26", "2027-03-29", "2027-05-03", "2027-05-31", "2027-08-30", "2027-12-27", "2027-12-28"
+        ],
+        "note": "London Stock Exchange full-day bank-holiday closures, including weekday substitutes for Christmas and Boxing Day; early closes remain trading days. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
+      },
+      "XSWX": {
+        "name": "SIX Swiss Exchange",
+        "trading_weekdays": [1, 2, 3, 4, 5],
+        "holidays": [
+          "2024-01-01", "2024-01-02", "2024-03-29", "2024-04-01", "2024-05-01", "2024-05-09", "2024-05-20", "2024-08-01", "2024-12-24", "2024-12-25", "2024-12-26", "2024-12-31",
+          "2025-01-01", "2025-01-02", "2025-04-18", "2025-04-21", "2025-05-01", "2025-05-29", "2025-06-09", "2025-08-01", "2025-12-24", "2025-12-25", "2025-12-26", "2025-12-31",
+          "2026-01-01", "2026-01-02", "2026-04-03", "2026-04-06", "2026-05-01", "2026-05-14", "2026-05-25", "2026-12-24", "2026-12-25", "2026-12-31",
+          "2027-01-01", "2027-03-26", "2027-03-29", "2027-05-06", "2027-05-17", "2027-12-24", "2027-12-31"
+        ],
+        "note": "SIX Swiss Exchange full-day closures, including Berchtold Day, Ascension, Whit Monday and Swiss National Day when weekdays; no weekend substitutes. Christmas Eve and New Year's Eve close fully. AC59 rank zero, UPGRADE2-LISTINGS round two: the grader checked these full-day closure lists against the exchanges' published calendars; the builder made no network call.",
+        "verified_by": "the grader checks every holiday list against the exchange's published calendar"
       }
     }
   },
@@ -710,6 +1112,174 @@
     "us_listings_note": "Matched against the subject's listing ignoring case and extra spaces, whole name only - 'Nasdaq Stockholm' is not a US listing."
   },
   "allowed_units": [
+    "AED per AED",
+    "AED per AUD",
+    "AED per CAD",
+    "AED per CHF",
+    "AED per EUR",
+    "AED per GBP",
+    "AED per HKD",
+    "AED per SEK",
+    "AED per USD",
+    "AUD per AED",
+    "AUD per AUD",
+    "AUD per CAD",
+    "AUD per CHF",
+    "AUD per EUR",
+    "AUD per GBP",
+    "AUD per HKD",
+    "AUD per SEK",
+    "AUD per USD",
+    "CAD per AED",
+    "CAD per AUD",
+    "CAD per CAD",
+    "CAD per CHF",
+    "CAD per EUR",
+    "CAD per GBP",
+    "CAD per HKD",
+    "CAD per SEK",
+    "CAD per USD",
+    "CHF per AED",
+    "CHF per AUD",
+    "CHF per CAD",
+    "CHF per CHF",
+    "CHF per EUR",
+    "CHF per GBP",
+    "CHF per HKD",
+    "CHF per SEK",
+    "CHF per USD",
+    "EUR per AED",
+    "EUR per AUD",
+    "EUR per CAD",
+    "EUR per CHF",
+    "EUR per EUR",
+    "EUR per GBP",
+    "EUR per HKD",
+    "EUR per SEK",
+    "EUR per USD",
+    "GBP per AED",
+    "GBP per AUD",
+    "GBP per CAD",
+    "GBP per CHF",
+    "GBP per EUR",
+    "GBP per GBP",
+    "GBP per HKD",
+    "GBP per SEK",
+    "GBP per USD",
+    "HKD per AED",
+    "HKD per AUD",
+    "HKD per CAD",
+    "HKD per CHF",
+    "HKD per EUR",
+    "HKD per GBP",
+    "HKD per HKD",
+    "HKD per SEK",
+    "HKD per USD",
+    "SEK per AED",
+    "SEK per AUD",
+    "SEK per CAD",
+    "SEK per CHF",
+    "SEK per EUR",
+    "SEK per GBP",
+    "SEK per HKD",
+    "SEK per SEK",
+    "SEK per USD",
+    "USD per AED",
+    "USD per AUD",
+    "USD per CAD",
+    "USD per CHF",
+    "USD per EUR",
+    "USD per GBP",
+    "USD per HKD",
+    "USD per SEK",
+    "USD per USD",
+
+    "AED_per_share",
+    "AUD_per_share",
+    "CAD_per_share",
+    "CHF_per_share",
+    "EUR_billion",
+    "EUR_billions",
+    "EUR_bn",
+    "EUR_m",
+    "EUR_million",
+    "EUR_millions",
+    "EUR_thousand",
+    "EUR_trillion",
+    "EUR_per_share",
+    "GBP_per_share",
+    "HKD_per_share",
+    "SEK_per_share",
+    "CAD",
+    "CAD_b",
+    "CAD_billion",
+    "CAD_billions",
+    "CAD_bn",
+    "CAD_m",
+    "CAD_million",
+    "CAD_millions",
+    "CAD_thousand",
+    "CAD_trillion",
+    "SEK",
+    "SEK_b",
+    "SEK_billion",
+    "SEK_billions",
+    "SEK_bn",
+    "SEK_m",
+    "SEK_million",
+    "SEK_millions",
+    "SEK_thousand",
+    "SEK_trillion",
+    "AUD",
+    "AUD_b",
+    "AUD_billion",
+    "AUD_billions",
+    "AUD_bn",
+    "AUD_m",
+    "AUD_million",
+    "AUD_millions",
+    "AUD_thousand",
+    "AUD_trillion",
+    "HKD",
+    "HKD_b",
+    "HKD_billion",
+    "HKD_billions",
+    "HKD_bn",
+    "HKD_m",
+    "HKD_million",
+    "HKD_millions",
+    "HKD_thousand",
+    "HKD_trillion",
+    "AED",
+    "AED_b",
+    "AED_billion",
+    "AED_billions",
+    "AED_bn",
+    "AED_m",
+    "AED_million",
+    "AED_millions",
+    "AED_thousand",
+    "AED_trillion",
+    "GBP",
+    "GBP_b",
+    "GBP_billion",
+    "GBP_billions",
+    "GBP_bn",
+    "GBP_m",
+    "GBP_million",
+    "GBP_millions",
+    "GBP_thousand",
+    "GBP_trillion",
+    "CHF",
+    "CHF_b",
+    "CHF_billion",
+    "CHF_billions",
+    "CHF_bn",
+    "CHF_m",
+    "CHF_million",
+    "CHF_millions",
+    "CHF_thousand",
+    "CHF_trillion",
     "%",
     "BTC",
     "BTC_per_block",
@@ -725,6 +1295,11 @@
     "USD per MMBtu",
     "USD per barrel",
     "USD per boe",
+    "USD per bbl",
+    "USD per lb",
+    "USD per mcf",
+    "USD per oz",
+    "USD per tonnes",
     "USD per ounce in 2026 money",
     "USD per ounce",
     "USD per pound",

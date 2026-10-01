@@ -137,7 +137,7 @@
    "cycle_dependence_because": "INVENTED FIXTURE - this name's thesis rests on its own execution, not on an identifiable capital or commodity cycle."
   }
  },
- "capture_version": "1.11.0",
+ "capture_version": "1.12.0",
  "captured_at": "2026-08-30T21:30Z",
  "evidence_challenge": {
   "failure_status": null,
@@ -186,9 +186,9 @@
   "status": "success",
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f6071865786d702d706173",
-  "evidence_sha256": "36fc922f98331794e4d0304595e6f86fa7457c6f2d7697e3d91d189607f5c45e",
+  "evidence_sha256": "d6d1a6a633579248e2d567712b19661abd145336ea35713be029228105925a55",
   "post_audit_changes": [],
-  "post_audit_sha256": "36fc922f98331794e4d0304595e6f86fa7457c6f2d7697e3d91d189607f5c45e"
+  "post_audit_sha256": "d6d1a6a633579248e2d567712b19661abd145336ea35713be029228105925a55"
  },
  "gaps": [
   {

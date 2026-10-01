@@ -47,7 +47,10 @@ from council.evidence.brief import (
     grower_subject_frame, grower_yardstick_rows, share_carrier,
     INTEGRATED_BESIDE_LEAD, PRODUCER_NATURE_WORDS, integrated_major_frame, integrated_major_ids, producer_facts_read,
     producer_kind_words, producer_life_line, producer_readings,
-    producer_subject_frame, producer_tables)
+    producer_subject_frame, producer_tables, HOLDING_ARCHETYPE, HOLDING_KIND_WORDS, ONE_HOLDING_SENTENCE,
+    MOSTLY_PRIVATE_SENTENCE, VALUATION_BASIS_WORDS, HOLDING_POSITION_WORDS,
+    holding_subject_frame, holding_readings, holding_tables, holding_summary,
+    holding_sentences, holding_facts_read, holding_currency_line, holding_display_facts)
 from council.lib import canonical, subjects
 from council.engine import chair_fields
 
@@ -881,7 +884,7 @@ def _headline_measurement(capture, ticker):
     direction, as it happens, since the ruled pairs floor demands the
     prior-year companion of a figure that is present and asks nothing
     of a prior-year figure standing alone."""
-    facts = {fact.get("id"): fact for fact in capture.get("tier1", [])}
+    facts = holding_display_facts(capture, recorded=True)
     suffix = gate.frame_suffix(capture.get("subject", {}), ticker)
     sorted_words = {"measured": [], "not_compared": [], "latest_only": [],
                     "prior_only": [], "absent": []}
@@ -963,7 +966,7 @@ def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
     when it is a tier-1 id of this pack; the ruled words stand beside it.
     Every string written at capture travels inside the quoted-data fence,
     and any other id or word is quoted there too (P-U3e-3, AC19)."""
-    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    facts = holding_display_facts(capture)
     quoted = []
 
     def ref(fact_id):
@@ -1030,6 +1033,15 @@ def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
                      refs(risk.get("facts"), "none, by design"))]
         lines.extend(_fenced("Why this line, as the capture states it:",
                              _mark_prose(risk.get("because"), marks)))
+    lines.extend(_nav_bridge_lines(frame, ref, marks))
+    return lines + _fi_quoted_lines(quoted)
+
+
+def _nav_bridge_lines(frame, ref, marks, capture=None):
+    """AC30(3), AC60-AC62: one bridge printer for both kinds of holding."""
+    lines = []
+    if capture is not None and holding_subject_frame(capture) is frame:
+        return _holding_frame_lines(capture, frame, marks)
     bridge = frame.get("nav_bridge")
     if isinstance(bridge, dict):
         rows = ["| Component | How it is valued | Value |",
@@ -1055,6 +1067,36 @@ def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
             if bridge.get(key):
                 lines.append("- %s: %s" % (label, ref(bridge[key])))
         lines += ["", FI_NOT_RATED_SENTENCE]
+    return lines
+
+
+def _holding_frame_lines(capture, frame, marks):
+    """AC59-AC62: the pages' tables, with facts vouched for by this pack."""
+    pack, quoted = {"capture": capture}, []
+    readings = holding_readings(pack)
+    ref = _producer_ref(capture, {f["id"] for f in capture["tier1"]}, quoted)
+
+    def said(cell):
+        if "id" in cell:
+            return ref(cell["id"])
+        if cell["kind"] == "prose":
+            quoted.append(_mark_prose(cell["text"], marks))
+            return "the capture's words (quoted below)"
+        return cell_text(cell)
+
+    lines = ["", FI_NOT_RATED_SENTENCE]
+    if readings.get("errors"):
+        lines.extend(_fenced("The holding figures cannot be read:",
+                             _mark_prose(holding_summary(readings), marks)))
+    else:
+        lines.append(holding_summary(readings))
+    for lead, table in holding_tables(pack, frame, readings):
+        lines += ["", lead + ":", "| " + " | ".join(table["head"]) + " |",
+                  "| " + " | ".join("---" for _ in table["head"]) + " |"]
+        lines += ["| " + " | ".join(said(c) for c in row) + " |" for row in table["rows"]]
+        lines += ["- " + " ".join(said(c) for c in row) for row in table["below"]]
+    for sentence in holding_sentences(readings):
+        lines.extend(_fenced("The ruled holding sentence:", _mark_prose(sentence, marks)))
     return lines + _fi_quoted_lines(quoted)
 
 
@@ -1084,7 +1126,7 @@ def _grower_frame_lines(capture, frame, fact_ids, marks):
     A fact stands in the file's own voice, with its recorded value, ONLY
     when it is a tier-1 id of this pack; any other id is quoted in the
     closing fence, and the funding reason travels fenced (P-U3e-3, AC19)."""
-    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    facts = holding_display_facts(capture)
     pack = {"capture": capture}
     quoted = []
 
@@ -1140,7 +1182,7 @@ def _producer_ref(capture, fact_ids, quoted):
     file's own voice with its value only where that value is a number or a
     date; a value in words, and any id the pack does not carry, is kept for
     the quoted-data fence the caller closes its lines with."""
-    facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
+    facts = holding_display_facts(capture)
 
     def ref(fact_id):
         if not (isinstance(fact_id, str) and fact_id in fact_ids):
@@ -1151,7 +1193,7 @@ def _producer_ref(capture, fact_ids, quoted):
         if gate._decimal_or_none(value) is None and not _ISO_DAY.match(value):
             quoted.append("%s: %s" % (fact_id, value))
             return "`%s` = a value in words (quoted below)" % fact_id
-        return "`%s` = %s %s" % (fact_id, value, _one_line(fact.get("unit")))
+        return "`%s` = %s %s" % (fact["id"], value, _one_line(fact.get("unit")))
     return ref
 
 
@@ -1167,7 +1209,11 @@ def _producer_frame_lines(capture, frame, fact_ids):
     quoted = []
     ref = _producer_ref(capture, fact_ids, quoted)
 
-    def said(cell):
+    def said(cell, shown_ids=()):
+        if "date_of" in cell:
+            fid = cell["date_of"]
+            return (cell_text(cell) if fid in shown_ids else
+                    "%s (as of `%s`)" % (cell_text(cell), fid))
         if cell.get("ids"):
             return "; ".join(ref(fid) for fid in cell["ids"])
         if "id" in cell:
@@ -1193,10 +1239,12 @@ def _producer_frame_lines(capture, frame, fact_ids):
                 lines.append("- %s: %s (%s)" % (said(first), said(rest[0]),
                                                 rest[1]["text"]))
             else:
+                shown_ids = {fid for cell in rest for fid in
+                             (cell.get("ids") or [cell.get("id")]) if fid in fact_ids}
                 lines.append("- %s" % "; ".join(
                     ([first["note"]] if first.get("note") else []
                      if "name_of" in first else [said(first)])
-                    + ["%s: %s" % (name, said(cell))
+                    + ["%s: %s" % (name, said(cell, shown_ids))
                        for name, cell in zip(head[1:], rest)
                        if cell.get("text") != ""]))
     return lines + _fi_quoted_lines(quoted)
@@ -1227,8 +1275,7 @@ def _share_figure(frame, line, capture):
     the rule both owner pages read (brief.earnings_facts) - never a
     year-ago figure, never a share calculated for the seats; else the
     words for a line naming neither."""
-    facts = {fact.get("id"): fact for fact in (capture or {}).get("tier1")
-             or []}
+    facts = holding_display_facts(capture or {})
     carrier = share_carrier(facts, line)
     if carrier is not None:
         return _one_line(carrier.get("value")), False
@@ -1294,6 +1341,10 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
                          "**%s**." % measure) if measure else ""))
         if fi:
             lines.extend(_fi_kind_lines(frame, measure))
+        elif capture is not None and holding_subject_frame(capture) is frame:
+            lines += ["", "The kind of business, in plain words: %s - rated on %s."
+                      % (HOLDING_KIND_WORDS, MEASURE_WORDS[
+                          measure or _rating_measure(capture)]), holding_currency_line(capture)]
         elif grower:
             lines.extend(_grower_kind_lines(frame, measure))
         elif producer:
@@ -1352,6 +1403,8 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
     if fi:
         lines.extend(_fi_frame_lines(capture, ticker, frame,
                                      fact_ids or frozenset(), marks))
+    elif capture is not None and holding_subject_frame(capture) is frame:
+        lines.extend(_nav_bridge_lines(frame, None, marks, capture))
     elif grower:
         lines.extend(_grower_frame_lines(capture, frame,
                                          fact_ids or frozenset(), marks))
@@ -2842,8 +2895,12 @@ def _price_unit_words(price_units):
     return (": " + "; ".join(words)) if words else ""
 
 
+ONE_HOLDING_NOTE = "\n- " + ONE_HOLDING_SENTENCE + "\n"
+MOSTLY_PRIVATE_NOTE = "\n- " + MOSTLY_PRIVATE_SENTENCE + "\n"
+
+
 def draft_contract(subject, price_units=None, runway_below=False,
-                   reserve_price_below=False):
+                   reserve_price_below=False, one_holding=None, mostly_private=False):
     """The draft-verdict contract for this subject: the base text plus
     only the additions the subject's kind and class need. `price_units`
     lists the pack's price facts ({"instrument", "fact_id", "unit"}), so the
@@ -2866,6 +2923,11 @@ def draft_contract(subject, price_units=None, runway_below=False,
                 text += RUNWAY_CAP_NOTE
             if reserve_price_below:
                 text += RESERVE_PRICE_NOTE
+            if one_holding is not None:
+                text += "\n" + "\n".join(_fenced("The ruled holding sentence:",
+                    ONE_HOLDING_NOTE % _one_line(one_holding))) + "\n"
+            if mostly_private:
+                text += MOSTLY_PRIVATE_NOTE
     if subjects.has_constituents(subject):
         text += _NOTES_CONTRACT
     if subjects.expression_tickers(subject):
@@ -2884,7 +2946,8 @@ states."""
 
 def _chair_draft_brief(run_id, casefile, advisor_answers, reviewer_answer,
                        subject, advisor_ladders=None, price_units=None,
-                       runway_below=False, reserve_price_below=False):
+                       runway_below=False, reserve_price_below=False,
+                       one_holding=None, mostly_private=False):
     sections = []
     for seat in ADVISOR_SEATS:
         sections.append("### %s\n\n%s\n"
@@ -2927,7 +2990,7 @@ brief.
     {"draft_verdict": { ...every field above... }, "synthesis_markdown": "<your synthesis>"}
 """ % (run_id, CHAIR_WEIGHING, CHAIR_NAMES, WRITING_RULES,
        draft_contract(subject, price_units, runway_below,
-                      reserve_price_below))
+                      reserve_price_below, one_holding, mostly_private))
     evidence = """%s
 
 %s
@@ -2952,7 +3015,8 @@ brief.
 def _chair_resolve_brief(run_id, casefile, draft_verdict, findings,
                          endorsement, challenger_model, subject,
                          summary=None, price_units=None,
-                         runway_below=False, reserve_price_below=False):
+                         runway_below=False, reserve_price_below=False,
+                       one_holding=None, mostly_private=False):
     finding_lines = []
     for finding in findings:
         finding_lines.append("- **%s** (%s): %s - %s"
@@ -3004,7 +3068,7 @@ public change appendix.
     {"dispositions": [...], "final_verdict": { ... }, "final_markdown": "..."}
 """ % (run_id, challenger_model, CHAIR_NAMES, WRITING_RULES,
        draft_contract(subject, price_units, runway_below,
-                      reserve_price_below))
+                      reserve_price_below, one_holding, mostly_private))
     evidence = """%s
 
 %s
@@ -3200,7 +3264,7 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                 summary=None, subject=None, retry_reason=None,
                 prior_answer=None, advisor_ladders=None, framed=False,
                 taped=False, price_units=None, runway_below=False,
-                reserve_price_below=False):
+                reserve_price_below=False, one_holding=None, mostly_private=False):
     """Assemble one seat's brief. Raises ValueError if the for_atlas text
     would reach a seat - that half of the question travels to nobody -
     or if a chair brief is asked for without the subject (the chair's
@@ -3224,7 +3288,7 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                                             reviewer_answer, subject,
                                             advisor_ladders, price_units,
                                             runway_below,
-                                            reserve_price_below)
+                                            reserve_price_below, one_holding, mostly_private)
     elif seat_kind == "chair_resolve":
         head, evidence = _chair_resolve_brief(run_id, casefile,
                                               draft_verdict,
@@ -3232,7 +3296,7 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                                               challenger_model, subject,
                                               summary, price_units,
                                               runway_below,
-                                              reserve_price_below)
+                                              reserve_price_below, one_holding, mostly_private)
     else:
         raise ValueError("unknown seat kind %r" % seat_kind)
     # Contract first, evidence last (MAC-1): the seat's obligation and
@@ -3407,8 +3471,9 @@ def _floors_block(subject, floors=None, capture=None):
         lift_lines = [
             lifts["lift_words"].format(
                 ids=", ".join("`%s`" % fid for fid in lifted),
-                who=FI_SUBTYPE_WORDS.get(declared[1])
-                or declared[1].replace("_", " ")), ""]
+                who=(HOLDING_KIND_WORDS
+                     if declared[0] == HOLDING_ARCHETYPE else FI_SUBTYPE_WORDS.get(declared[1]))
+                or (declared[1] or declared[0]).replace("_", " ")), ""]
     return ["", "## The evidence minimums this council already demands "
                 "for this asset class", "",
             "Ruled data, quoted whole. It is here so you can argue about "
@@ -3571,7 +3636,7 @@ def _delta_fact_lines(capture, ids):
     and the declared arithmetic where the fact is derived. A source-less
     correction carries the stale-reading warning here too, or the auditor
     reads the new value under the old source (audit round 2, r2-2)."""
-    facts_by_id = {fact.get("id"): fact for fact in capture.get("tier1", [])}
+    facts_by_id = holding_display_facts(capture, recorded=True)
     stale_ids = gate.stale_reading_ids(capture)
     lines = []
     for fact_id in ids:
@@ -3579,7 +3644,7 @@ def _delta_fact_lines(capture, ids):
         if not fact:
             continue
         lines.append("- `%s` = %s %s (as of %s)"
-                     % (fact_id, _one_line(fact.get("value")),
+                     % (fact["id"], _one_line(fact.get("value")),
                         _one_line(fact.get("unit")), fact.get("as_of")))
         lines.append("  - source: %s" % _one_line(fact.get("source")))
         if fact_id in stale_ids:
@@ -3662,6 +3727,8 @@ def _frame_cites(frame, delta, capture=None):
              + [bridge.get(key) for key in (
                  "holdco_net_debt_fact", "nav_total_fact",
                  "published_nav_fact", "discount_fact")])
+    if capture is not None and holding_subject_frame(capture) is frame:
+        cited += sorted(holding_facts_read(capture, frame))
     # Owner rulings AC50(7) and AC50(8): the facts a growth company's months
     # of cash left are counted from - a corrected cash fact brings its frame
     # into the delta.

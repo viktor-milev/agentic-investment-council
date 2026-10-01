@@ -149,7 +149,7 @@ _FI_REGIME_WORDS = 12
 _FI_BINDING_CONSTRAINT_WORDS = 25
 _FI_RISK_COST_BECAUSE_WORDS = 25
 _FI_FIELDS = ("fi_subtype", "fi_secondary_subtype", "fi_secondary_share_facts",
-              "fi_capital", "fi_risk_cost", "nav_bridge")
+              "fi_capital", "fi_risk_cost")
 _FI_CAPITAL_SHAPE = ("ratio_facts", "requirement_facts", "regime",
                      "binding_constraint", "figures")
 _FI_NO_RISK_COST = "none_by_design"
@@ -1177,6 +1177,36 @@ def _check_business_frame(capture):
                         "and on any other business the seats would read "
                         "them as ground the rating does not stand on"
                         % (where, ", ".join(stray), _FI_ARCHETYPE))
+            # Owner rulings AC59-AC62, HA3/HA4: the bridge is also the
+            # ordinary-business holding's; FI refusals stay in their place.
+            if frame.get("archetype") == "investment_holding":
+                bridge = frame.get("nav_bridge")
+                if not bridge:
+                    reasons.append(
+                        "%s is an investment holding and carries no nav_bridge "
+                        "- owner rulings AC59-AC62, extending AC30(3), rate it "
+                        "on its discount to what it owns, so the frame names "
+                        "the parts that value is struck from" % where)
+                else:
+                    _check_nav_bridge(bridge, where, reasons, missing_fact)
+                    for component in bridge["components"]:
+                        if (component["method"] in ("company_reported_value",
+                                                    "carrying_value")
+                                and not component.get("valuation_basis")):
+                            reasons.append(
+                                "%s carries the private component '%s' without "
+                                "a valuation_basis - owner ruling AC60(H6) "
+                                "requires the company's own dated value and "
+                                "the basis it publishes" % (where,
+                                                           component["name"]))
+            elif (frame.get("archetype") != _FI_ARCHETYPE
+                  and frame.get("nav_bridge") is not None):
+                reasons.append(
+                    "%s carries nav_bridge and declares neither an "
+                    "'investment_holding' nor a 'financial_institution' "
+                    "with fi_subtype 'financial_holding' - owner rulings "
+                    "AC30(3) and AC59-AC62 reserve this bridge for those "
+                    "two kinds of holding" % where)
             # The growth archetype's own declarations (owner rulings AC49(1)
             # and AC50), on the financial institution's pattern.
             if frame.get("archetype") == _GROWER_ARCHETYPE:
@@ -1931,6 +1961,18 @@ def _check_business_frame(capture):
     return reasons
 
 
+def _check_nav_bridge(bridge, where, reasons, missing_fact):
+    """Owner rulings AC30(3) and AC59-AC62: one id check for both bridges.
+    Shape only; no floors or valuation judgement is read here."""
+    for component in bridge["components"]:
+        missing_fact("the value of '%s' in the nav_bridge"
+                     % component["name"], component["value_fact"])
+    for field in ("holdco_net_debt_fact", "nav_total_fact",
+                  "published_nav_fact", "discount_fact"):
+        if bridge.get(field):
+            missing_fact("the nav_bridge's %s" % field, bridge[field])
+
+
 def _check_fi_frame(frame, where, reasons, missing_fact, figures_bind):
     """A financial institution's frame declarations (owner rulings AC28
     and AC30, unit FI-ARCHETYPE), for a single name whose frame declares
@@ -2066,13 +2108,7 @@ def _check_fi_frame(frame, where, reasons, missing_fact, figures_bind):
             "would read a net asset value the rating does not stand on"
             % (where, subtype))
     if bridge:
-        for component in bridge["components"]:
-            missing_fact("the value of '%s' in the nav_bridge"
-                         % component["name"], component["value_fact"])
-        for field in ("holdco_net_debt_fact", "nav_total_fact",
-                      "published_nav_fact", "discount_fact"):
-            if bridge.get(field):
-                missing_fact("the nav_bridge's %s" % field, bridge[field])
+        _check_nav_bridge(bridge, where, reasons, missing_fact)
 
     for line in frame["how_it_earns"]:
         if not line.get("nature"):

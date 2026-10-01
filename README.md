@@ -24,54 +24,31 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 ## What changed since the last snapshot
 
-This snapshot adds two new kinds of business the council can rate, rebuilds every page a person
-reads for plain reading, and tightens the evidence the seats reason from. In plain terms:
+This snapshot adds one new kind of business the council can rate, opens it to stocks listed
+outside the US, and tightens how a miner's or driller's by-products are shown. In plain terms:
 
-- **Growth companies that do not yet make a profit have their own rating rules.** A company is
-  rated on its earnings only when each of its four latest quarters shows an operating profit under
-  standard accounting. Anything less puts it on the growth path, in two kinds: subscription and
-  usage software, and platforms that take a cut of the volume passing through them. The yardstick
-  is what the whole business costs against its gross profit, read beside its sales growth. The
-  machine works out the months of cash left from recorded figures; under the line in the floors
-  the council may rate the company at most *hold*, and every page says so. Stock-based pay and
-  dilution are shown beside the yardstick, never netted out of it.
-- **Oil, gas and mining producers have their own rating rules.** Oil and gas producers, gold,
-  silver and copper miners, and royalty and streaming companies are rated on what the company
-  costs against its reserves and its cash flow at the price the reserves were counted at. Every
-  reserve figure is shown beside that price and today's price, with reserve life, the quarters'
-  output and price received, hedges, debt and clean-up obligations. By-product metals are shown
-  apart and never counted in the rating. An integrated oil major is rated as a profit-maker only
-  when it passes a stated test, and its pages still show its reserves and today's price.
-- **Every single stock records insiders' dealings and buybacks as real transactions.** A buyback
-  counts only as a dated amount actually spent; an authorisation alone answers nothing. Each
-  insider dealing carries a direction, a date and a size. How deep the gathering goes follows
-  what the officers and directors own: a summary plus the top officers' own dealings under the
-  floors' threshold, every dealing at or over it.
-- **A closed list of units.** Every recorded figure's unit must be on a list kept with the evidence
-  floors, so a mislabelled unit is refused rather than misread.
-- **The asker's question on one line.** The evidence may carry a one-line version of the question,
-  at most sixty words. It is checked against the full question for contradiction: it may
-  paraphrase freely, but it may not add a figure, a ticker or an action (buy, sell, hold and the
-  like) the asker never wrote.
-- **The chairman's one-line answer and three required fields.** The chairman now writes one line
-  answering the question, printed first; names the advisor whose argument decided it and why;
-  describes the business in his own words; and reads out every decisive number with what it
-  implies. Each figure in those fields is traced to the frozen evidence, or marked where it traces
-  to nothing.
-- **A citation index in the case file.** Every seat and the outside challenger read the facts'
-  sources through a numbered index: text that several sources repeat is printed once, and each
-  fact keeps a verbatim locator. Every source rebuilds exactly from the index, and the case file
-  shrinks by roughly a third.
-- **The approval page.** The full evidence document a person approves before any seat is paid is
-  now also written as a self-contained web page in the report's look. A sitting that needs an
-  approval refuses to start unless that page is the exact rendering of the approved document.
-- **The pages rebuilt for plain reading.** The report page runs in numbered sections with the
-  advisors up front; the seats' tables are real tables; every figure follows one rounding rule;
-  internal labels are gone; every technical term carries a plain explanation on hover or tap; and
-  the business sections read as tables — how the company earns, guidance from first guide through
-  revisions to what was delivered, capital, credit costs. The approval document reads the same way.
-- **Seven suites, run in module form.** The check battery is seven Python suites, each run as
-  `python3 -m unittest council.tests.test_<suite>` (see *Running it*).
+- **Holding companies that own other businesses have their own rating rules.** A listed company
+  whose value is mostly stakes in businesses it does not run day to day, and which publishes the
+  value of what it owns, is rated on its price against its net asset value. The council builds
+  that value part by part — every listed stake at today's price, every private stake at the
+  company's own latest dated value (never re-valued by the council, never older than fifteen
+  months), the holding company's own net debt taken off once — and prints it beside the value the
+  company publishes. Today's discount is shown two ways and against each of the last five
+  financial year-ends. Dividend cover answers the cash test. Two sentences are printed where they
+  apply, never as a cap on the rating: when one holding is most of the value, and when most of the
+  value is private. A holding company is always rated as one, whatever its reported profit or
+  loss. One mostly owning banks, insurers or money managers stays a financial institution.
+- **Stocks listed outside the US.** Twelve more exchange calendars are kept as data — Toronto and
+  the TSX Venture, Xetra, Euronext Brussels, Paris and Amsterdam, Nasdaq Stockholm, the Australian,
+  Hong Kong and Abu Dhabi exchanges, London and SIX Swiss — so a price series is checked against
+  the right trading days. Figures may be recorded in Canadian, Australian, Hong Kong dollars,
+  euros, pounds, Swiss francs, Swedish kronor or dirhams. A holding company's evidence is recorded
+  in one currency, its own; a conversion is one figure times one dated exchange rate, shown in
+  full.
+- **By-products priced and dated on their own.** Each by-product reserve of a miner or driller
+  now carries the price it was counted at and today's price, and every reserve row its own date.
+- **The rating rule names the right home.** A company declared the wrong kind of business is
+  pointed to the kind it is, without a second, false pointer.
 
 ---
 
@@ -113,13 +90,20 @@ is labelled that way. Both years must use the same treatment, so a stand-in cann
 a trend. Nothing here asserts the substitute line is the narrowest one available; that judgment is
 a human's, and the file says so. A product nobody has ruled on still refuses.
 
-**A bank, an insurer, a reinsurer, an asset manager or a holding company** is rated as a
-financial institution: on the return it earns on the capital it must hold, beside that capital's
-legal minimum and the regulator's bad-year stress loss. For these firms the capital-spending
-requirement is lifted, and the cash test becomes the capital the firm can pay out and still stay
-above its minimum. A holding company is rated on the discount to its net asset value, and the
-gate checks that value as a chain of recorded facts: every holding added once, the company's own
-net debt taken off once.
+**A bank, an insurer, a reinsurer, an asset manager or a holding company of financial firms** is
+rated as a financial institution: on the return it earns on the capital it must hold, beside that
+capital's legal minimum and the regulator's bad-year stress loss. For these firms the
+capital-spending requirement is lifted, and the cash test becomes the capital the firm can pay out
+and still stay above its minimum. A holding company is rated on the discount to its net asset
+value, and the gate checks that value as a chain of recorded facts: every holding added once, the
+company's own net debt taken off once.
+
+**A holding company that owns other businesses** — most of its value in stakes it does not run
+day to day — is rated on price against net asset value by the same chain of facts, with every
+private stake at the company's own latest dated value and the company's own published value
+printed beside the council's. Today's discount is read against its last five financial year-ends;
+dividend cover answers the cash test. A holding company is always rated as one, and a loss from
+falling investment prices never makes it a growth company.
 
 **A growth company that does not yet make a profit** — one without four profitable quarters
 behind it — is rated on the growth path: what the whole business costs against its gross profit,
@@ -165,23 +149,23 @@ The seven suites, what each covers, and the command to run it:
 
 | Suite | Tests | Covers | Run |
 |---|---|---|---|
-| `test_foundations` | 36 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_foundations` |
-| `test_evidence` | 1418 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, growth and resource-producer rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
-| `test_engine` | 657 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
+| `test_foundations` | 40 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the exchange calendars and currency units, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_foundations` |
+| `test_evidence` | 1576 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the listings outside the US, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, growth, resource-producer and holding-company rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
+| `test_engine` | 668 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
 | `test_bridge` | 150 | the challenger command's exact flag surface, the tool-list probe and the tool-use record, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_bridge` |
-| `test_report` | 453 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, growth and resource-producer pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
+| `test_report` | 461 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, growth, resource-producer and holding-company pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
 | `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_e2e_rehearsal` |
 | `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_ledger` |
 
-2782 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+2963 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
 Where `python3` on your machine is older than 3.13, name the newer interpreter instead (for
 example `python3.13`).
 
-**Clean skips.** 132 tests skip here and only here, each with its reason printed, because they
-read material this copy does not publish. 130 read *live run records*: `test_evidence` skips 75
+**Clean skips.** 136 tests skip here and only here, each with its reason printed, because they
+read material this copy does not publish. 134 read *live run records*: `test_evidence` skips 78
 (the live-capture, migration and archetype-acceptance classes re-run the gate over real captures,
 and the approval-document and business-row classes render a real sitting's evidence), `test_report`
-skips 45 (the readability, look-and-feel, business-table and approval-page classes render a real
+skips 46 (the readability, look-and-feel, business-table and approval-page classes render a real
 sitting, and every real sitting still renders), `test_engine` skips 9 (read-back of every published
 sitting, and checks that read one real sitting's case file and verdict), and `test_ledger` skips
 one (scoring rows built from real verdicts). The other two are in `test_foundations`: they check the

@@ -1,5 +1,5 @@
 {
- "capture_version": "1.11.0",
+ "capture_version": "1.12.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [],
  "market_state": {
@@ -278,8 +278,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f60718636f707065722d70",
-  "evidence_sha256": "b2ec2f5efeb20bddaeb76857785ebef12b23e03e61a9b91bdf2ca65c81694227",
+  "evidence_sha256": "ba05d6e64f58b0366ffbaaf8e688aee3adfb65702a607f0c35cf04dcd62207eb",
   "post_audit_changes": [],
-  "post_audit_sha256": "b2ec2f5efeb20bddaeb76857785ebef12b23e03e61a9b91bdf2ca65c81694227"
+  "post_audit_sha256": "ba05d6e64f58b0366ffbaaf8e688aee3adfb65702a607f0c35cf04dcd62207eb"
  }
 }

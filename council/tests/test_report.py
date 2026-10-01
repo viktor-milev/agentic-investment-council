@@ -7121,6 +7121,18 @@ class TestProducerOnThePage(unittest.TestCase):
     """What the owner's page shows of a producer. Every test FAILS against the pre-change report
     renderer; the guard and the negative control are marked."""
 
+    def test_each_reserve_carries_its_own_date_on_the_report(self):
+        """P-RESOURCEc-9: a by-product row reads its own reserve date."""
+        def apart(capture):
+            test_evidence.producer_facts(capture, test_evidence.PRODUCER_BY_PRODUCTS)
+            test_evidence.producer_block(capture)["by_products"] = ["zinc", "silver"]
+            test_evidence.fact_in(capture, "reserves_pp_silver")["as_of"] = "2026-02-01"
+        rows = _card_rows(_detail(_producer_page(change=apart)),
+                          "The reserves, each beside")
+        self.assertEqual(rows[0][3], "As of")
+        silver = next(row for row in rows if "silver" in row[0])
+        self.assertEqual(silver[3], "1 Feb 2026")
+
     def test_the_front_names_the_kind_measure_and_reserve_life(self):
         front = _front(_producer_page())
         self.assertIn("%s - %s — rated on %s" % (
@@ -7237,6 +7249,79 @@ class TestProducerOnThePage(unittest.TestCase):
     def test_every_run_on_record_renders_unchanged(self):
         """A GUARD, passing on the base by design: every run on record renders to the bytes the
         base renderer gave it (the growth unit's pins, unmoved since main 2a9f4a7)."""
+        TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
+
+
+
+def _holding_page(big=False, change=None):
+    capture = test_evidence.holding_page_capture(big)
+    if change:
+        change(capture)
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        subject = json.loads(fh.read().decode("utf-8"))["subject"]
+    frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+    capture["subject"], capture["business_frame"] = subject, {subject["ticker"]: frame}
+    with tempfile.TemporaryDirectory(prefix="report-holding-") as tmp:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+
+
+class TestHoldingOnThePage(unittest.TestCase):
+    def test_the_front_names_the_kind_measure_and_discount(self):
+        front = _front(_holding_page())
+        text = _grower_text(front)
+        self.assertIn("a holding company that owns other businesses — rated on price against net asset value", text)
+        self.assertIn("at today's prices (the one rated)", text)
+        self.assertIn("narrower than at any of the last five year-ends", text)
+        for term in ("net asset value", "Discount to net asset value", "Private holding"):
+            self.assertIsNotNone(_grower_note(front, term))
+
+    def test_the_front_carries_the_not_rated_sentence(self):
+        self.assertIn(pack_brief.FI_NOT_RATED_SENTENCE, _grower_text(_front(_holding_page())))
+
+    def test_the_front_carries_each_ruled_sentence_where_it_applies(self):
+        front = _front(_holding_page(True))
+        text = _grower_text(front)
+        name = test_evidence.holding_frame(test_evidence.holding_page_capture(True))["nav_bridge"]["components"][-1]["name"]
+        self.assertIn(pack_brief.ONE_HOLDING_SENTENCE % name, text)
+        self.assertIn(pack_brief.MOSTLY_PRIVATE_SENTENCE, text)
+        self.assertGreaterEqual(front.count('class="card prominent"'), 2)
+        self.assertNotIn("private values move slowly", _grower_text(_front(_holding_page())))
+        def private_only(c):
+            for part in test_evidence.holding_frame(c)["nav_bridge"]["components"]:
+                part.update(method="company_reported_value", valuation_basis="cost")
+        text = _grower_text(_front(_holding_page(change=private_only)))
+        self.assertIn(pack_brief.MOSTLY_PRIVATE_SENTENCE, text)
+        self.assertNotIn("Most of this company's value is one holding", text)
+
+    def test_the_report_and_brief_word_tables_agree(self):
+        self.assertEqual(R.ARCHETYPE_WORDS["investment_holding"], pack_brief._ARCHETYPE_WORDS["investment_holding"])
+        self.assertEqual(R.VALUATION_BASIS_WORDS, pack_brief.VALUATION_BASIS_WORDS)
+        self.assertEqual(R.HOLDING_POSITION_WORDS, pack_brief.HOLDING_POSITION_WORDS)
+
+    def test_the_detail_carries_the_holding_frame(self):
+        detail = _detail(_holding_page())
+        text = _grower_text(detail)
+        for words in ("The net asset value, part by part", "at its latest funding round",
+                      "15 Jul 2026", "Loan-to-value", "Average:"):
+            self.assertIn(words, text)
+        for term in ("Loan-to-value", "Published net asset value", "dividend cover"):
+            self.assertIsNotNone(_grower_note(detail, term))
+
+    def test_a_capture_authored_string_is_escaped(self):
+        def change(c):
+            test_evidence.holding_frame(c)["nav_bridge"]["components"][-1]["name"] = "<script>INVENTED & command</script>"
+        page = _holding_page(True, change)
+        self.assertNotIn("<script>INVENTED", page)
+        self.assertIn("&lt;script&gt;INVENTED &amp; command&lt;/script&gt;", page)
+
+    def test_every_run_on_record_renders_unchanged(self):
+        # Guard: the inherited pins cover reports, documents and approval.
+        if not test_evidence.live_records_present(test_evidence.LIVE_RUNS,
+                (test_evidence.JPM_RUN, test_evidence.WULF_RUN)):
+            self.skipTest("the runs on record are not in this copy")
         TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
 
 

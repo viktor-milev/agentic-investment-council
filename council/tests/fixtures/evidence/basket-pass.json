@@ -154,7 +154,7 @@
    "what_it_does_figures": []
   }
  },
- "capture_version": "1.11.0",
+ "capture_version": "1.12.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -568,8 +568,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186261736b65742d70",
-  "evidence_sha256": "77227a0ad7bb2a34422ee36f880e721efcb009c8048131d99d30f06cbe56796e",
+  "evidence_sha256": "00b97fdfbd8b7fac8780fac93c39392780aa4eec56cc693580cff82a1fc4ad6c",
   "post_audit_changes": [],
-  "post_audit_sha256": "77227a0ad7bb2a34422ee36f880e721efcb009c8048131d99d30f06cbe56796e"
+  "post_audit_sha256": "00b97fdfbd8b7fac8780fac93c39392780aa4eec56cc693580cff82a1fc4ad6c"
  }
 }

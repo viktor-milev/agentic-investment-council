@@ -8,6 +8,7 @@ import re
 import sys
 import tempfile
 import unittest
+from datetime import date
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -247,7 +248,7 @@ class TestContractSchemas(unittest.TestCase):
                   "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
         self.assertEqual(doc["properties"]["capture_version"]["const"],
-                         "1.11.0")
+                         "1.12.0")
         for optional in ("price_series", "benchmark_series", "benchmark",
                          "question_line"):
             self.assertIn(optional, doc["properties"])
@@ -311,7 +312,7 @@ class TestContractSchemas(unittest.TestCase):
         with open(os.path.join(ROOT, "council", "floors", "floors.json"),
                   "rb") as f:
             floors = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(floors["floors_version"], "1.17.0")
+        self.assertEqual(floors["floors_version"], "1.20.0")
         table = floors["archetype_measures"]["table"]
         self.assertEqual(sorted(table["financial_institution"]["subtypes"]),
                          ["alternative_asset_manager", "bank",
@@ -377,6 +378,107 @@ class TestContractSchemas(unittest.TestCase):
                       "holding_largest_name", "holding_largest_share",
                       "holding_top10_share"]:
             self.assertIn(ruled, etf_required)
+
+
+class TestListingCalendarData(unittest.TestCase):
+    """AC59 rank zero and AC37: the new calendars and currencies as classes."""
+
+    def setUp(self):
+        self.floors = canonical.read_json(os.path.join(
+            ROOT, "council", "floors", "floors.json"))
+
+    def test_every_listing_alias_binds_its_calendar(self):
+        aliases = {
+            "XTSE": ("Toronto Stock Exchange", "TSX"),
+            "XTSX": ("TSX Venture", "TSX Venture Exchange", "TSXV"),
+            "XETR": ("Xetra", "Frankfurt Stock Exchange", "Frankfurt"),
+            "XBRU": ("Euronext Brussels", "Brussels"),
+            "XPAR": ("Euronext Paris", "Paris"),
+            "XAMS": ("Euronext Amsterdam", "Amsterdam"),
+            "XSTO": ("Nasdaq Stockholm", "Stockholm"),
+            "XASX": ("ASX", "Australian Securities Exchange"),
+            "XHKG": ("Hong Kong Stock Exchange", "HKEX", "SEHK"),
+            "XADS": ("Abu Dhabi Securities Exchange", "ADX"),
+            "XLON": ("London Stock Exchange", "LSE"),
+            "XSWX": ("SIX Swiss Exchange", "SIX")}
+        rules = self.floors["price_series"]
+        for calendar, names in aliases.items():
+            with self.subTest(calendar=calendar):
+                self.assertIn(calendar, rules["exchange_calendars"])
+                for name in names:
+                    self.assertEqual(rules["calendars_by_listing"].get(name),
+                                     calendar)
+        for calendar in rules["calendars_by_listing"].values():
+            self.assertIn(calendar, rules["exchange_calendars"])
+
+    def test_calendar_dates_are_unique_weekday_closures(self):
+        calendars = self.floors["price_series"]["exchange_calendars"]
+        new = set(calendars) - {"XNYS", "CRYPTO_24_7"}
+        self.assertEqual(len(new), 12)
+        for key in sorted(calendars):
+            with self.subTest(calendar=key):
+                calendar = calendars[key]
+                self.assertTrue(calendar["name"])
+                self.assertTrue(calendar["note"])
+                trades = calendar["trading_weekdays"]
+                self.assertTrue(trades)
+                self.assertEqual(trades, sorted(set(trades)))
+                self.assertTrue(set(trades) <= set(range(1, 8)))
+                if key in new:
+                    # P-LISTINGS-1: all twelve trade Monday through Friday.
+                    self.assertEqual(trades, [1, 2, 3, 4, 5])
+                    self.assertEqual(calendar["verified_by"],
+                                     "the grader checks every holiday list "
+                                     "against the exchange's published calendar")
+                holidays = calendar["holidays"]
+                self.assertEqual(holidays, sorted(set(holidays)))
+                if key in new:
+                    self.assertEqual({date.fromisoformat(day).year
+                                      for day in holidays}, {2024, 2025, 2026, 2027})
+                for day in holidays:
+                    parsed = date.fromisoformat(day)
+                    self.assertEqual(day, parsed.isoformat())
+                    self.assertIn(parsed.isoweekday(), trades)
+        self.assertEqual(calendars["XTSE"]["holidays"],
+                         calendars["XTSX"]["holidays"])
+
+    def test_currency_magnitude_suffixes_equal_usd(self):
+        units = self.floors["allowed_units"]
+        # Round two architect ruling under AC37: every bare currency
+        # carries USD's pure magnitudes and its per-share spelling.
+        suffixes = {unit[3:] for unit in units
+                    if re.fullmatch(r"USD(?:_[a-z]+)?", unit)}
+        currencies = sorted(unit for unit in units
+                            if re.fullmatch(r"[A-Z]{3}", unit) and unit != "BTC")
+        for currency in currencies:
+            with self.subTest(currency=currency):
+                self.assertEqual({unit[3:] for unit in units
+                                  if re.fullmatch(currency + r"(?:_[a-z]+)?",
+                                                  unit)}, suffixes)
+                self.assertIn(currency + "_per_share", units)
+        self.assertEqual(len(units), len(set(units)))
+
+    def test_published_closure_spot_checks(self):
+        """Round two grader checks: ADX moved holidays and SIX year-end days."""
+        calendars = self.floors["price_series"]["exchange_calendars"]
+        adx = calendars["XADS"]["holidays"]
+        for day in ("2026-03-02", "2026-03-03", "2026-06-15", "2026-08-28"):
+            with self.subTest(calendar="XADS", closure=day):
+                self.assertIn(day, adx)
+        for day in ("2026-06-16", "2026-08-25"):
+            with self.subTest(calendar="XADS", trading_day=day):
+                self.assertNotIn(day, adx)
+        with self.subTest(calendar="XADS", year=2026):
+            self.assertEqual([day for day in adx if day.startswith("2026-")],
+                             ["2026-" + day for day in (
+                                 "01-01", "03-02", "03-03", "03-19", "03-20",
+                                 "05-26", "05-27", "05-28", "05-29", "06-15",
+                                 "08-28", "12-02", "12-03")])
+        for year in range(2024, 2028):
+            for month_day in ("12-24", "12-31"):
+                day = "%d-%s" % (year, month_day)
+                with self.subTest(calendar="XSWX", closure=day):
+                    self.assertIn(day, calendars["XSWX"]["holidays"])
 
 
 class TestLanguageRule(unittest.TestCase):

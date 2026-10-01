@@ -145,6 +145,36 @@
     {
       "term": "Asset retirement obligation",
       "note": "What the company owes to close its wells or mines and restore the land when they stop producing, as carried on its balance sheet."
+    },
+    {
+      "term": "Net asset value",
+      "note": "The value of what the holding company owns, less its own net debt. The council uses today's listed prices and the company's latest private values.",
+      "scope": "investment_holding"
+    },
+    {
+      "term": "Discount to net asset value",
+      "note": "How far the share price is below the value per share, or the market value below the total value. Today's prices give the discount rated; the company's published value gives the comparison with history.",
+      "scope": "investment_holding"
+    },
+    {
+      "term": "Loan-to-value",
+      "note": "The holding company's own net debt as a share of the gross value of what it owns, calculated from the recorded figures.",
+      "scope": "investment_holding"
+    },
+    {
+      "term": "Private holding",
+      "note": "An investment in a business without a listed share price. The council takes the company's latest value, with its date and valuation basis.",
+      "scope": "investment_holding"
+    },
+    {
+      "term": "Published net asset value",
+      "note": "The company's own latest published value, printed beside the council's value and used for the historical comparison.",
+      "scope": "investment_holding"
+    },
+    {
+      "term": "Dividend cover",
+      "note": "Whether the dividends the holding company receives cover its own costs, interest and the dividend it pays.",
+      "scope": "investment_holding"
     }
   ],
   "series": {

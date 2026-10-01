@@ -621,13 +621,92 @@ ten-year real yield - are SUGGESTIONS, never a rule.
 Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.2. Do not copy its tables
 here.
 
+### 1.0d A holding company that owns other businesses (owner rulings AC59-AC62, AC65)
+
+A listed company whose value is mostly investments in businesses it does not run
+day to day, and which publishes the value of what it owns, declares
+`investment_holding`. A conglomerate running its businesses stays a profit-maker.
+Where banks, insurers and money managers make up more than half that value, use
+the financial institution's `financial_holding` sub-type instead. Both are rated
+on price against net asset value; the owned businesses are not rated here (H1-H2).
+
+One listed holding above half is still a holding company. The front names it as
+not rated in this sitting (H3). The rule works both ways: a holding company is
+always rated as one; reported profits are shown and never decisive. A loss from
+falling investment prices never makes it a growth company (H4).
+
+Build `nav_bridge`: every listed investment at today's price; each private
+investment at the company's own latest published value; subtract only the
+holding company's own net debt. Print the company's own published net asset
+value beside the council's (H5). For every private component name
+`valuation_basis` and a value fact with its own `as_of`. The bases are listed
+company comparisons, the latest funding round, forecast cash, a fund manager's
+statement, cost, or another stated method. The council never re-values private
+businesses. A value older than fifteen months refuses with a shopping list.
+Book value is used only where nothing better is published, and labelled (H6).
+
+The pack is recorded in ONE currency, the holding company's own reporting currency; a foreign-reporting holding is captured in its own currency.
+A conversion is exactly one foreign figure times one dated `fx_rate_` fact, with the same scale and its result in the pack's currency (AC62 H16, AC65).
+Every fact a floor names by id — the 52-week range, price, market value, holding-company net
+debt, costs, cash flows and capital returns — is recorded in the pack's currency; a native
+source figure takes an id of its own.
+
+The market value, every bridge component, the net debt and the net asset value
+use one unit string, including its scale. Count every share class in
+`market_cap`, including both A and B shares (H16). Conversion arithmetic and
+its dated exchange-rate fact stay visible; never convert out of the pack's
+currency or out and back (AC65).
+
+Record each of the last five financial year-end pairs as
+`nav_published_hist_fyYYYY` and `price_hist_fyYYYY`, the company's published
+value per share and the price that day, in one unit. A quarter-end does not
+count. A younger listing declares its gap and shows what it has (H9). In the
+weeks before the new annual report, an oldest member beyond the five-year
+freshness ceiling is declared a gap; the ceiling is not widened.
+The generated brief shows today's discount at today's prices and on the latest
+published value, the annual discounts, their average and the ruled range phrase
+(H10-H11). Do not describe a discount as cheap or dear in the evidence.
+
+Capture the holding company's net debt and `holdco_costs_ttm`, plus the
+`holdco_cash_flow_` facts for dividends received, costs, interest and dividends
+paid. Capture dividends and buybacks too. The first standard test is net asset
+value per share growth, dividends beside it and never added in; the second is
+dividend cover; the third is the discount against its history and peers (H8, H13).
+Peers are other holding companies on their own published value; a financial
+holding needs a stated reason. Only this sitting's company is re-priced (H14).
+Record every investment in the company's value table, largest first with its
+share. The smallest are grouped as "other" when together under a tenth;
+completeness stays with the outside evidence check and the owner (H15).
+The private share, debt share and yearly costs share are calculated, never
+rating caps; above half private, the front carries the ruled warning (H7-H8).
+
+Watch these traps when gathering:
+
+- Consolidated results and investment-entity reporting describe different things; use the published investment value table.
+- Private marks can be stale, especially venture investments; preserve each date and method.
+- Cross-holdings are shown as reported, never netted.
+- A discount inside another discount stays visible in the underlying investment.
+- A structural discount is evidence for the advisors to judge, never a claim it will close.
+- Currency conversions need their own native figure, dated rate and pack-currency result.
+
+Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.5. Do not copy its tables here.
+The first sitting's seed adds any exchange calendar or `SEK`
+unit the listing needs; this page unit makes no such data change (charter F7).
+
 ### 1.1 Gather, then write the capture
+
+**Listings outside the US.** The listing name as the broker writes it binds
+the price series to the exchange calendar in the floors. Figures may be
+recorded in the listing's currency; the one-currency-per-pack rule with dated
+conversions is not yet ruled. Name the primary listing's broad-index ETF
+benchmark per sitting (owner ruling AC4, unchanged); the floors provide no
+non-US default.
 
 Derive what THIS question needs: the four valuation tests for a priced
 asset (profit growth · free cash flow · rating against own history or
 peers · earnings/cash yield against the risk-free rate) plus whatever the
 owner's thesis turns on, on top of the ruled floors in
-`council/floors/floors.json` (floors 1.17.0). A producer's by-product off the
+`council/floors/floors.json` (floors 1.19.0). A producer's by-product off the
 floors' product list (zinc, lead, molybdenum) is shown apart: its reserve and
 output figures name it and sit in one unit of quantity (`by_product_units`), never converted
 or counted in the rating (owner ruling AC56(1)). A royalty or streaming
@@ -841,9 +920,9 @@ rules that matter most in practice:
   — copy its arithmetic and its source sentences, but note that it was
   written to an older contract (`capture_version` 1.2.0) and carries neither
   the tags nor a business frame, because runs on record are never rewritten.
-  Your capture is 1.11.0 and needs both. The migrations are set out in
+  Your capture is 1.12.0 and needs both. The migrations are set out in
   `council/tests/test_evidence.py`, `to_contract_1_4_1` through
-  `to_contract_1_11_0`, and the same file prints
+  `to_contract_1_12_0`, and the same file prints
   exactly which frame rows the two single-name sittings on record would have
   needed.
 - **The four sizing facts, in the units the hand-off is pinned to (ruling

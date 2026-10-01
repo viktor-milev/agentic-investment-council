@@ -1968,6 +1968,11 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
             # Owner ruling AC50(8): the chairman is told when a growth
             # company's cash covers fewer months than the ruled line.
             kwargs["runway_below"] = briefs.runway_below(ctx.pack)
+            # AC59(H3), AC60(H7): tell the chairman the same ruled sentences.
+            holding = briefs.holding_readings(ctx.pack)
+            kwargs["one_holding"] = (holding["largest"]["name"]
+                if holding and holding.get("largest_above_half") else None)
+            kwargs["mostly_private"] = bool(holding and holding.get("private_above_half"))
             # Owner ruling AC53(R9): and when a producer's reserves rest on a
             # price above today's.
             kwargs["reserve_price_below"] = briefs.reserve_price_below(

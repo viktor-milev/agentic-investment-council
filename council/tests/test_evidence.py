@@ -7,6 +7,7 @@ import contextlib
 import copy
 import io
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -92,7 +93,7 @@ def minimal_capture():
     refuses at sufficiency - which is where the refusals it drives
     already live."""
     return {
-        "capture_version": "1.11.0",
+        "capture_version": "1.12.0",
         "subject": {"kind": "single_stock",
                     "asset_class": "equity",
                     "name": "Example Manufacturing Co",
@@ -536,7 +537,7 @@ class TestGateUnitIsOnTheList(GateTest):
                 self.assertTrue(gate._UNIT_TOKEN.fullmatch(unit))
 
     def test_the_floors_version_is_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.17.0")
+        self.assertEqual(FLOORS["floors_version"], "1.20.0")
         self.assertIn("direction", FLOORS["allowed_units"])
         self.assertEqual(len(set(FLOORS["allowed_units"])),
                          len(FLOORS["allowed_units"]))
@@ -3535,7 +3536,7 @@ class TestFloorsOneThreeZero(unittest.TestCase):
         # company's own buying as single-stock floors (owner ruling AC4,
         # unit U4(b)), then with those two made real (owner ruling
         # AC35(2), unit U4(d)).
-        self.assertEqual(FLOORS["floors_version"], "1.17.0")
+        self.assertEqual(FLOORS["floors_version"], "1.20.0")
 
     def test_segment_revenue_absent_without_a_gap_refuses(self):
         capture = self.one_business(
@@ -4634,6 +4635,14 @@ def to_contract_1_11_0(capture, run_id):
     capture["capture_version"] = "1.11.0"
     return capture
 
+def to_contract_1_12_0(capture, run_id):
+    """AC59-AC62: the previous migration, then the version string only.
+    No sitting on record is an investment holding; no field is invented."""
+    capture = to_contract_1_11_0(capture, run_id)
+    capture["capture_version"] = "1.12.0"
+    return capture
+
+
 def frame_migration_report(run_id):
     """What this sitting on record would have had to carry, row by row,
     and what answered each: a figure it already carried under another id,
@@ -4746,7 +4755,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
 
     def stages(self, run_id):
         capture = to_floors_1_8_0(
-            to_contract_1_11_0(self.recorded(run_id), run_id))
+            to_contract_1_12_0(self.recorded(run_id), run_id))
         gated = gate.validate_capture(capture, SCHEMA)
         self.assertEqual(gated["result"], "accepted", gated["reasons"])
         # Today's law (architect ruling, 2026-09-08) pays no seat until
@@ -4770,7 +4779,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         for run_id in ("council-coin-2026-09-04", "council-lulu-2026-09-05",
                        "council-btc-2026-09-01"):
             capture = to_floors_1_8_0(
-                to_contract_1_11_0(self.recorded(run_id), run_id))
+                to_contract_1_12_0(self.recorded(run_id), run_id))
             self.assertNotIn("evidence_challenge", capture)
             outcome = sufficiency_of(freeze.build_pack(capture), FLOORS)
             self.assertEqual(outcome["result"], "refuse", run_id)
@@ -4789,7 +4798,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """LULU bought back shares and recorded them under ids the
         repurchase floor does not read (architect ruling 2 on the U4(d)
         seed): its migrated gap says so, and never that it buys none."""
-        capture = to_floors_1_8_0(to_contract_1_11_0(
+        capture = to_floors_1_8_0(to_contract_1_12_0(
             self.recorded("council-lulu-2026-09-05"),
             "council-lulu-2026-09-05"))
         reasons = [gap["reason"] for gap in capture["gaps"]
@@ -4810,7 +4819,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """The migration's whole cost, for a coin: one string. Bitcoin
         declares no capital-spending gap, so it grows no bound tags, and
         it has no business to frame, so it grows no frame either."""
-        capture = to_contract_1_11_0(
+        capture = to_contract_1_12_0(
             self.recorded("council-btc-2026-09-01"),
             "council-btc-2026-09-01")
         self.assertEqual([fact for fact in capture["tier1"]
@@ -4838,12 +4847,12 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         contract the capture is refused until it says."""
         for run_id in ("council-lulu-2026-09-05",
                        "council-coin-2026-09-04"):
-            capture = to_contract_1_11_0(self.recorded(run_id), run_id)
+            capture = to_contract_1_12_0(self.recorded(run_id), run_id)
             ticker = FRAME_MIGRATIONS[run_id]["ticker"]
             self.assertEqual(
                 capture["business_frame"][ticker]
                 ["headline_decline_read"]["reading"], "unknown", run_id)
-            stripped = to_contract_1_11_0(self.recorded(run_id), run_id)
+            stripped = to_contract_1_12_0(self.recorded(run_id), run_id)
             stripped["business_frame"][ticker][
                 "headline_decline_read"] = None
             reasons = gate.validate_capture(stripped, SCHEMA)["reasons"]
@@ -4891,7 +4900,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         freshness rule. Only the id and the source label change."""
         for run_id, plan in FRAME_MIGRATIONS.items():
             recorded = self.recorded(run_id)
-            migrated = to_contract_1_11_0(self.recorded(run_id), run_id)
+            migrated = to_contract_1_12_0(self.recorded(run_id), run_id)
             carried = {fact["id"]: fact for fact in migrated["tier1"]}
             for source_id, ruled_id in plan["rekeyed"]:
                 original = fact_in(recorded, source_id)
@@ -7128,7 +7137,7 @@ class TestTheBriefCarriesTheOneLineQuestion(unittest.TestCase):
     LINE = "INVENTED FIXTURE - the one line the approver reads"
     LABEL = "The question, in one line:"
 
-    def _capture(self, version="1.11.0"):
+    def _capture(self, version="1.12.0"):
         capture = load_fixture("exmp-pass.json")
         capture["capture_version"] = version
         capture["question_line"] = self.LINE
@@ -10151,7 +10160,7 @@ class TestTheWulfSittingIsTheArchetypeRulesAcceptance(unittest.TestCase):
     file on disk is never rewritten (owner ruling AB20)."""
 
     def migrated(self):
-        return to_contract_1_11_0(
+        return to_contract_1_12_0(
             canonical.read_json(os.path.join(LIVE_RUNS, WULF_RUN, "evidence",
                                              "capture.json")),
             WULF_RUN)
@@ -11174,6 +11183,155 @@ def drop_dates(series, *days):
     return series
 
 
+class TestListingsOutsideTheUs(GateTest):
+    """AC59 rank zero: listing calendars and currency units are data.
+
+    Every bar is invented; its day comes from the calendar being tested.
+    The unknown listing and calendar checks are controls on the base.
+    """
+
+    def listed(self, listing, calendar):
+        self.assertIn(calendar, FLOORS["price_series"]["exchange_calendars"])
+        capture = minimal_capture()
+        capture["subject"]["listing"] = listing
+        capture["benchmark"] = {
+            "ticker": "EXIDX",
+            "listing": listing, "why": "INVENTED per-sitting benchmark"}
+        capture["price_series"] = invented_series(
+            "EXMP", calendar=calendar, count=500, base="100", step="1")
+        capture["benchmark_series"] = copy.deepcopy(capture["price_series"])
+        capture["benchmark_series"]["ticker"] = "EXIDX"
+        return capture
+
+    def holiday_bar(self, listing, calendar):
+        capture = self.listed(listing, calendar)
+        series = capture["price_series"]
+        first, last = (series["bars"][index]["date"] for index in (0, -1))
+        holiday = next(day for day in FLOORS["price_series"][
+            "exchange_calendars"][calendar]["holidays"] if first < day < last)
+        series["bars"].append({"date": holiday, "close": "100",
+                               "volume": "1000000"})
+        series["bars"].sort(key=lambda bar: bar["date"])
+        result = gate_check(capture)
+        self.assertEqual(result["result"], "refused")
+        self.assertIn(holiday, " ".join(result["reasons"]))
+        self.assertIn("does not trade", " ".join(result["reasons"]))
+
+    def test_toronto_series_passes(self):
+        self.assertEqual(gate_check(self.listed(
+            "Toronto Stock Exchange", "XTSE"))["reasons"], [])
+
+    def test_toronto_holiday_bar_refuses_by_date(self):
+        self.holiday_bar("Toronto Stock Exchange", "XTSE")
+
+    def test_xetra_series_passes(self):
+        self.assertEqual(gate_check(self.listed("Xetra", "XETR"))[
+            "reasons"], [])
+
+    def test_xetra_holiday_bar_refuses_by_date(self):
+        self.holiday_bar("Xetra", "XETR")
+
+    def test_hong_kong_series_passes(self):
+        self.assertEqual(gate_check(self.listed("HKEX", "XHKG"))[
+            "reasons"], [])
+
+    def test_hong_kong_holiday_bar_refuses_by_date(self):
+        self.holiday_bar("HKEX", "XHKG")
+
+    def test_abu_dhabi_series_passes(self):
+        self.assertEqual(gate_check(self.listed("ADX", "XADS"))[
+            "reasons"], [])
+
+    def test_abu_dhabi_holiday_bar_refuses_by_date(self):
+        self.holiday_bar("ADX", "XADS")
+
+    def weekend_bar(self, weekday):
+        capture = self.listed("ADX", "XADS")
+        series = capture["price_series"]
+        day = date.fromisoformat(series["bars"][0]["date"])
+        while day.isoweekday() != weekday:
+            day += timedelta(days=1)
+        series["bars"].append({"date": day.isoformat(), "close": "100",
+                               "volume": "1000000"})
+        series["bars"].sort(key=lambda bar: bar["date"])
+        result = gate_check(capture)
+        self.assertEqual(result["result"], "refused")
+        self.assertIn(day.isoformat(), " ".join(result["reasons"]))
+        self.assertIn("does not trade", " ".join(result["reasons"]))
+
+    def test_abu_dhabi_sunday_bar_refuses_by_date(self):
+        self.weekend_bar(7)
+
+    def test_abu_dhabi_saturday_bar_refuses_by_date(self):
+        """Architect correction: Saturday is closed; a guard on the current rule."""
+        self.weekend_bar(6)
+
+    def test_cad_m_and_hkd_facts_pass(self):
+        for unit in ("CAD_m", "HKD"):
+            with self.subTest(unit=unit):
+                capture = minimal_capture()
+                capture["tier1"][0]["unit"] = unit
+                self.assertEqual(gate_check(capture)["reasons"], [])
+
+    def test_every_added_listing_alias_passes_ignoring_case_and_spaces(self):
+        rules = FLOORS["price_series"]
+        self.assertIn("XTSE", rules["exchange_calendars"])
+        for listing, calendar in rules["calendars_by_listing"].items():
+            if calendar in ("XNYS", "CRYPTO_24_7"):
+                continue
+            with self.subTest(listing=listing):
+                self.assertEqual(gate_check(self.listed(
+                    "  " + "  ".join(listing.swapcase().split()) + "  ",
+                    calendar))["reasons"], [])
+
+    def test_unknown_listing_still_refuses(self):
+        capture = minimal_capture()
+        capture["subject"]["listing"] = "INVENTED unknown exchange"
+        capture["price_series"] = invented_series("EXMP")
+        joined = " ".join(gate_check(capture)["reasons"])
+        self.assertIn("'INVENTED unknown exchange' has no calendar", joined)
+        self.assertIn("calendars_by_listing", joined)
+
+    def test_unknown_calendar_names_the_defined_calendars(self):
+        capture = series_capture()
+        capture["price_series"]["calendar"] = "INVENTED_UNKNOWN"
+        joined = " ".join(gate_check(capture)["reasons"])
+        self.assertIn("INVENTED_UNKNOWN", joined)
+        for calendar in FLOORS["price_series"]["exchange_calendars"]:
+            self.assertIn(calendar, joined)
+
+    def test_every_record_regates_identically_before_and_after_listings(self):
+        if not live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)):
+            self.skipTest("live run records are not published in the public copy")
+        before = copy.deepcopy(FLOORS)
+        rules = before["price_series"]
+        rules["exchange_calendars"] = {
+            key: value for key, value in rules["exchange_calendars"].items()
+            if key in ("XNYS", "CRYPTO_24_7")}
+        rules["calendars_by_listing"] = {
+            key: value for key, value in rules["calendars_by_listing"].items()
+            if value in rules["exchange_calendars"]}
+        before["allowed_units"] = [unit for unit in before["allowed_units"]
+                                   if unit[:3] not in (
+                                       "CAD", "SEK", "AUD", "HKD",
+                                       "AED", "GBP", "CHF")
+                                   and not (unit.startswith("EUR")
+                                            and unit not in ("EUR", "EUR_b"))]
+        checked = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if not os.path.exists(path):
+                continue
+            capture = canonical.read_json(path)
+            for reading in (capture, to_contract_1_12_0(
+                    copy.deepcopy(capture), run_id)):
+                self.assertEqual(gate.validate_capture(reading, SCHEMA, FLOORS),
+                                 gate.validate_capture(reading, SCHEMA, before),
+                                 run_id)
+            checked += 1
+        self.assertGreater(checked, 0)
+
+
 class TestPriceSeriesGate(GateTest):
     """U4.1: the series' own consistency, refused in plain words."""
 
@@ -11389,8 +11547,8 @@ class TestSeriesCalendarsAreData(GateTest):
 
     def test_a_calendar_the_floors_do_not_define_refuses(self):
         capture = series_capture()
-        capture["price_series"]["calendar"] = "XLON"
-        self.refused(capture, "XLON")
+        capture["price_series"]["calendar"] = "INVENTED_UNKNOWN"
+        self.refused(capture, "INVENTED_UNKNOWN")
 
     def test_the_all_days_calendar_is_data(self):
         ruled = FLOORS["price_series"]["exchange_calendars"]["CRYPTO_24_7"]
@@ -11475,11 +11633,11 @@ class TestSeriesCalendarFollowsTheListing(GateTest):
 
     def test_an_unknown_listing_refuses_in_plain_words(self):
         capture = series_capture()
-        capture["subject"]["listing"] = "Nasdaq Stockholm"
+        capture["subject"]["listing"] = "INVENTED unknown exchange"
         capture["benchmark"] = {
             "ticker": "SPY",
             "why": "INVENTED FIXTURE - named for the sitting"}
-        joined = self.refused(capture, "Nasdaq Stockholm")
+        joined = self.refused(capture, "INVENTED unknown exchange")
         self.assertIn("calendars_by_listing", joined)
 
     def test_an_unlisted_coin_is_bound_by_its_class(self):
@@ -11603,7 +11761,7 @@ class TestBenchmarkRule(GateTest):
         return gate.validate_capture(capture, SCHEMA)["reasons"]
 
     def test_the_floors_carry_the_ruled_benchmarks(self):
-        self.assertEqual(FLOORS["floors_version"], "1.17.0")
+        self.assertEqual(FLOORS["floors_version"], "1.20.0")
         rule = FLOORS["benchmarks"]["by_asset_class"]
         self.assertEqual(rule["equity"]["us_listing"]["ticker"], "SPY")
         for absolute in ("crypto", "gold", "commodity"):
@@ -11780,10 +11938,10 @@ class TestTheBenchmarkCalendarFollowsItsListing(GateTest):
     def test_an_override_naming_an_unknown_listing_refuses(self):
         capture = series_capture()
         capture["benchmark"] = {
-            "ticker": "QQQ", "listing": "Nasdaq Stockholm",
+            "ticker": "QQQ", "listing": "INVENTED unknown exchange",
             "why": "INVENTED FIXTURE - an unknown exchange"}
         capture["benchmark_series"]["ticker"] = "QQQ"
-        joined = self.refused(capture, "Nasdaq Stockholm")
+        joined = self.refused(capture, "INVENTED unknown exchange")
         self.assertIn("calendars_by_listing", joined)
 
 
@@ -11810,7 +11968,7 @@ class TestEveryPackOnRecordStillValidatesUnder170(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.11.0", name)
+                self.assertEqual(capture["capture_version"], "1.12.0", name)
                 self.assertNotIn("price_series", capture, name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  os.path.join(folder, name))
@@ -12957,7 +13115,7 @@ class TestFIContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.11.0", name)
+                self.assertEqual(capture["capture_version"], "1.12.0", name)
                 self.assertEqual(capture["question_line"],
                                  question_line_of(
                                      capture["question_verbatim"]), name)
@@ -13863,7 +14021,7 @@ class TestQuestionLine(GateTest):
         for run_id in ("council-lulu-2026-09-05", "council-btc-2026-09-01"):
             recorded = canonical.read_json(os.path.join(
                 LIVE_RUNS, run_id, "evidence", "capture.json"))
-            migrated = to_contract_1_11_0(copy.deepcopy(recorded), run_id)
+            migrated = to_contract_1_12_0(copy.deepcopy(recorded), run_id)
             self.assertEqual(migrated["question_line"],
                              question_line_of(recorded["question_verbatim"]))
             self.assertEqual(gate_check(migrated)["result"], "accepted",
@@ -14613,11 +14771,11 @@ class TestFIFixturesUnderTheInsiderAndBuybackFloors(FISufficiencyTest):
     the insider_flow_ or buyback_ floor, so both refuse on them."""
 
     def test_the_bank_fixture_passes_under_floors_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.17.0")
+        self.assertEqual(FLOORS["floors_version"], "1.20.0")
         self.passes(load_fixture(U4B_FI_BANK_FIXTURE))
 
     def test_the_holding_fixture_passes_under_the_insider_and_buyback_floors(self):
-        self.assertEqual(FLOORS["floors_version"], "1.17.0")
+        self.assertEqual(FLOORS["floors_version"], "1.20.0")
         self.passes(load_fixture(U4B_FI_HOLDING_FIXTURE))
 
 
@@ -16261,7 +16419,7 @@ class TestARoundedShareOrYield(GateTest):
 # evidence may claim to stay current longer. The number is data in the
 # floors.
 CLOSED_PERIOD_CEILING_DAYS = 1826
-FLOORS_VERSION_NOW = "1.17.0"
+FLOORS_VERSION_NOW = "1.20.0"
 # The JPM capture on record, gated as written: its broker figure (item
 # 8) and its six history facts ruled current for longer than five years
 # (item 6) are the only refusals.
@@ -17371,7 +17529,7 @@ def jpm_with_live_year():
     # Written today, to the contract in force: 1.10.0 and 1.11.0 add only
     # the growth and producer archetypes' optional fields, so the version
     # string is all that moves.
-    capture["capture_version"] = "1.11.0"
+    capture["capture_version"] = "1.12.0"
     by_date = {}
     for fact in capture["tier1"]:
         if fact["id"].startswith(gate._REVISED_PREFIX) and fact["id"] in \
@@ -18272,7 +18430,7 @@ class TestGrowthD1FIRulesAreFIs(unittest.TestCase):
     def test_a_second_subtyped_archetype_meets_no_fi_rule(self):
         """A second wide archetype, added as data only, whose frame names
         its sub-type and whose business is changing its model: it meets
-        none of the financial institution's rules - no bridge, no capital,
+        none of the financial institution's rules - no capital,
         no exited-business ban on its earnings."""
         def second(floors):
             floors["archetype_measures"]["table"]["second_wide"] = {
@@ -18292,8 +18450,12 @@ class TestGrowthD1FIRulesAreFIs(unittest.TestCase):
         frame["second_subtype"] = "only"
         frame["what_is_changing"]["kind"] = "model_transition"
         outcome = growth_outcome(capture, growth_floors(second))
-        self.assertEqual(outcome["result"], "pass", outcome["message"])
-        self.assertNotIn("AC30", outcome["message"])
+        self.assertEqual(growth_whats(outcome), [
+            "the bridge an investment holding's net asset value is struck "
+            "through"])
+        # HA3: a resolved row that explicitly requests the shared bridge
+        # meets it. It still meets no regulatory-capital or risk-cost rule.
+        self.assertNotIn("owner rulings AC28 and AC30", outcome["message"])
 
     def test_denominator_ids_are_checked_for_any_row_that_names_them(self):
         """The per-role check of the denominators is the row's, not the
@@ -18619,7 +18781,7 @@ class TestGrowthContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.11.0", name)
+                self.assertEqual(capture["capture_version"], "1.12.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a grower (architect ruling A12).
@@ -20800,7 +20962,7 @@ class TestProducerContract(GateTest):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.11.0", name)
+                self.assertEqual(capture["capture_version"], "1.12.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a producer or an integrated major
@@ -20845,7 +21007,9 @@ class TestProducerContract(GateTest):
                 self.assertNotEqual(frame.get("archetype"), PRODUCER, run_id)
                 for field in PRODUCER_FIELDS + INTEGRATED_FIELDS:
                     self.assertNotIn(field, frame, run_id)
-            self.assertEqual(validate.validate(after, SCHEMA), [], run_id)
+            schema = copy.deepcopy(SCHEMA)
+            schema["properties"]["capture_version"]["const"] = "1.11.0"
+            self.assertEqual(validate.validate(after, schema), [], run_id)
         # No capture on record carries a reserves fact.
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "evidence",
@@ -21157,12 +21321,11 @@ class TestTheProducerRuleBothWays(ProducerRuleTest):
         self.assertIn("'stabilised_lessor'", item["why_needed"])
         self.assertNotIn("integrated_major", item["why_needed"])
 
-    def test_a_loss_making_producer_declared_a_profit_maker_meets_both(self):
-        """Mechanism decision: both refusals print - each is true, and the
-        producer archetype clears both."""
+    def test_a_loss_making_producer_declared_a_profit_maker_names_its_home(self):
+        """HA5: the producer pointer suppresses the false growth pointer."""
         outcome = self.judged(profit_maker_with_reserves(GROWER_LOSSES))
         self.assertEqual(sorted(growth_whats(outcome)),
-                         sorted([FOUR_QUARTERS_WHAT, PRODUCER_RULE_WHAT]))
+                         sorted([PRODUCER_RULE_WHAT]))
 
     def test_a_pure_producer_declared_a_profit_maker_is_pointed_at_it(self):
         capture = producer_capture(producer_subtype=None, resource_base=None,
@@ -21442,7 +21605,7 @@ class TestTheProducerRunsOnRecord(unittest.TestCase):
             if os.path.exists(path):
                 # As recorded, and migrated to this contract so the whole
                 # gate runs past the version line.
-                for capture in (canonical.read_json(path), to_contract_1_11_0(
+                for capture in (canonical.read_json(path), to_contract_1_12_0(
                         canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(capture),
                                                 SCHEMA, before)
@@ -21765,6 +21928,8 @@ class TestProducerRule(ProducerTest):
                                  ("production_copper_ttm", "80", "lb")):
             grower_fact(capture, fid, value, unit=unit,
                         as_of=PRODUCER_REPORT_DATE, rule=500)
+        producer_prices(capture, "silver", "USD per ounce")
+        producer_prices(capture, "copper", "USD per pound")
         self.passes(capture)
 
     def test_a_by_product_without_its_own_figures_refuses(self):
@@ -21954,6 +22119,7 @@ class TestProducerRule(ProducerTest):
                            ("production_silver_ttm", "9")):
             grower_fact(capture, fid, value, unit="oz",
                         as_of=PRODUCER_REPORT_DATE, rule=500)
+        producer_prices(capture, "silver", "USD per ounce")
         item = self.refused(capture, "reserves at or above zero: "
                                      "'reserves_pp_silver'", alone=True)
         self.assertIn("is -50 - below zero", item["why_needed"])
@@ -22234,6 +22400,7 @@ class TestTheOneSetOfEveryFactTheProducerReads(ProducerTest):
         grower_fact(capture, "reserves_pp_silver", "50", unit="oz",
                     as_of="2025-05-01", rule=500)
         grower_fact(capture, "production_silver_ttm", "9", unit="oz")
+        producer_prices(capture, "silver", "USD per ounce")
         item = self.refused(capture, "a reserve figure no older than 456 "
                                      "days: 'reserves_pp_silver'", alone=True)
         self.assertIn("owner ruling AC53(R12)", item["why_needed"])
@@ -22253,6 +22420,7 @@ class TestTheOneSetOfEveryFactTheProducerReads(ProducerTest):
         producer_block(capture)["unit_cost_facts"] = ["unit_cost_all_in"]
         grower_answered_by(capture, "profit_growth", list(
             PRODUCER_OUTPUT_PAIR) + ["realized_price_q", "unit_cost_silver"])
+        producer_prices(capture, "silver", "USD per ounce")
         self.refused(capture, "a fact of the main product, 'gold', naming "
                               "no other commodity: 'unit_cost_silver'",
                      alone=True)
@@ -22267,6 +22435,7 @@ class TestTheOneSetOfEveryFactTheProducerReads(ProducerTest):
                                   PRODUCER_REPORT_DATE, "date")):
             grower_fact(capture, fid, value, unit=unit,
                         as_of=PRODUCER_REPORT_DATE, rule=500)
+        producer_prices(capture, "silver", "USD per ounce")
         self.passes(capture)
 
     def test_well_formed_neutral_and_by_product_facts_pass(self):
@@ -22287,6 +22456,7 @@ class TestTheOneSetOfEveryFactTheProducerReads(ProducerTest):
                           ("unit_cost_silver", "USD per ounce")):
             grower_fact(capture, fid, "9", unit=unit,
                         as_of=PRODUCER_REPORT_DATE, rule=500)
+        producer_prices(capture, "silver", "USD per ounce")
         self.passes(capture)
 
 
@@ -22391,7 +22561,7 @@ class TestByProductsOffTheListAndEveryStream(ProducerTest):
         for (fid, value), unit in zip(self.ZINC, units):
             grower_fact(capture, fid, value, unit=unit,
                         as_of=PRODUCER_REPORT_DATE, rule=500)
-        return capture
+        return producer_prices(capture, "zinc", "USD per tonnes")
 
     def test_an_unlisted_by_product_is_shown_apart_and_passes(self):
         self.passes(self.zinc())
@@ -22442,6 +22612,7 @@ class TestByProductsOffTheListAndEveryStream(ProducerTest):
                            ("production_natural_gas_liquids_ttm", "600")):
             grower_fact(capture, fid, value, unit="boe",
                         as_of=PRODUCER_REPORT_DATE, rule=500)
+        producer_prices(capture, "natural_gas_liquids", "USD per boe")
         self.passes(capture)
 
     def test_the_by_product_units_hold_every_quantity_unit_as_a_class(self):
@@ -22464,6 +22635,8 @@ class TestByProductsOffTheListAndEveryStream(ProducerTest):
         self.assertIn("boe", wanted)
         self.assertLessEqual(wanted, listed)
         self.assertLessEqual(listed, set(FLOORS["allowed_units"]))
+        prefix = measures["resource_rule"]["by_product_price_unit_prefix"]
+        self.assertLessEqual({prefix + unit for unit in listed}, set(FLOORS["allowed_units"]))
 
     def test_an_unlisted_main_product_still_refuses(self):
         """A guard: owner ruling AC51(R3) - only a by-product is freed."""
@@ -22633,6 +22806,15 @@ def producer_hedged(capture):
     return capture
 
 
+def producer_prices(capture, product, unit):
+    """Invented counted and current prices for a declared by-product."""
+    grower_fact(capture, "reserve_price_" + product, "25", unit=unit,
+                as_of=PRODUCER_REPORT_DATE, rule=500)
+    grower_fact(capture, "reference_price_" + product, "24", unit=unit,
+                as_of="2026-08-29", rule=3)
+    return capture
+
+
 def producer_facts(capture, facts):
     for fact_id, value, unit in facts:
         grower_fact(capture, fact_id, value, unit=unit,
@@ -22666,7 +22848,7 @@ class TestProducerOnTheBrief(unittest.TestCase):
                 ids = producer_ids(subtype)
                 _, full = producer_pages(capture)
                 self.assertEqual(md_table(full, PRODUCER_RESERVES_LEAD), [
-                    ["Reserves", "Amount", "Standard", "Report date",
+                    ["Reserves", "Amount", "Standard", "As of",
                      "Counted at", "Today's price"],
                     [PRODUCER_CATEGORY_SHOWN[ids["reserves"]]] + [
                         shown_value(fact_in(capture, ids["reserves"])),
@@ -22970,6 +23152,1887 @@ class TestProducerOnTheBrief(unittest.TestCase):
                                "Its reserves and today's price",
                                "The producer's figures"):
                     self.assertNotIn(needle, text)
+
+
+def printed_resource_capture():
+    """Invented miner with a listed by-product and its own prices."""
+    capture = producer_facts(producer_capture("miner"), (
+        ("reserves_pp_silver", "3000", "oz"),
+        ("production_silver_ttm", "200", "oz"),
+        ("reserve_price_silver", "25", "USD per ounce")))
+    grower_fact(capture, "reference_price_silver", "24",
+                unit="USD per ounce", as_of="2026-08-29", rule=3)
+    producer_block(capture)["by_products"] = ["silver"]
+    return capture
+
+
+class TestEveryPrintedResourceFact(ProducerTest):
+    """AC53 and P-RESOURCEc-6..9: one class over the printed facts."""
+
+    def test_a_component_reserve_needs_both_own_prices(self):
+        for fid in ("reserve_price_natural_gas", "reference_price_natural_gas"):
+            with self.subTest(missing=fid):
+                capture = producer_facts(producer_capture(), PRODUCER_APART)
+                # Today's component price must itself meet the product's rule.
+                fact_in(capture, "reference_price_natural_gas").update(
+                    as_of="2026-08-29", freshness_rule_days=3)
+                capture["tier1"] = [f for f in capture["tier1"]
+                                    if f["id"] != fid]
+                self.assertEqual(gate_check(capture)["result"], "accepted")
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                missing = " ".join(item["what"] + item["where_it_likely_lives"]
+                                   for item in outcome["missing"])
+                self.assertIn(fid, missing)
+
+    def test_integrated_reserves_are_physical_figures(self):
+        for value, unit in (("unknown", "boe"), ("850", "USD_m"),
+                            ("-1", "boe"), ("850", "oz")):
+            with self.subTest(value=value, unit=unit):
+                capture = integrated_major_capture()
+                producer_value(capture, "reserves_proved_boe", value, unit=unit)
+                self.assertEqual(gate_check(capture)["result"], "accepted")
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                self.assertTrue(any("reserves_proved_boe" in item["what"]
+                                    for item in outcome["missing"]))
+
+    def test_by_product_today_is_checked_in_its_own_terms(self):
+        for changes in ({"unit": "USD per barrel"}, {"freshness_rule_days": 500}):
+            with self.subTest(changes=changes):
+                capture = printed_resource_capture()
+                fact_in(capture, "reference_price_silver").update(changes)
+                self.assertEqual(gate_check(capture)["result"], "accepted")
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                self.assertTrue(any("reference_price_silver" in
+                                    item["what"] + item["why_needed"]
+                                    for item in outcome["missing"]))
+
+    def test_each_reserve_row_reads_its_own_date(self):
+        capture = printed_resource_capture()
+        fact_in(capture, "reserves_pp_silver")["as_of"] = "2026-02-01"
+        _, full = producer_pages(capture)
+        rows = md_table(full, PRODUCER_RESERVES_LEAD)[1:]
+        self.assertEqual(rows[1][3], date_words("2026-02-01"))
+        self.assertEqual(rows[0][3], date_words(PRODUCER_REPORT_DATE))
+
+    def test_integrated_reserves_read_their_own_age(self):
+        capture = integrated_major_capture()
+        fact_in(capture, "reserves_proved_boe")["as_of"] = "2025-05-01"
+        self.refused(capture, "a reserve figure no older than 456 days: "
+                              "'reserves_proved_boe'", alone=True)
+
+    def test_off_list_by_product_prices_print_when_checkable(self):
+        capture = producer_facts(producer_capture("miner"), PRODUCER_ZINC + (
+            ("reserve_price_zinc", "25", "USD per tonnes"),
+            ("reference_price_zinc", "24", "USD per tonnes")))
+        producer_block(capture)["by_products"] = ["zinc"]
+        rows = brief.producer_reserve_rows(producer_pack(capture), frame_of(capture))["rows"]
+        self.assertEqual([brief.cell_text(cell) for cell in rows[1][4:]],
+                         ["25 USD per tonnes", "24 USD per tonnes"])
+
+    def test_the_row_builders_enforce_the_class(self):
+        zinc = producer_facts(producer_capture("miner"), PRODUCER_ZINC + (
+            ("reserve_price_zinc", "25", "USD per tonnes"),
+            ("reference_price_zinc", "24", "USD per tonnes")))
+        producer_block(zinc)["by_products"] = ["zinc"]
+        cases = [printed_resource_capture(),
+                 producer_facts(producer_capture(), PRODUCER_APART), zinc]
+        for capture in cases:
+            pack = producer_pack(capture)
+            frame = frame_of(capture)
+            roles = sufficiency.producer_role_set(pack, producer_rule_floors())
+            if capture is zinc:
+                facts = {fact["id"]: fact for fact in capture["tier1"]}
+                checkable = sufficiency.resource_price_terms(
+                    producer_rule_floors(), frame, facts, "zinc")
+                for fid, tagged in roles.items():
+                    if tagged & {"by_product_reserve_price_facts",
+                                 "by_product_reference_price_fact"}:
+                        self.assertTrue(checkable, fid)
+                narrowed = producer_rule_floors()
+                narrowed["archetype_measures"]["resource_rule"]["by_product_units"].remove("tonnes")
+                self.assertIsNone(sufficiency.resource_price_terms(narrowed, frame, facts, "zinc"))
+                unread = sufficiency.producer_role_set(pack, narrowed)
+                self.assertFalse(any(tagged & {"by_product_reserve_price_facts",
+                                              "by_product_reference_price_fact"}
+                                     for tagged in unread.values()))
+            for _, table in brief.producer_tables(
+                    pack, frame, brief.producer_readings(pack)):
+                for row in table["rows"]:
+                    for cell in row:
+                        printed = set(cell.get("ids") or ())
+                        printed.update(cell[key] for key in ("id", "name_of", "date_of")
+                                       if key in cell)
+                        self.assertFalse(printed - set(roles), printed - set(roles))
+            for row in brief.producer_reserve_rows(pack, frame)["rows"]:
+                fid = row[0]["name_of"]
+                if fid.startswith("reserves_"):
+                    self.assertEqual(row[3].get("date_of"), fid)
+                    self.assertEqual(brief.cell_text(row[3]),
+                                     date_words(fact_in(capture, fid)["as_of"]))
+
+    def test_integrated_printed_facts_are_in_the_role_set(self):
+        capture = integrated_major_capture()
+        roles = sufficiency.producer_role_set(producer_pack(capture),
+                                              producer_rule_floors())
+        self.assertFalse(set(sum(brief.integrated_major_ids(capture), [])) - set(roles))
+
+    def test_well_formed_kinds_and_integrated_major_pass(self):
+        """CONTROL: each established kind passes on the base by design."""
+        for capture in [producer_capture(kind) for kind in PRODUCER_SUBTYPES] + [
+                integrated_major_capture(), printed_resource_capture()]:
+            self.passes(capture)
+
+    def test_unreadable_or_stale_by_product_prices_refuse(self):
+        """CONTROL: these properties already refuse on the base."""
+        for changes in ({"value": "unknown"}, {"as_of": "2026-08-01"}):
+            capture = printed_resource_capture()
+            fact_in(capture, "reference_price_silver").update(changes)
+            self.assertEqual(self.judged(capture)["result"], "refuse")
+
+
+class TestPrintedResourceRoundTwo(ProducerTest):
+    """The architect's fix list, probed against the round-one tree."""
+
+    def test_a_peers_reserves_are_not_aged_by_the_subjects_rule(self):
+        for value in ("950", "unknown"):
+            with self.subTest(value=value):
+                capture = producer_capture()
+                fact_in(capture, "peer_reserves_proved_boe__vlvi").update(
+                    value=value, as_of="2025-05-15", freshness_rule_days=500)
+                if value == "unknown":
+                    self.refused(capture, "the rating measure's denominator "
+                                  "'reserves_proved_boe' for peer VLVI", alone=True)
+                else:
+                    self.passes(capture)
+
+    def test_the_component_missing_price_names_its_reserve_and_source(self):
+        for fid in ("reserve_price_natural_gas", "reference_price_natural_gas"):
+            with self.subTest(missing=fid):
+                capture = producer_facts(producer_capture(), PRODUCER_APART)
+                capture["tier1"] = [fact for fact in capture["tier1"] if fact["id"] != fid]
+                outcome = self.judged(capture)
+                item = next(item for item in outcome["missing"] if fid in item["what"])
+                self.assertIn("reserves_proved_natural_gas_mcf", item["why_needed"])
+                self.assertIn("natural gas", item["why_needed"])
+                self.assertNotIn("carries no natural_gas price", item["why_needed"])
+                words = ("lacks the price its natural gas reserves were counted at"
+                         if fid.startswith("reserve_price_") else
+                         "lacks today's natural gas price")
+                self.assertIn(words, item["why_needed"])
+                source = ("reserve report" if fid.startswith("reserve_price_") else
+                          FLOORS["archetype_measures"]["resource_products"][
+                              "natural_gas"]["benchmark_words"])
+                self.assertIn(source, item["where_it_likely_lives"])
+
+    def zinc(self):
+        capture = producer_facts(producer_capture("miner"), PRODUCER_ZINC + (
+            ("reserve_price_zinc", "25", "USD per tonnes"),))
+        grower_fact(capture, "reference_price_zinc", "24", unit="USD per tonnes",
+                    as_of="2026-08-29", rule=3)
+        producer_block(capture)["by_products"] = ["zinc"]
+        return capture
+
+    def test_off_list_by_product_prices_pass_and_print_in_the_reported_unit(self):
+        capture = self.zinc()
+        self.passes(capture)
+        _, full = producer_pages(capture)
+        row = md_table(full, PRODUCER_RESERVES_LEAD)[2]
+        self.assertEqual(row[4:], ["25 USD per tonnes", "24 USD per tonnes"])
+
+    def test_off_list_by_product_prices_refuse_another_unit(self):
+        for fid in ("reserve_price_zinc", "reference_price_zinc"):
+            with self.subTest(fact=fid):
+                capture = self.zinc()
+                fact_in(capture, fid)["unit"] = "USD per ounce"
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                self.assertTrue(any(fid in item["what"] and "USD per tonnes" in
+                                    item["where_it_likely_lives"] for item in outcome["missing"]))
+
+    def test_off_list_today_refuses_under_the_price_ceiling(self):
+        capture = self.zinc()
+        fact_in(capture, "reference_price_zinc").update(
+            as_of="2026-08-01", freshness_rule_days=500)
+        outcome = self.judged(capture)
+        self.assertEqual(outcome["result"], "refuse")
+        item = next(item for item in outcome["missing"] if item["what"] ==
+                    "today's price read under a rule no looser than 3 days")
+        self.assertIn("reference_price_zinc", item["why_needed"])
+        self.assertNotIn("None", item["where_it_likely_lives"])
+        self.assertIn("the source recording today's price", item["where_it_likely_lives"])
+
+    def test_every_by_product_reserve_requires_both_prices(self):
+        for fid in ("reserve_price_silver", "reference_price_silver"):
+            with self.subTest(missing=fid):
+                capture = printed_resource_capture()
+                capture["tier1"] = [fact for fact in capture["tier1"] if fact["id"] != fid]
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                self.assertTrue(any(fid in item["what"] and "reserves_pp_silver" in
+                                    item["why_needed"] for item in outcome["missing"]))
+        self.passes(printed_resource_capture())
+
+    def test_the_reserves_header_says_as_of(self):
+        capture = producer_capture()
+        table = brief.producer_reserve_rows(producer_pack(capture), frame_of(capture))
+        self.assertEqual(table["head"][3], "As of")
+
+    def test_integrated_units_follow_the_subtype_and_product_data(self):
+        def renamed(floors):
+            measures = floors["archetype_measures"]
+            subtypes = measures["table"][PRODUCER]["subtypes"]
+            subtypes["invented_fuel_producer"] = subtypes.pop("oil_and_gas_producer")
+        capture = integrated_major_capture()
+        expected = sufficiency.producer_role_set(producer_pack(capture), producer_rule_floors())
+        self.passes(capture, producer_rule_floors(mutate=renamed))
+        actual = sufficiency.producer_role_set(producer_pack(capture),
+                                               producer_rule_floors(mutate=renamed))
+        self.assertEqual(actual, expected)
+
+
+class TestPrintedResourceRoundThree(ProducerTest):
+    """The last fix list, probed against the round-two tree."""
+
+    def test_an_off_list_by_products_unit_is_read_once(self):
+        from unittest.mock import patch
+        capture = producer_facts(producer_capture("miner"), PRODUCER_ZINC)
+        producer_block(capture)["by_products"] = ["zinc"]
+        producer_prices(capture, "zinc", "USD per tonnes")
+        with patch.object(sufficiency, "_by_product_units_seen",
+                          wraps=sufficiency._by_product_units_seen) as units, \
+                patch.object(sufficiency, "resource_price_terms",
+                             wraps=sufficiency.resource_price_terms) as prices:
+            self.passes(capture)
+        own_units = [call for call in units.call_args_list if call.args[1] == "zinc"]
+        own_prices = [call for call in prices.call_args_list if call.args[3] == "zinc"]
+        self.assertTrue(own_prices)
+        self.assertEqual(len(own_units), len(own_prices) + 1)
+
+    def test_a_two_commodity_reserve_has_only_its_naming_refusal(self):
+        fid = "reserves_proved_crude_oil_natural_gas"
+        capture = producer_facts(producer_capture(), ((fid, "850", "boe"),))
+        self.refused(capture, "a fact of the main product, 'crude_oil', naming "
+                              "no other commodity: '%s'" % fid, alone=True)
+
+
+class TestPrintedResourceRoundFour(ProducerTest):
+    """The reserve naming class, probed against the round-three tree."""
+
+    def test_every_reserve_names_one_commodity(self):
+        for fid, extra, subtype, unit, price, commodities in (
+                ("reserves_proved_crude_oil_natural_gas_liquids", "natural_gas_liquids",
+                 "oil_and_gas_producer", "boe", "USD per boe", ("crude oil", "natural gas liquids")),
+                ("reserves_pp_gold_silver", "silver", "miner", "oz", "USD per ounce", ("gold", "silver")),
+                ("reserves_proved_natural_gas_and_natural_gas_liquids", "natural_gas_liquids",
+                 "oil_and_gas_producer", "boe", "USD per boe", ("natural gas", "natural gas liquids"))):
+            with self.subTest(reserve=fid):
+                capture = producer_facts(producer_capture(subtype), (
+                    (fid, "500", unit), ("production_%s_ttm" % extra, "50", unit)))
+                producer_block(capture)["by_products"] = [extra]
+                producer_prices(capture, extra, price)
+                outcome = self.judged(capture)
+                self.assertEqual(outcome["result"], "refuse")
+                self.assertEqual(len(outcome["missing"]), 1)
+                item = outcome["missing"][0]
+                self.assertIn(fid, item["what"])
+                for commodity in commodities:
+                    self.assertIn("'%s'" % commodity, item["why_needed"])
+
+    def test_the_reserve_row_documentation_names_its_own_date(self):
+        self.assertIn("its own fact's date", brief.producer_reserve_rows.__doc__)
+
+
+# ---------------------------------------------------------------------------
+# HOLDING-ARCHETYPE(a), session one: AC59-AC62, extending AC30(3).
+# Figures are invented; no fixture acquires an investment-holding field.
+# ---------------------------------------------------------------------------
+HOLDING = "investment_holding"
+HOLDING_RULE_WHAT = "the holding archetype for a company whose value is stakes"
+HOLDING_RULING = "owner rulings AC59-AC62, extending AC30(3)"
+HOLDING_PRIVATE_METHODS = ("company_reported_value", "carrying_value")
+
+
+def holding_capture(**overrides):
+    """HA13: the invented FI holding with its regulatory fields removed.
+    The historical fixture date stays fixed; rule tests activate only the
+    holding data from an earlier test date. Keywords replace frame fields;
+    None removes one. No private value is re-valued by this builder."""
+    capture = load_fixture("holding-pass.json")
+    frame = capture["business_frame"][capture["subject"]["ticker"]]
+    for key in ("fi_subtype", "fi_capital", "fi_risk_cost"):
+        frame.pop(key, None)
+    frame["archetype"] = HOLDING
+    frame["archetype_because"] = (
+        "INVENTED FIXTURE - its value is stakes in ordinary businesses "
+        "owned as investments, so its discount to net asset value decides.")
+    removed = {fact["id"] for fact in capture["tier1"]
+               if fact["id"].startswith(("subsidiary_capital_",
+                                         "combined_ratio_subsidiary_",
+                                         "distributable_capital_"))}
+    capture["tier1"] = [fact for fact in capture["tier1"]
+                        if fact["id"] not in removed]
+    frame["decisive_metrics"] = [row for row in frame["decisive_metrics"]
+                                 if not set(row["answered_by"]) & removed]
+    for component in frame["nav_bridge"]["components"]:
+        if component["method"] in HOLDING_PRIVATE_METHODS:
+            component["valuation_basis"] = "latest_funding_round"
+    fi_fact(capture, "holdco_costs_ttm", "180", "USD_m")
+    for row in capture["sufficiency"]["requirements"]:
+        if row["id"] == "profit_growth":
+            row["answered_by"] = ["nav_published_q"]
+        elif row["id"] == "free_cash_flow":
+            row["answered_by"] = ["holdco_cash_flow_dividends_received_q"]
+    frame["decisive_metrics"][-1]["answered_by"] += [
+        "nav_discount", "holdco_cash_flow_dividends_received_q"]
+    for key, value in overrides.items():
+        if value is None:
+            frame.pop(key, None)
+        else:
+            frame[key] = value
+    return capture
+
+
+def holding_frame(capture):
+    return capture["business_frame"][capture["subject"]["ticker"]]
+
+
+def holding_floors(**overrides):
+    """Only this unit's dates move for invented captures predating dispatch.
+    The production data keeps the architect's applies_from unchanged."""
+    floors = copy.deepcopy(FLOORS)
+    rule = floors["archetype_measures"].get("holding_rule")
+    if rule is not None:
+        rule["applies_from"] = "2026-08-01"
+        rule.update(overrides)
+    for entry in floors["archetype_floors"].get(HOLDING, {}).get(
+            "all_subtypes", []):
+        entry["applies_from"] = "2026-08-01"
+    return floors
+
+
+def holding_marker_capture(capture):
+    """Carry every marker of the holding fixture on an otherwise clean fit.
+    The bridge is absent so only sufficiency, never a stray frame field,
+    decides whether this is an honest declaration."""
+    markers = [fact for fact in holding_capture()["tier1"]
+               if fact["id"].startswith(("nav_component_", "nav_published_"))]
+    capture["tier1"].extend(copy.deepcopy(markers))
+    return capture
+
+
+def holding_bridge_breach(capture, breach):
+    """Each FI chain breach replayed on the same invented whole bridge."""
+    frame = holding_frame(capture)
+    bridge = frame["nav_bridge"]
+    facts = fi_holding_facts(capture)
+    total = facts[bridge["nav_total_fact"]]
+    component = facts[bridge["components"][0]["value_fact"]]
+    debt = facts[bridge["holdco_net_debt_fact"]]
+    if breach == "other_total":
+        other = copy.deepcopy(total)
+        other["id"] = "nav_total_other"
+        capture["tier1"].append(other)
+        bridge["nav_total_fact"] = other["id"]
+    elif breach == "typed_total":
+        total["derived"] = None
+    elif breach == "component_outside":
+        fid = fi_fact(capture, "nav_component_outside", "1000", "USD_m")
+        bridge["components"].append({"name": "INVENTED - outside business",
+                                      "value_fact": fid,
+                                      "method": "listed_at_market"})
+    elif breach == "debt_outside":
+        bridge["holdco_net_debt_fact"] = fi_fact(
+            capture, "holdco_net_debt_other", debt["value"], "USD_m")
+    elif breach == "debt_added":
+        total["derived"]["operation"] = "sum"
+    elif breach in ("component_twice", "debt_twice"):
+        part = component if breach == "component_twice" else debt
+        fid = fi_fact(capture, "nav_subtotal_twice", str(
+            Decimal(part["value"]) * 2), "USD_m", {
+                "operation": "sum", "operands": [
+                    {"fact_id": part["id"], "label": "first route",
+                     "value": part["value"]},
+                    {"fact_id": part["id"], "label": "second route",
+                     "value": part["value"]}]})
+        # On the larger fixture replace the listed component in its gross
+        # subtotal; on the simple FI capture it enters the total directly.
+        parent = (facts["nav_components_total"] if breach == "component_twice"
+                  and "nav_components_total" in facts else total)
+        for operand in parent["derived"]["operands"]:
+            if operand.get("fact_id") == part["id"]:
+                operand.update(fact_id=fid, value=str(
+                    Decimal(part["value"]) * 2))
+    elif breach == "component_subtracted":
+        # On the simple FI bridge this directly removes the component.
+        total["derived"]["operation"] = "subtract"
+        total["derived"]["operands"].reverse()
+    elif breach == "unsourced_leaf":
+        root = (facts.get("nav_components_total") or total)
+        root["derived"]["operands"][0].pop("fact_id", None)
+    else:
+        raise ValueError(breach)
+    # Refresh declared arithmetic in dependency order; no rounded quotient
+    # is involved in these sums and subtractions.
+    facts = fi_holding_facts(capture)
+    done = set()
+
+    def recompute(fid):
+        if fid in done:
+            return
+        done.add(fid)
+        fact = facts[fid]
+        derived = fact.get("derived")
+        if not derived:
+            return
+        for operand in derived["operands"]:
+            child = operand.get("fact_id")
+            if child:
+                recompute(child)
+                operand["value"] = facts[child]["value"]
+        values = [Decimal(op["value"]) for op in derived["operands"]]
+        if derived["operation"] == "sum":
+            fact["value"] = str(sum(values))
+        elif derived["operation"] == "subtract":
+            fact["value"] = str(values[0] - values[1])
+    recompute(total["id"])
+    recompute(bridge["discount_fact"])
+    return capture
+
+
+class HoldingRuleTest(unittest.TestCase):
+    def judged(self, capture, floors=None):
+        return sufficiency_of(freeze.build_pack(capture),
+                              holding_floors() if floors is None else floors)
+
+    def refused(self, capture, what, floors=None):
+        outcome = self.judged(capture, floors)
+        items = [row for row in outcome["missing"] if row["what"] == what]
+        self.assertTrue(items, outcome["message"])
+        self.assertEqual(outcome["result"], "refuse")
+        return items[0]
+
+    def passes(self, capture, floors=None):
+        outcome = self.judged(capture, floors)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+        return outcome
+
+
+class TestHoldingFloorsData(unittest.TestCase):
+    def test_the_flat_row_reuses_the_whole_nav_measure(self):
+        row = FLOORS["archetype_measures"]["table"].get(HOLDING)
+        self.assertIsNotNone(row)
+        expected = {"measure": "price_to_net_asset_value",
+                    "subject_numerator": "market_cap",
+                    "peer_numerator_metric": "market_cap",
+                    "denominators_required": 1,
+                    "denominator_roles": ["net_asset_value"],
+                    "denominator_ids": [["nav_total"]],
+                    "requires_nav_bridge": True}
+        self.assertEqual({k: row[k] for k in expected}, expected)
+        self.assertNotIn("subtypes", row)
+        self.assertNotIn("exited_business_roles", row)
+        self.assertIn("AC30(3)", row["note"])
+
+    def test_the_rule_data_and_its_date_are_ruled(self):
+        rule = FLOORS["archetype_measures"].get("holding_rule")
+        self.assertIsNotNone(rule)
+        self.assertEqual(rule["holding_archetype"], HOLDING)
+        self.assertEqual(rule["marker_prefixes"], ["nav_component_",
+                                                  "nav_published_"])
+        self.assertEqual(rule["refuses"], ["profitable_operator",
+                                          "reinvesting_grower",
+                                          "resource_producer"])
+        self.assertEqual(rule["private_valuation_max_age_days"], 456)
+        self.assertEqual(rule["history_year_ends"], 5)
+        self.assertEqual(rule["applies_from"], "2026-10-02")
+        self.assertIn("AC59", rule["why"])
+
+    def test_the_evidence_tests_and_lift_are_data(self):
+        block = FLOORS["archetype_floors"].get(HOLDING)
+        self.assertIsNotNone(block)
+        entries = block["all_subtypes"]
+        self.assertEqual({e.get("id") or e.get("prefix") or
+                          tuple(e["prefixes"]) for e in entries}, {
+            "nav_total", "nav_component_", "holdco_net_debt",
+            "nav_published_", ("nav_published_hist_", "price_hist_"),
+            "holdco_cash_flow_", "holdco_costs_ttm", "capital_return_",
+            "participating_share_count", "credit_rating_"})
+        for entry in entries:
+            self.assertTrue(entry["likely_source"])
+            self.assertTrue(entry["why"])
+        history = next(e for e in entries if e["kind"] == "parallel_prefixes")
+        self.assertEqual(history["min_members"], 5)
+        self.assertEqual(history["level"], "conditional")
+        self.assertIn("financial year", history["likely_source"])
+        for test, prefix in (("profit_growth", "nav_published_"),
+                             ("free_cash_flow", "holdco_cash_flow_")):
+            terms = block["canonical_tests"][test]
+            self.assertEqual(terms["answered_by_prefix"], prefix)
+            self.assertEqual(len(terms["words"]), 2)
+            self.assertEqual(terms["authority"], "owner ruling AC62(H13)")
+        lifts = block["lifts"]
+        self.assertNotIn("subtypes", lifts)
+        self.assertEqual(lifts["single_stock_floor_ids_lifted"],
+                         ["capital_expenditure_q"])
+        self.assertIn("dividend cover", lifts["lift_words"])
+
+    def test_every_required_floor_has_the_dispatch_date(self):
+        entries = FLOORS["archetype_floors"].get(HOLDING, {}).get(
+            "all_subtypes", [])
+        self.assertTrue(entries)
+        for entry in entries:
+            self.assertEqual(entry["applies_from"], "2026-10-02")
+
+    def test_the_profitability_governed_class_is_unchanged(self):
+        """Control: H4 keeps the agreed governed class untouched."""
+        self.assertEqual(FLOORS["archetype_measures"]["profitability_rule"][
+            "governs"], ["profitable_operator", "stabilised_lessor"])
+
+    def test_every_currency_scale_is_read_on_the_usd_pattern(self):
+        """P-LISTINGS-2: every allowed magnitude form is in the prose data."""
+        units = FLOORS["allowed_units"]
+        scales = FLOORS["prose_figure_marks"]["currency_scale_units"]
+        currencies = {unit[:-10] for unit in units
+                      if unit.endswith("_per_share")}
+        powers = {"thousand": 3, "m": 6, "million": 6, "millions": 6,
+                  "b": 9, "bn": 9, "billion": 9, "billions": 9,
+                  "trillion": 12}
+        for unit in units:
+            parts = unit.split("_")
+            if (len(parts) == 2 and parts[0] in currencies
+                    and parts[1] in powers):
+                with self.subTest(unit=unit):
+                    self.assertEqual(scales.get(unit), powers[parts[1]])
+
+
+class TestHoldingContract(unittest.TestCase):
+    def test_every_fixture_validates_at_the_new_version(self):
+        from council.lib import validate
+        found = 0
+        for folder, _, names in os.walk(os.path.join(ROOT, "council", "tests",
+                                                   "fixtures")):
+            for name in names:
+                if not name.endswith(".json"):
+                    continue
+                doc = canonical.read_json(os.path.join(folder, name))
+                c = doc.get("capture", doc) if isinstance(doc, dict) else None
+                if not isinstance(c, dict) or "capture_version" not in c:
+                    continue
+                found += 1
+                self.assertEqual(c["capture_version"], "1.12.0")
+                self.assertEqual(validate.validate(c, SCHEMA), [], name)
+                for frame in (c.get("business_frame") or {}).values():
+                    self.assertNotEqual(frame.get("archetype"), HOLDING)
+        self.assertEqual(found, 24)
+        component = SCHEMA["properties"]["business_frame"][
+            "additionalProperties"]["properties"]["nav_bridge"][
+            "properties"]["components"]["items"]
+        self.assertNotIn("valuation_basis", component["required"])
+        self.assertEqual(component["properties"]["valuation_basis"]["enum"],
+                         ["listed_peer_multiples", "latest_funding_round",
+                          "discounted_cash_flow", "fund_manager_statement",
+                          "cost", "other"])
+
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_the_runs_on_record_migrate_with_no_holding_field(self):
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if not os.path.exists(path):
+                continue
+            old = to_contract_1_11_0(canonical.read_json(path), run_id)
+            new = to_contract_1_12_0(canonical.read_json(path), run_id)
+            expected = copy.deepcopy(old)
+            expected["capture_version"] = "1.12.0"
+            self.assertEqual(new, expected, run_id)
+
+    def test_the_migration_changes_only_the_version(self):
+        """Synthetic migration proof; the live-record proof stays guarded."""
+        c = framed()
+        c["capture_version"] = "1.11.0"
+        old = to_contract_1_11_0(copy.deepcopy(c), "invented")
+        expected = copy.deepcopy(old)
+        expected["capture_version"] = "1.12.0"
+        self.assertEqual(to_contract_1_12_0(c, "invented"), expected)
+
+    def test_an_unknown_valuation_basis_fails_the_schema(self):
+        from council.lib import validate
+        c = holding_capture()
+        # Isolate this field from the new archetype and version enum.
+        holding_frame(c)["archetype"] = "financial_institution"
+        schema = copy.deepcopy(SCHEMA)
+        schema["properties"]["capture_version"]["const"] = c["capture_version"]
+        holding_frame(c)["nav_bridge"]["components"][-1][
+            "valuation_basis"] = "invented_unknown_basis"
+        found = validate.validate(c, schema)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("valuation_basis", found[0])
+        self.assertIn("is not one of", found[0])
+        # Every ruled basis is accepted by the schema.
+        for basis in ("listed_peer_multiples", "latest_funding_round",
+                      "discounted_cash_flow", "fund_manager_statement",
+                      "cost", "other"):
+            holding_frame(c)["nav_bridge"]["components"][-1][
+                "valuation_basis"] = basis
+            self.assertEqual(validate.validate(c, schema), [])
+
+
+class TestHoldingFrameAtTheGate(unittest.TestCase):
+    def refused(self, capture, needle):
+        outcome = gate_check(capture)
+        self.assertEqual(outcome["result"], "refused")
+        self.assertIn(needle, "\n".join(outcome["reasons"]))
+        return outcome["reasons"]
+
+    def test_a_holding_frame_clears_the_gate(self):
+        self.assertEqual(gate_check(holding_capture())["reasons"], [])
+
+    def test_a_holding_without_a_nav_bridge_refuses(self):
+        reasons = self.refused(holding_capture(nav_bridge=None),
+                               "is an investment holding and carries no nav_bridge")
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("AC59-AC62", reasons[0])
+
+    def test_a_private_component_without_a_basis_refuses(self):
+        for method in HOLDING_PRIVATE_METHODS:
+            c = holding_capture()
+            part = holding_frame(c)["nav_bridge"]["components"][-1]
+            part["method"] = method
+            del part["valuation_basis"]
+            reasons = self.refused(c, "without a valuation_basis")
+            self.assertEqual(len(reasons), 1)
+            self.assertIn(part["name"], reasons[0])
+            self.assertIn("AC60(H6)", reasons[0])
+
+    def test_a_bridge_on_a_profit_maker_refuses(self):
+        reasons = self.refused(holding_capture(archetype="profitable_operator"),
+                               "carries nav_bridge and declares neither")
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("'investment_holding'", reasons[0])
+        self.assertIn("'financial_holding'", reasons[0])
+
+    def test_every_bridge_reference_is_checked_once(self):
+        for field in ("value_fact", "holdco_net_debt_fact", "nav_total_fact",
+                      "published_nav_fact", "discount_fact"):
+            c = holding_capture()
+            bridge = holding_frame(c)["nav_bridge"]
+            target = bridge["components"][0] if field == "value_fact" else bridge
+            target[field] = "missing_bridge_fact"
+            reasons = self.refused(c, "missing_bridge_fact")
+            self.assertEqual(len(reasons), 1, reasons)
+
+    def test_the_fi_bridge_refusals_are_unchanged(self):
+        """Control: exact original FI fences, including their order."""
+        c = fi_capture(FI_HOLDING, nav_bridge=None)
+        self.assertEqual(gate_check(c)["reasons"], [
+            "the business frame for 'EXMP' is a financial holding and carries no "
+            "nav_bridge - owner ruling AC30(3) rates a holding on its "
+            "discount to the value of what it owns, so the frame names "
+            "the parts that value is struck from"])
+        c = with_nav_bridge(fi_capture("bank"))
+        self.assertEqual(gate_check(c)["reasons"], [
+            "the business frame for 'EXMP' carries a nav_bridge on a 'bank' - the "
+            "bridge is a financial holding's own measure, and on any "
+            "other sub-type the seats would read a net asset value the "
+            "rating does not stand on"])
+        self.assertEqual(gate_check(load_fixture("holding-pass.json"))[
+            "reasons"], [])
+
+    def test_the_bridge_is_optional_and_unvalidated_for_other_subject_kinds(self):
+        """Control: HA12 keeps baskets, themes and funds optional."""
+        for fixture in ("basket-pass.json", "theme-pass.json", "etf-pass.json"):
+            c = load_fixture(fixture)
+            for frame in c.get("business_frame", {}).values():
+                frame["nav_bridge"] = holding_frame(holding_capture())["nav_bridge"]
+            self.assertEqual(gate_check(c)["reasons"], [])
+
+
+class TestTheHoldingRuleBothWays(HoldingRuleTest):
+    def check_marker_refusal(self, capture):
+        self.assertEqual(gate_check(capture)["result"], "accepted")
+        item = self.refused(capture, HOLDING_RULE_WHAT)
+        self.assertIn("owner ruling AC59(H4)", item["why_needed"])
+        self.assertIn(holding_frame(capture)["archetype"], item["why_needed"])
+        self.assertIn("nav_component_", item["why_needed"])
+        self.assertIn(HOLDING, item["where_it_likely_lives"])
+
+    def test_a_holding_declared_a_profit_maker_refuses(self):
+        self.check_marker_refusal(holding_marker_capture(
+            with_quarters(framed(), GROWER_PROFITS)))
+
+    def test_a_lessor_with_nav_is_untouched(self):
+        self.passes(holding_marker_capture(
+            with_quarters(lessor_capture("900"), GROWER_PROFITS)))
+
+    def test_a_loss_making_holding_declared_a_grower_refuses(self):
+        self.check_marker_refusal(holding_marker_capture(grower_capture()))
+
+    def test_a_holding_declared_a_producer_refuses(self):
+        self.check_marker_refusal(holding_marker_capture(producer_capture()))
+
+    def test_the_growth_pointer_does_not_print_for_a_holding(self):
+        c = holding_marker_capture(with_quarters(framed(), GROWER_LOSSES))
+        floors = holding_floors()
+        for archetype in GROWTH_QUARTERLY:
+            for entry in growth_quarterly_floor(floors, archetype):
+                entry["applies_from"] = "2026-08-01"
+        without_markers = copy.deepcopy(floors)
+        without_markers["archetype_measures"]["holding_rule"][
+            "marker_prefixes"] = ["invented_marker_"]
+        # Confirm the unwanted pointer would otherwise print on this input.
+        self.refused(c, FOUR_QUARTERS_WHAT, without_markers)
+        item = self.refused(c, HOLDING_RULE_WHAT, floors)
+        self.assertIn("never as a growth company", item["why_needed"])
+        self.assertNotIn(FOUR_QUARTERS_WHAT, growth_whats(self.judged(c, floors)))
+        self.assertNotIn("'reinvesting_grower'", self.judged(c, floors)["message"])
+
+    def test_a_holding_passes_in_a_loss_year(self):
+        """Control with holding data: the profitability rule is untouched."""
+        self.passes(with_quarters(holding_capture(), GROWER_LOSSES))
+
+    def test_a_profit_maker_without_the_markers_is_untouched(self):
+        """Control: no marker, no holding rule."""
+        self.passes(with_quarters(framed(), GROWER_PROFITS))
+        self.passes(grower_capture())
+
+    def test_the_rule_is_read_from_the_floors(self):
+        c = holding_marker_capture(with_quarters(framed(), GROWER_PROFITS))
+        self.refused(c, HOLDING_RULE_WHAT)
+        self.passes(c, holding_floors(marker_prefixes=["invented_marker_"]))
+        self.passes(c, holding_floors(refuses=["stabilised_lessor"]))
+        for prefix in FLOORS["archetype_measures"]["holding_rule"][
+                "marker_prefixes"]:
+            one = with_quarters(framed(), GROWER_PROFITS)
+            fi_fact(one, prefix + "invented_only", "100", "USD_m")
+            self.refused(one, HOLDING_RULE_WHAT)
+
+    def test_a_capture_before_applies_from_is_not_judged(self):
+        c = holding_marker_capture(with_quarters(framed(), GROWER_PROFITS))
+        self.refused(c, HOLDING_RULE_WHAT)
+        self.passes(c, FLOORS)
+        self.passes(c, holding_floors(applies_from="2026-08-31"))
+        self.refused(c, HOLDING_RULE_WHAT,
+                     holding_floors(applies_from="2026-08-30"))
+
+    def test_the_holding_denominator_outside_its_role_refuses(self):
+        """Generic control with data: no new denominator mechanism."""
+        c = holding_capture()
+        row = next(r for r in c["sufficiency"]["requirements"]
+                   if r["id"] == "rating_vs_history_or_peers")
+        row["subject_denominator_facts"] = ["nav_published_q"]
+        item = self.refused(c, "an investment holding's net asset value denominator")
+        self.assertIn("'nav_published_q'", item["why_needed"])
+        self.assertIn("'nav_total'", item["why_needed"])
+        row["subject_denominator_facts"] = ["nav_total"]
+        row["peer_denominator_metrics"] = ["published_nav"]
+        item = self.refused(c, "an investment holding's net asset value denominator")
+        self.assertIn("the peers' side", item["why_needed"])
+
+
+class TestTheHoldingBridge(HoldingRuleTest):
+    def breach(self, case, what):
+        c = holding_bridge_breach(holding_capture(), case)
+        self.assertEqual(gate_check(c)["reasons"], [])
+        item = self.refused(c, what)
+        self.assertIn(HOLDING_RULING, item["why_needed"])
+        self.assertNotIn("owner rulings AC28", item["why_needed"])
+        return item
+
+    def test_the_denominator_is_the_bridge_total(self):
+        self.breach("other_total", FI_NAV_BRIDGE_WHAT)
+
+    def test_a_typed_total_refuses(self):
+        self.breach("typed_total", FI_NAV_DERIVED_WHAT)
+
+    def test_a_component_outside_the_total_refuses(self):
+        self.breach("component_outside", FI_NAV_PARTS_WHAT)
+
+    def test_the_debt_outside_the_total_refuses(self):
+        self.breach("debt_outside", FI_NAV_PARTS_WHAT)
+
+    def test_the_debt_added_refuses(self):
+        self.breach("debt_added", FI_NAV_SIGN_WHAT)
+
+    def test_a_component_counted_twice_refuses(self):
+        self.breach("component_twice", FI_NAV_SIGN_WHAT)
+
+    def test_the_debt_counted_twice_refuses(self):
+        self.breach("debt_twice", FI_NAV_SIGN_WHAT)
+
+    def test_a_component_subtracted_refuses(self):
+        self.breach("component_subtracted", FI_NAV_SIGN_WHAT)
+
+    def test_an_unsourced_leaf_refuses(self):
+        self.breach("unsourced_leaf", FI_NAV_RECORDED_WHAT)
+
+    def test_a_stale_component_refuses_through_the_chain(self):
+        """Control: the denominator already walks the entire chain."""
+        c = holding_capture()
+        part = holding_frame(c)["nav_bridge"]["components"][-1]
+        fact = fi_holding_facts(c)[part["value_fact"]]
+        fact["as_of"] = "2025-08-01"
+        outcome = self.judged(c)
+        self.assertEqual(outcome["result"], "refuse")
+        self.assertIn("stale", outcome["message"])
+        self.assertIn(part["value_fact"], outcome["message"])
+
+    def test_the_fi_holding_words_are_byte_identical(self):
+        """Control: all bridge triples are pinned against the base digest."""
+        samples = []
+        for case in ("other_total", "typed_total", "component_outside",
+                     "debt_outside", "debt_added", "component_twice",
+                     "debt_twice", "component_subtracted", "unsourced_leaf"):
+            c = holding_bridge_breach(fi_capture(FI_HOLDING), case)
+            frame = holding_frame(c)
+            rating = next(row for row in c["sufficiency"]["requirements"]
+                          if row["id"] == "rating_vs_history_or_peers")
+            samples.append(sufficiency._nav_bridge_failures(
+                frame, rating, fi_holding_facts(c)))
+        self.assertEqual(canonical.sha256_bytes(canonical.canonical_bytes(samples)),
+                         "81ad0367e5b301731f58eaee541514f2cb2935b4632c59023468601b85102278")
+
+
+
+def holding_history(capture, count=5, gap=False, quarters=False):
+    """Invented financial year-end pairs, oldest first in the capture."""
+    capture["gaps"] = [g for g in capture["gaps"]
+                       if g["fact_class"] != "nav_published_hist_"]
+    if gap:
+        absent_by_design(capture, "nav_published_hist_")
+    for year in range(2021, 2021 + count):
+        for prefix, value in (("nav_published_hist_", "100"), ("price_hist_", "80")):
+            fid = prefix + ("q4_" if quarters else "") + "fy" + str(year)
+            grower_fact(capture, fid, value, "USD_per_share",
+                        as_of=str(year) + "-12-31", rule=1826)
+    return capture
+
+
+class TestTheHoldingMeasure(HoldingRuleTest):
+    def test_a_component_in_another_currency_refuses(self):
+        for fid in ("nav_component_listed_insurer", "holdco_net_debt", "nav_total"):
+            for unit in ("EUR_m", "USD_b"):
+                c = holding_capture()
+                fi_holding_facts(c)[fid]["unit"] = unit
+                item = self.refused(c, "one unit for '%s' and 'market_cap'" % fid)
+                self.assertIn(unit, item["why_needed"])
+                self.assertIn("USD_m", item["why_needed"])
+
+    def test_a_nav_in_another_currency_than_the_market_value_refuses(self):
+        c = holding_capture()
+        fi_holding_facts(c)["market_cap"]["unit"] = "EUR_m"
+        self.refused(c, "one unit for 'nav_total' and 'market_cap'")
+
+    def test_the_shared_unit_rule_reaches_the_fi_holding(self):
+        c = load_fixture("holding-pass.json")
+        fi_holding_facts(c)["holdco_net_debt"]["unit"] = "USD_b"
+        outcome = sufficiency_of(freeze.build_pack(c))
+        self.assertIn("one unit for 'holdco_net_debt' and 'market_cap'",
+                      growth_whats(outcome))
+
+    def test_every_currency_fact_including_peers_uses_one_currency(self):
+        c = holding_capture()
+        currencies = {u.removesuffix("_per_share") for u in FLOORS["allowed_units"]
+                      if u.endswith("_per_share")}
+        for unit in FLOORS["allowed_units"]:
+            if unit.split(" per ")[-1] in currencies and " per " in unit:
+                continue
+            if any(unit == currency or unit.startswith((currency + "_", currency + " per "))
+                   for currency in currencies - {"USD"}):
+                one = copy.deepcopy(c)
+                fi_fact(one, "peer_invented_currency_fact", "100", unit)
+                item = self.refused(one, "a holding reading: 'peer_invented_currency_fact'")
+                self.assertIn("one currency throughout", item["why_needed"])
+                self.assertIn(unit, item["why_needed"])
+        # Magnitudes can differ outside the bridge; their currency still agrees.
+        fi_fact(c, "other_currency_magnitude", "100", "USD_b")
+        self.passes(c)
+
+    def test_an_old_private_valuation_refuses(self):
+        for method in HOLDING_PRIVATE_METHODS:
+            for age in (456, 457):
+                c = holding_capture()
+                part = holding_frame(c)["nav_bridge"]["components"][-1]
+                part["method"] = method
+                fact = fi_holding_facts(c)[part["value_fact"]]
+                fact.update(as_of=(date(2026, 8, 30) - timedelta(days=age)).isoformat(),
+                            freshness_rule_days=1826)
+                if age == 456:
+                    self.passes(c)
+                else:
+                    item = self.refused(c, "a holding reading: '%s'" % part["value_fact"])
+                    self.assertIn(fact["as_of"], item["why_needed"])
+                    self.assertIn("457 days old against 456", item["why_needed"])
+        floors = holding_floors(private_valuation_max_age_days=457)
+        self.passes(c, floors)
+
+    def test_fewer_than_five_year_ends_refuse(self):
+        c = holding_history(holding_capture(), 4, gap=True)
+        self.passes(c)
+        c["gaps"] = [g for g in c["gaps"] if g["fact_class"] != "nav_published_hist_"]
+        self.refused(c, "the holding's financial year-end history")
+        c = holding_history(holding_capture())
+        self.passes(c)
+        self.refused(c, "the holding's financial year-end history",
+                     holding_floors(history_year_ends=6))
+
+    def test_quarter_end_members_do_not_count(self):
+        c = holding_history(holding_capture(), quarters=True)
+        self.refused(c, "the holding's financial year-end history")
+
+    def test_each_history_pair_has_both_members_in_one_unit(self):
+        c = holding_history(holding_capture())
+        fi_holding_facts(c)["price_hist_fy2025"]["unit"] = "USD"
+        self.refused(c, "one unit for 'price_hist_fy2025' and 'nav_published_hist_fy2025'")
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "price_hist_fy2025"]
+        self.refused(c, "a year-end pair: 'fy2025'")
+
+    def test_a_nav_at_or_below_zero_refuses(self):
+        for debt in ("60001", "60000"):
+            c = holding_capture()
+            fi_holding_facts(c)["holdco_net_debt"]["value"] = debt
+            correct.restrike(c, "holdco_net_debt")
+            self.assertEqual(gate_check(c)["reasons"], [])
+            item = self.refused(c, "a holding reading: 'nav_total'")
+            self.assertIn("net asset value above zero", item["why_needed"])
+
+    def test_a_discount_not_struck_from_both_halves_refuses(self):
+        for target, other in (("market_cap", "nav_total"), ("nav_total", "market_cap")):
+            c = holding_capture()
+            discount = fi_holding_facts(c)["nav_discount"]
+            discount["derived"] = {"operation": "sum", "operands": [
+                {"fact_id": other, "label": "first reading", "value": fi_holding_facts(c)[other]["value"]},
+                {"fact_id": other, "label": "second reading", "value": fi_holding_facts(c)[other]["value"]}]}
+            discount["value"] = str(Decimal(fi_holding_facts(c)[other]["value"]) * 2)
+            self.assertEqual(gate_check(c)["reasons"], [])
+            self.refused(c, "a discount resting on '%s'" % target)
+
+    def test_the_nav_and_the_dividend_cover_are_decisive(self):
+        for fid in ("nav_total", "nav_discount", "holdco_cash_flow_dividends_received_q"):
+            c = holding_capture()
+            for metric in holding_frame(c)["decisive_metrics"]:
+                metric["answered_by"] = [item for item in metric["answered_by"] if item != fid]
+            self.refused(c, "a decisive holding fact: '%s'" % fid)
+        c = holding_capture()
+        fid = fi_fact(c, "holdco_cash_flow_second", "100", "USD_m")
+        next(r for r in c["sufficiency"]["requirements"] if r["id"] == "free_cash_flow")[
+            "answered_by"].append(fid)
+        self.refused(c, "a decisive holding fact: '%s'" % fid)
+
+    def test_the_capital_spending_floor_is_lifted(self):
+        from council.engine import briefs
+        c = holding_capture()
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "capital_expenditure_q"]
+        fi_holding_facts(c)["free_cash_flow_q"]["derived"] = None
+        self.passes(c)
+        text = "\n".join(briefs._floors_block(c["subject"], holding_floors(), c))
+        self.assertIn("lifted for a holding company", text)
+        self.assertIn("dividend cover", text)
+
+    def test_the_holding_tests_read_their_words_from_the_floors(self):
+        """Control: the existing canonical-test reader already reads data."""
+        floors = holding_floors()
+        floors["archetype_floors"][HOLDING]["canonical_tests"]["free_cash_flow"][
+            "words"] = ["INVENTED cash test words", "INVENTED cash source words"]
+        c = holding_capture()
+        next(r for r in c["sufficiency"]["requirements"] if r["id"] == "free_cash_flow")[
+            "answered_by"] = ["net_income_q"]
+        outcome = self.judged(c, floors)
+        self.assertIn("INVENTED cash test words", outcome["message"])
+
+
+class TestHoldingReadings(unittest.TestCase):
+    def read(self, c):
+        return sufficiency.holding_readings(freeze.build_pack(c), FLOORS)
+
+    def test_exact_figures_and_displays_for_the_invented_bridge(self):
+        r = self.read(holding_history(holding_capture()))
+        self.assertEqual(r["errors"], [])
+        self.assertEqual(r["gross_value"], Decimal("60000"))
+        expected = {"private_share": ("10000", "60000", "16.6"),
+                    "loan_to_value": ("4000", "60000", "6.6"),
+                    "costs_to_nav": ("180", "56000", "0.3"),
+                    "discount_today": ("6000", "56000", "10.7"),
+                    "discount_published": ("7000", "57000", "12.2")}
+        for key, values in expected.items():
+            self.assertEqual(r[key], dict(zip(("numerator", "denominator", "percent"),
+                                              map(Decimal, values))))
+        self.assertEqual([h["value"] for h in r["holdings"]], list(map(Decimal, ("30000", "20000", "10000"))))
+        self.assertEqual([h["year"] for h in r["history"]], ["fy2025", "fy2024", "fy2023", "fy2022", "fy2021"])
+        self.assertEqual(r["history_average"]["percent"], Decimal("20.0"))
+        self.assertEqual(r["range_word"], "narrower")
+        self.assertFalse(r["largest_above_half"])
+        self.assertFalse(r["private_above_half"])
+        self.assertEqual(r["holdings"][-1]["valuation_basis"], "latest_funding_round")
+
+    def test_printed_shares_do_not_cross_the_exact_half_line(self):
+        for value, display, above in (("49999", "49.9", False), ("50000", "50.0", False), ("50001", "50.0", True)):
+            c = holding_capture()
+            fi_holding_facts(c)["nav_component_private_industrial"]["value"] = value
+            correct.restrike(c, "nav_component_private_industrial")
+            r = self.read(c)
+            self.assertEqual(r["private_share"]["percent"], Decimal(display))
+            self.assertEqual(r["private_above_half"], above)
+
+    def test_the_range_uses_exact_comparisons_including_equality(self):
+        for price, word in (("50001", "wider"), ("50000", "inside"), ("49999", "narrower")):
+            c = holding_history(holding_capture())
+            for fact in c["tier1"]:
+                if fact["id"].startswith("nav_published_hist_"):
+                    fact["value"] = "57000"
+                elif fact["id"].startswith("price_hist_"):
+                    fact["value"] = price
+            r = self.read(c)
+            self.assertEqual(r["range_word"], word)
+            self.assertEqual(r["history_average"]["percent"], r["discount_published"]["percent"])
+
+    def test_the_average_is_exact_with_different_denominators(self):
+        c = holding_history(holding_capture())
+        facts = fi_holding_facts(c)
+        facts["nav_published_hist_fy2025"]["value"] = "200"
+        facts["price_hist_fy2025"]["value"] = "140"
+        r = self.read(c)
+        self.assertEqual(r["history_average"]["percent"], Decimal("22.0"))
+        self.assertEqual(r["history_average"]["numerator"] * Decimal(100),
+                         r["history_average"]["denominator"] * Decimal(22))
+
+    def test_a_missing_member_or_unit_breach_returns_none_with_its_reason(self):
+        unavailable = self.read(holding_capture())
+        self.assertIsNone(unavailable["history_average"])
+        self.assertTrue(unavailable["history_reason"])
+        for fault in ("missing", "unit"):
+            c = holding_history(holding_capture())
+            if fault == "missing":
+                c["tier1"] = [f for f in c["tier1"] if f["id"] != "price_hist_fy2025"]
+            else:
+                fi_holding_facts(c)["nav_total"]["unit"] = "EUR_m"
+            r = self.read(c)
+            self.assertTrue(r["errors"])
+            self.assertIsNone(r["history_average"])
+            self.assertIsNone(r["range_word"])
+
+    def test_negative_discounts_are_cut_toward_zero(self):
+        c = holding_capture()
+        fi_holding_facts(c)["market_cap"]["value"] = "60000"
+        r = self.read(c)
+        self.assertEqual(r["discount_today"]["percent"], Decimal("-7.1"))
+
+    def test_none_for_every_other_archetype_and_other_subject_kinds(self):
+        captures = [load_fixture(n) for n in PASS_FIXTURES + ("bank-pass.json", "holding-pass.json")]
+        captures += [grower_capture(), producer_capture(), lessor_capture()]
+        for capture in captures:
+            self.assertIsNone(self.read(capture))
+
+    def test_the_pack_bytes_are_unchanged(self):
+        pack = freeze.build_pack(holding_history(holding_capture()))
+        before = canonical.canonical_bytes(pack)
+        sufficiency.holding_readings(pack, FLOORS)
+        self.assertEqual(canonical.canonical_bytes(pack), before)
+
+
+class TestHoldingFixes(HoldingRuleTest):
+    def read(self, c, floors=None):
+        return sufficiency.holding_readings({"capture": c}, floors or holding_floors())
+
+    def converted(self):
+        c = holding_capture()
+        fi_fact(c, "native_value", "100000", "SEK_m")
+        fi_fact(c, "fx_rate_sek_usd", "0.1", "USD per SEK")
+        fi_holding_facts(c)["fx_rate_sek_usd"]["as_of"] = "2026-08-29"
+        fi_holding_facts(c)["nav_component_private_industrial"]["derived"] = {
+            "operation": "multiply", "operands": [
+                {"fact_id": fid, "label": fid, "value": value}
+                for fid, value in (("native_value", "100000"), ("fx_rate_sek_usd", "0.1"))]}
+        return c
+
+    def test_costs_in_another_magnitude_than_the_nav_refuse(self):
+        c = holding_capture()
+        fi_holding_facts(c)["holdco_costs_ttm"]["unit"] = "USD_b"
+        item = self.refused(c, "one unit for 'holdco_costs_ttm' and 'nav_total'")
+        self.assertIn("USD_b", item["why_needed"])
+        self.assertIsNone(self.read(c)["costs_to_nav"])
+
+    def test_a_holding_without_the_company_published_nav_refuses(self):
+        c = holding_capture()
+        del holding_frame(c)["nav_bridge"]["published_nav_fact"]
+        self.assertIn("published_nav_fact", self.judged(c)["message"])
+        c = holding_capture()
+        fi_holding_facts(c)["nav_published_q"]["unit"] = "USD_b"
+        self.assertIn("USD_b", self.judged(c)["message"])
+        self.assertIsNone(self.read(c)["discount_published"])
+
+    def test_a_history_member_is_not_the_latest_published_nav(self):
+        c = holding_history(holding_capture())
+        holding_frame(c)["nav_bridge"]["published_nav_fact"] = "nav_published_hist_fy2025"
+        self.assertIn("not a history member", self.judged(c)["message"])
+        self.assertIsNone(self.read(c)["discount_published"])
+
+    def test_the_market_value_follows_the_row_data(self):
+        c, floors = holding_capture(), holding_floors()
+        fi_fact(c, "market_cap_all_classes", "45000", "USD_m")
+        floors["archetype_measures"]["table"][HOLDING]["subject_numerator"] = "market_cap_all_classes"
+        fi_holding_facts(c)["nav_discount"]["derived"]["operands"][1]["fact_id"] = "market_cap_all_classes"
+        correct.restrike(c, "market_cap_all_classes")
+        self.assertEqual(self.read(c, floors)["discount_today"]["numerator"], Decimal("11000"))
+        fi_holding_facts(c)["market_cap_all_classes"]["unit"] = "USD_b"
+        self.assertIn("one unit for 'nav_total' and 'market_cap_all_classes'", self.judged(c, floors)["message"])
+
+    def test_a_timestamped_private_value_is_dated_not_crashed(self):
+        c = holding_capture()
+        fi_holding_facts(c)["nav_component_private_industrial"]["as_of"] = "2026-08-28T12:00Z"
+        self.passes(c)
+
+    def test_every_breach_on_one_fact_is_named(self):
+        c = holding_capture()
+        f = fi_holding_facts(c)["nav_component_private_industrial"]
+        f.update(as_of=(date(2026, 8, 30) - timedelta(days=600)).isoformat(), unit="EUR_m", freshness_rule_days=1826)
+        message = self.judged(c)["message"]
+        self.assertIn("AC60(H6)", message)
+        self.assertIn("600 days old", message)
+        self.assertIn("AC62(H16)", message)
+
+    def test_the_schema_title_names_its_version(self):
+        self.assertIn(SCHEMA["properties"]["capture_version"]["const"], SCHEMA["title"])
+
+    def test_a_property_operator_with_nav_is_not_a_holding(self):
+        c = holding_marker_capture(with_quarters(lessor_capture("900"), GROWER_PROFITS))
+        self.passes(c)
+
+    def test_holding_floors_need_no_fi_fallback(self):
+        floors = holding_floors()
+        del floors["archetype_floors"]["financial_institution"]["financial_holding"]
+        self.assertTrue(self.read(holding_capture(), floors)["discount_today"])
+
+    def test_every_ordered_currency_pair_is_data(self):
+        codes = {u.removesuffix("_per_share") for u in FLOORS["allowed_units"] if u.endswith("_per_share")}
+        self.assertTrue({a + " per " + b for a in codes for b in codes} <= set(FLOORS["allowed_units"]))
+        self.assertNotIn("USD per INVENTED", FLOORS["allowed_units"])
+
+    def test_a_native_operand_with_a_fresh_rate_passes(self):
+        c = self.converted()
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        self.passes(c)
+        self.assertEqual(self.read(c)["errors"], [])
+        holding_frame(c)["decisive_metrics"][-1]["answered_by"].append("native_value")
+        self.assertIn("native_value", self.judged(c)["message"])
+
+    def test_only_a_multiplication_by_one_rate_converts(self):
+        for fault in ("divide", "twice", "money", "native_twice", "other_rate", "also_valid", "extra_share_count"):
+            with self.subTest(fault=fault):
+                c = self.converted()
+                derived = fi_holding_facts(c)["nav_component_private_industrial"]["derived"]
+                if fault == "also_valid":
+                    fid = fi_fact(c, "another_conversion", "10000", "USD_m")
+                    fi_holding_facts(c)[fid]["derived"] = copy.deepcopy(derived)
+                    derived["operation"] = "divide"
+                elif fault == "divide":
+                    derived["operation"] = "divide"
+                elif fault in ("twice", "native_twice"):
+                    derived["operands"].append(copy.deepcopy(derived["operands"][fault == "twice"]))
+                elif fault == "extra_share_count":
+                    fid = fi_fact(c, fault, "2", "shares")
+                    derived["operands"].append({"fact_id": fid, "label": fid, "value": "2"})
+                else:
+                    fid = fi_fact(c, "extra_operand", "1", "USD_m" if fault == "money" else "USD per EUR")
+                    derived["operands"].append({"fact_id": fid, "label": fid, "value": "1"})
+                correct.restrike(c, "native_value")
+                self.assertEqual(gate_check(c)["result"], "accepted")
+                self.assertEqual(self.judged(c)["result"], "refuse")
+                item = self.refused(c, "a holding reading: 'native_value'")
+                self.assertIn("SEK_m", item["why_needed"])
+                self.assertIn("USD", item["why_needed"])
+
+    def test_a_stale_or_wrong_or_missing_rate_refuses(self):
+        for fault in ("stale", "pair", "missing", "undated", "future"):
+            c = self.converted()
+            rate = fi_holding_facts(c)["fx_rate_sek_usd"]
+            if fault == "stale":
+                rate.update(as_of="2026-08-26", freshness_rule_days=30)
+            elif fault == "pair":
+                rate["unit"] = "USD per EUR"
+            elif fault == "future":
+                rate["as_of"] = "2026-08-31"
+            elif fault == "undated":
+                del rate["as_of"]
+            else:
+                c["tier1"].remove(rate)
+            self.assertTrue(any("fx_rate_sek_usd" in e for e in self.read(c)["errors"]))
+            if fault == "future":
+                self.assertTrue(any("dated after the capture" in e for e in self.read(c)["errors"]))
+            if fault in ("stale", "pair"):
+                self.assertIn("fx_rate_sek_usd", self.judged(c)["message"])
+            if fault == "stale":
+                self.passes(c, holding_floors(max_price_freshness_days=4))
+
+    def test_an_unconverted_native_figure_refuses(self):
+        c = holding_capture()
+        fi_fact(c, "native_value", "100", "SEK_m")
+        self.assertIn("owner ruling AC62(H16):", self.judged(c)["message"])
+
+    def test_currency_aliases_are_read_from_data(self):
+        self.assertEqual(FLOORS["prose_figure_marks"].get("currency_aliases"), {"US$m": "USD_m"})
+        c = holding_capture()
+        fi_fact(c, "legacy_money", "100", "US$m")
+        self.passes(c)
+        floors = holding_floors()
+        floors["prose_figure_marks"]["currency_aliases"]["US$m"] = "EUR_m"
+        self.assertIn("legacy_money", self.judged(c, floors)["message"])
+
+
+class TestHoldingConversionClass(HoldingRuleTest):
+    """AC62(H16), a2: scales and exemptions belong to each conversion."""
+    converted = TestHoldingFixes.converted
+    read = TestHoldingFixes.read
+
+    def test_bn_native_into_m_refuses_naming_both_units(self):
+        self.scale_refuses("SEK_bn")
+
+    def test_bare_native_into_m_refuses_naming_both_units(self):
+        self.scale_refuses("SEK")
+
+    def test_per_share_times_shares_into_m_refuses(self):
+        c = self.converted()
+        facts = fi_holding_facts(c)
+        facts["native_value"]["unit"] = "SEK_per_share"
+        fid = fi_fact(c, "extra_share_count", "2", "shares")
+        facts["nav_component_private_industrial"]["derived"]["operands"].append(
+            {"fact_id": fid, "label": fid, "value": "2"})
+        correct.restrike(c, fid)
+        self.scale_refuses("SEK_per_share", c)
+
+    def scale_refuses(self, unit, c=None):
+        c = self.converted() if c is None else c
+        fi_holding_facts(c)["native_value"]["unit"] = unit
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        self.assertEqual(self.judged(c)["result"], "refuse")
+        for words in ("native_value", unit, "USD_m", "AC62(H16)"):
+            self.assertIn(words, self.judged(c)["message"])
+            self.assertTrue(any(words in e for e in self.read(c)["errors"]))
+
+    def test_side_conversion_does_not_exempt_a_raw_component(self):
+        c = self.converted()
+        holding_frame(c)["nav_bridge"]["components"].append({
+            "name": "INVENTED - native business", "value_fact": "native_value",
+            "method": "listed_at_market"})
+        facts = fi_holding_facts(c)
+        facts["nav_components_total"]["derived"]["operands"].append({
+            "fact_id": "native_value", "label": "native business", "value": "100000"})
+        correct.restrike(c, "native_value")
+        self.native_refuses(c)
+
+    def test_side_conversion_does_not_exempt_another_derived_use(self):
+        c = self.converted()
+        fi_fact(c, "raw_native_copy", "100000", "SEK_m", {
+            "operation": "sum", "operands": [
+                {"fact_id": "native_value", "label": "native", "value": "100000"},
+                {"label": "zero", "value": "0"}]})
+        self.native_refuses(c)
+
+    def test_side_conversion_does_not_exempt_a_same_currency_result(self):
+        c = self.converted()
+        fi_fact(c, "raw_money_copy", "100000", "USD_m", {
+            "operation": "sum", "operands": [
+                {"fact_id": "native_value", "label": "native", "value": "100000"},
+                {"label": "zero", "value": "0"}]})
+        self.native_refuses(c)
+
+    def native_refuses(self, c):
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        item = self.refused(c, "a holding reading: 'native_value'")
+        for words in ("native_value", "SEK_m", "USD", "AC62(H16)"):
+            self.assertIn(words, item["why_needed"])
+            self.assertTrue(any(words in e for e in self.read(c)["errors"]))
+
+    def test_matching_scales_and_aliases_are_controls(self):
+        for source, target in (("SEK_m", "USD_m"), ("SEK_bn", "USD_bn"),
+                               ("SEK", "USD"), ("SEK_m", "US$m")):
+            c = self.converted()
+            facts = fi_holding_facts(c)
+            facts["native_value"]["unit"] = source
+            facts["nav_component_private_industrial"]["unit"] = target
+            if target != "USD_m":
+                # Test just the conversion tags: bridge unit checks are separate.
+                # A valid converted native figure has no H16 error on either tree.
+                errors = self.read(c)["errors"]
+                self.assertFalse(any("native_value" in e for e in errors), errors)
+            else:
+                self.passes(c)
+                self.assertEqual(self.read(c)["errors"], [])
+
+    def test_one_currency_holding_is_a_control(self):
+        c = holding_capture()
+        self.passes(c)
+        self.assertEqual(self.read(c)["errors"], [])
+
+
+class TestHoldingConversionFixRoundOne(HoldingRuleTest):
+    """AC62(H16), ruling C: every rate use and every native reference."""
+    converted = TestHoldingFixes.converted
+    read = TestHoldingFixes.read
+
+    def require_refusal(self, c, fid, unit=None, shape=True):
+        if shape:
+            self.assertEqual(gate_check(c)["result"], "accepted")
+        self.assertEqual(self.judged(c)["result"], "refuse")
+        item = self.refused(c, "a holding reading: '%s'" % fid)
+        for words in (fid, "AC62(H16)") + ((unit, "USD") if unit else ()):
+            self.assertIn(words, item["why_needed"])
+            self.assertTrue(any(words in error for error in self.read(c)["errors"]))
+
+    def peer_refuses(self, fid):
+        c = self.converted()
+        fact = fi_holding_facts(c)[fid]
+        fact["unit"] = "SEK_m"
+        fi_fact(c, "peer_converted_usd", "0", "USD_m", {
+            "operation": "multiply", "operands": [
+                {"fact_id": ref, "label": ref, "value": fi_holding_facts(c)[ref]["value"]}
+                for ref in (fid, "fx_rate_sek_usd")]})
+        correct.restrike(c, fid)
+        self.require_refusal(c, fid, "SEK_m")
+
+    def test_side_conversion_does_not_exempt_a_peer_figure(self):
+        self.peer_refuses("peer_nav_total__pmpc")
+
+    def test_side_conversion_does_not_exempt_a_peer_market_value(self):
+        self.peer_refuses("peer_market_cap__vlvi")
+
+    def test_a_rate_applied_to_pack_currency_refuses(self):
+        c = self.converted()
+        fi_holding_facts(c)["native_value"]["unit"] = "USD_m"
+        self.require_refusal(c, "fx_rate_sek_usd")
+
+    def test_a_rate_times_a_plain_number_refuses(self):
+        c = self.converted()
+        fi_fact(c, "rate_times_number", "1", "USD_m", {
+            "operation": "multiply", "operands": [
+                {"fact_id": "fx_rate_sek_usd", "label": "rate", "value": "0.1"},
+                {"label": "plain number", "value": "10"}]})
+        self.require_refusal(c, "fx_rate_sek_usd")
+
+    def test_a_third_percentage_operand_refuses(self):
+        c = self.converted()
+        fid = fi_fact(c, "extra_percentage", "2", "%")
+        fi_holding_facts(c)["nav_component_private_industrial"]["derived"]["operands"].append(
+            {"fact_id": fid, "label": fid, "value": "2"})
+        correct.restrike(c, fid)
+        self.require_refusal(c, "native_value", "SEK_m")
+
+    def test_every_frame_and_requirement_reference_refuses(self):
+        # Direct reader probes exercise arbitrary nested fact-id lists.
+        for root in ("frame", "requirement"):
+            for reference in (["native_value"], {"native_value": []}):
+                with self.subTest(root=root, reference=reference):
+                    c = self.converted()
+                    tree = (holding_frame(c) if root == "frame"
+                            else c["sufficiency"]["requirements"][-1])
+                    tree["reader_probe"] = {"nested": reference}
+                    self.require_refusal(c, "native_value", "SEK_m", shape=False)
+
+
+class TestHoldingConversionFixRoundTwo(HoldingRuleTest):
+    """AC62(H16): the rating reads peer facts by name as well as by id."""
+    converted = TestHoldingFixes.converted
+    read = TestHoldingFixes.read
+    require_refusal = TestHoldingConversionFixRoundOne.require_refusal
+
+    def trimmed(self, metric):
+        c = self.converted()
+        prefix = "peer_%s__" % metric
+        for peer in holding_frame(c)["peers"]:
+            peer["metrics"] = [fid for fid in peer["metrics"] if not fid.startswith(prefix)]
+        rating = next(r for r in c["sufficiency"]["requirements"]
+                      if r["id"] == "rating_vs_history_or_peers")
+        rating["answered_by"] = [fid for fid in rating["answered_by"]
+                                 if not fid.startswith(prefix)]
+        return c
+
+    def by_name_refuses(self, metric):
+        c = self.trimmed(metric)
+        fid = "peer_%s__vlvi" % metric
+        fi_holding_facts(c)[fid]["unit"] = "SEK_m"
+        fi_fact(c, "peer_converted_usd", "0", "USD_m", {
+            "operation": "multiply", "operands": [
+                {"fact_id": ref, "label": ref, "value": fi_holding_facts(c)[ref]["value"]}
+                for ref in (fid, "fx_rate_sek_usd")]})
+        correct.restrike(c, fid)
+        self.require_refusal(c, fid, "SEK_m")
+
+    def test_side_conversion_does_not_exempt_a_peer_numerator_read_by_name(self):
+        self.by_name_refuses("market_cap")
+
+    def test_side_conversion_does_not_exempt_a_peer_denominator_read_by_name(self):
+        self.by_name_refuses("nav_total")
+
+    def test_trimmed_usd_peers_are_controls(self):
+        for metric in ("market_cap", "nav_total"):
+            c = self.trimmed(metric)
+            self.assertEqual(gate_check(c)["result"], "accepted")
+            self.passes(c)
+            self.assertEqual(self.read(c)["errors"], [])
+
+
+class TestTheHoldingRunsOnRecordRegateUnchanged(unittest.TestCase):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        before = copy.deepcopy(FLOORS)
+        before["archetype_measures"]["table"].pop(HOLDING)
+        before["archetype_measures"].pop("holding_rule")
+        before["archetype_floors"].pop(HOLDING)
+        earliest = holding_floors(applies_from="2026-08-01")
+        gated = checked = frozen = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                for c in (canonical.read_json(path), to_contract_1_12_0(canonical.read_json(path), run_id)):
+                    old = gate.validate_capture(copy.deepcopy(c), SCHEMA, before)
+                    for floors in (FLOORS, earliest):
+                        self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, floors), old)
+                gated += 1
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            with open(path, "rb") as handle:
+                self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])), handle.read())
+            frozen += 1
+            try:
+                old = sufficiency.check(copy.deepcopy(pack), before)
+            except ValueError as exc:
+                for floors in (FLOORS, earliest):
+                    with self.assertRaises(ValueError) as caught:
+                        sufficiency.check(copy.deepcopy(pack), floors)
+                    self.assertEqual(str(caught.exception), str(exc))
+                continue
+            for floors in (FLOORS, earliest):
+                self.assertEqual(sufficiency.check(copy.deepcopy(pack), floors), old)
+            checked += 1
+        self.assertGreater(min(gated, checked, frozen), 0)
+
+
+
+def holding_page_capture(big=False):
+    """Invented year-ends; the private business can be the majority."""
+    c = holding_history(holding_capture())
+    if big:
+        fi_holding_facts(c)["nav_component_private_industrial"]["value"] = "70000"
+        correct.restrike(c, "nav_component_private_industrial")
+    return c
+
+
+class TestHoldingOnTheBrief(unittest.TestCase):
+    def texts(self, c=None):
+        pack = freeze.build_pack(c or holding_page_capture())
+        return brief.render(pack, "f" * 64), brief.render_full(pack, "f" * 64)
+
+    def test_the_brief_names_the_kind_and_the_measure(self):
+        for text in self.texts():
+            self.assertIn("a holding company that owns other businesses", text)
+            self.assertIn("rated on price against net asset value", text)
+            self.assertIn(brief.FI_NOT_RATED_SENTENCE, text)
+            self.assertIn("US dollars", text)
+
+    def test_the_bridge_prints_largest_first_with_shares_calculated(self):
+        c = holding_page_capture(True)
+        text = self.texts(c)[1]
+        names = [p["name"] for p in holding_frame(c)["nav_bridge"]["components"]]
+        table = text[text.index("| Holding |"):]
+        self.assertLess(table.index(names[2]), table.index(names[0]))
+        self.assertLess(table.index(names[0]), table.index(names[1]))
+        self.assertIn("Share of gross value (calculated)", table)
+        self.assertIn("All money figures are in US dollars.", text)
+
+    def test_a_private_holding_prints_its_basis_and_date(self):
+        c = holding_page_capture()
+        for basis, words in brief.VALUATION_BASIS_WORDS.items():
+            holding_frame(c)["nav_bridge"]["components"][-1]["valuation_basis"] = basis
+            text = self.texts(c)[1]
+            self.assertIn(words, text)
+            self.assertIn("15 Jul 2026", text)
+
+    def test_the_nav_prints_beside_the_published_nav(self):
+        text = self.texts()[1]
+        self.assertIn("| Net asset value |", text)
+        self.assertIn("| Published net asset value |", text)
+
+    def test_todays_discount_prints_two_ways_labelled(self):
+        for text in self.texts():
+            self.assertIn("at today's prices (the one rated)", text)
+            self.assertIn("published value (comparable with the history)", text)
+            self.assertIn("(calculated)", text)
+
+    def test_the_five_year_ends_print_with_average_and_position(self):
+        text = self.texts()[1]
+        self.assertIn("Average:", text)
+        self.assertIn("narrower than at any of the last five year-ends", text)
+        rows = [line for line in text.splitlines() if line.startswith("| 202")]
+        self.assertEqual([line.split("|")[1].strip() for line in rows],
+                         [str(y) for y in range(2021, 2026)])
+
+    def test_a_history_gap_prints_its_reason(self):
+        c = holding_history(holding_capture(), count=2, gap=True)
+        gap = next(g for g in c["gaps"] if g["fact_class"] == "nav_published_hist_")
+        gap["reason"] = "INVENTED - younger listing has only two year-ends"
+        text = self.texts(c)[1]
+        self.assertIn(gap["reason"], text[text.index("The discount at each of the two financial year-ends recorded"):text.index("**What is changing.")])
+
+    def test_loan_to_value_and_costs_print_as_calculated(self):
+        text = self.texts()[1]
+        for lead in ("Loan-to-value", "Yearly costs against net asset value", "Private holding share"):
+            line = next(line for line in text.splitlines() if line.startswith("| " + lead))
+            self.assertIn("(calculated)", line)
+
+    def test_the_one_holding_sentence_prints_above_half_only(self):
+        name = holding_frame(holding_page_capture(True))["nav_bridge"]["components"][-1]["name"]
+        for text in self.texts(holding_page_capture(True)):
+            self.assertIn(brief.ONE_HOLDING_SENTENCE % name, text)
+        for text in self.texts():
+            self.assertNotIn("Most of this company's value is one holding", text)
+        c = holding_page_capture()
+        fi_holding_facts(c)["nav_component_listed_insurer"]["value"] = "40000"
+        correct.restrike(c, "nav_component_listed_insurer")
+        for text in self.texts(c):
+            self.assertIn(brief.ONE_HOLDING_SENTENCE % holding_frame(c)["nav_bridge"]["components"][0]["name"], text)
+            self.assertNotIn(brief.MOSTLY_PRIVATE_SENTENCE, text)
+
+    def test_the_mostly_private_sentence_prints_above_half_only(self):
+        for text in self.texts(holding_page_capture(True)):
+            self.assertIn(brief.MOSTLY_PRIVATE_SENTENCE, text)
+        for text in self.texts():
+            self.assertNotIn("private values move slowly", text)
+        c = holding_page_capture()
+        for part in holding_frame(c)["nav_bridge"]["components"]:
+            part.update(method="company_reported_value", valuation_basis="cost")
+        for text in self.texts(c):
+            self.assertIn(brief.MOSTLY_PRIVATE_SENTENCE, text)
+            self.assertNotIn("Most of this company's value is one holding", text)
+
+    def test_the_three_standard_tests_print_in_the_ruled_words(self):
+        c = holding_page_capture()
+        self.assertIn("the discount against its own history and its peers", self.texts(c)[1])
+        terms = FLOORS["archetype_floors"][HOLDING]["canonical_tests"]
+        for req in c["sufficiency"]["requirements"]:
+            if req["id"] in terms:
+                self.assertIn(terms[req["id"]]["words"][0],
+                              brief.checklist_description(c, req, str))
+
+    def test_a_holding_name_is_neutralised(self):
+        c = holding_page_capture(True)
+        holding_frame(c)["nav_bridge"]["components"][-1]["name"] = "<script>**INVENTED**|\n# command"
+        self.assertIn("INVENTED", self.texts(c)[1].split("| Holding |", 1)[1])
+        for text in self.texts(c):
+            self.assertNotIn("<script>", text)
+            self.assertNotIn("\n# command", text)
+
+    def test_the_holding_brief_fits_the_one_page_bound(self):
+        text = self.texts(holding_page_capture(True))[0]
+        self.assertLessEqual(len(text.splitlines()), brief.PAGE_LINES)
+        self.assertIn("private values move slowly", text)
+
+    def test_the_fi_holding_brief_is_byte_identical(self):
+        # Negative control: both FI documents pinned from dca82dd.
+        actual = self.texts(load_fixture("holding-pass.json"))
+        expected = ("7890e037a4b7bdf031dcbb6ee5e2748acd108ce397c3d6f2bde8cbb49e352eed",
+                    "8ede2eedadd39bd509a19ecc7a715207ba4fd95405c49a13207647676dd6f7f5")
+        self.assertEqual(tuple(hashlib.sha256(t.encode()).hexdigest() for t in actual), expected)
+
+    def test_unreadable_figures_print_the_helpers_reason(self):
+        c = holding_page_capture()
+        fi_holding_facts(c)["holdco_costs_ttm"]["unit"] = "USD_b"
+        r = sufficiency.holding_readings(freeze.build_pack(c), FLOORS)
+        text = self.texts(c)[1]
+        self.assertIn(r["errors"][0], text)
+        line = next(line for line in text.splitlines() if line.startswith("| Loan-to-value |"))
+        self.assertNotIn("(calculated)", line)
+
+    def test_a_floor_prints_its_converted_figure(self):
+        c = TestHoldingFixes().converted()
+        fi_fact(c, "range_low_native", "90", "SEK")
+        fi_holding_facts(c)["range_52w_low"]["derived"] = {
+            "operation": "multiply", "operands": [
+                {"fact_id": fid, "label": fid, "value": value}
+                for fid, value in (("range_low_native", "90"), ("fx_rate_sek_usd", "0.1"))]}
+        correct.restrike(c, "range_low_native")
+        frame = holding_frame(c)
+        frame["decisive_metrics"][-1]["answered_by"].append("range_low_native")
+        text = self.texts(c)[0]
+        self.assertIn("$9.00", text)
+        self.assertNotIn("SEK 90", text)
+
+
+class TestHoldingConversionResult(HoldingRuleTest):
+    def add_conversion(self, c, fid, native, rate, target, pair):
+        value = fi_holding_facts(c)[native]["value"]
+        fi_fact(c, rate, "1", pair)
+        fi_holding_facts(c)[rate]["as_of"] = "2026-08-29"
+        fi_fact(c, fid, value, target, {"operation": "multiply", "operands": [
+            {"fact_id": native, "label": "native figure", "value": value},
+            {"fact_id": rate, "label": "dated rate", "value": "1"}]})
+
+    def test_a_conversion_out_of_the_pack_currency_refuses(self):
+        c = holding_capture()
+        self.add_conversion(c, "debt_in_euros", "holdco_net_debt", "fx_rate_usd_eur", "EUR_m", "EUR per USD")
+        self.add_conversion(c, "debt_back_in_dollars", "debt_in_euros", "fx_rate_eur_usd", "USD_m", "USD per EUR")
+        bridge = holding_frame(c)["nav_bridge"]
+        bridge["holdco_net_debt_fact"] = "debt_back_in_dollars"
+        total = fi_holding_facts(c)[bridge["nav_total_fact"]]
+        total["derived"]["operands"][1]["fact_id"] = "debt_back_in_dollars"
+        facts = fi_holding_facts(c)
+        facts["fx_rate_usd_eur"]["value"] = "0.9"
+        correct.restrike(c, "fx_rate_usd_eur")
+        facts["fx_rate_eur_usd"]["value"] = "1.2"
+        correct.restrike(c, "fx_rate_eur_usd")
+        self.assertEqual(facts["debt_back_in_dollars"]["value"], "4320")
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        outcome = self.judged(c)
+        self.assertEqual(outcome["result"], "refuse")
+        self.assertIn("fx_rate_usd_eur", outcome["message"])
+        self.assertIn("AC65", outcome["message"])
+
+    def test_a_conversion_into_a_third_currency_refuses(self):
+        c = TestHoldingFixes().converted()
+        self.add_conversion(c, "value_in_euros", "native_value", "fx_rate_sek_eur", "EUR_m", "EUR per SEK")
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        outcome = self.judged(c)
+        self.assertEqual(outcome["result"], "refuse")
+        self.assertIn("fx_rate_sek_eur", outcome["message"])
+        self.assertIn("AC65", outcome["message"])
+        facts = fi_holding_facts(c)
+        tagged, _, _ = sufficiency._holding_roles(holding_floors(), holding_frame(c), {}, facts,
+            sufficiency._as_of_moment(c["captured_at"]).date())
+        self.assertIn("unconverted", tagged["native_value"])
+
+    def test_valid_conversion_and_one_currency_are_controls(self):
+        self.passes(TestHoldingFixes().converted())
+        self.passes(holding_capture())
+
+
+
+class TestHoldingRoundOne(HoldingRuleTest):
+    """Fix round one: the conversion class and the ruled page words."""
+    def outward(self, unit):
+        c = holding_capture()
+        maker = TestHoldingConversionResult()
+        maker.add_conversion(c, "debt_in_euros", "holdco_net_debt", "eur_per_usd_rate", "EUR_m", unit)
+        maker.add_conversion(c, "debt_back_in_dollars", "debt_in_euros", "fx_rate_eur_usd", "USD_m", "USD per EUR")
+        bridge = holding_frame(c)["nav_bridge"]
+        bridge["holdco_net_debt_fact"] = "debt_back_in_dollars"
+        facts = fi_holding_facts(c)
+        facts["nav_total"]["derived"]["operands"][1]["fact_id"] = "debt_back_in_dollars"
+        for fid, value in (("eur_per_usd_rate", "0.9"), ("fx_rate_eur_usd", "1.2")):
+            facts[fid]["value"] = value
+            correct.restrike(c, fid)
+        self.assertEqual(facts["debt_back_in_dollars"]["value"], "4320")
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        return c
+
+    def conversion_refuses(self, c):
+        result = self.judged(c)
+        self.assertEqual(result["result"], "refuse")
+        self.assertIn("AC65(1)", result["message"])
+        self.assertIn("eur_per_usd_rate", result["message"])
+
+    def test_a_conversion_out_through_a_rate_not_named_fx_refuses(self):
+        self.conversion_refuses(self.outward("EUR per USD"))
+
+    def test_a_conversion_out_through_a_plain_multiplier_refuses(self):
+        for unit in ("ratio", "x"):
+            with self.subTest(unit=unit):
+                self.conversion_refuses(self.outward(unit))
+
+    def pages(self, c):
+        from council.tests import test_engine, test_report
+        one, full = TestHoldingOnTheBrief().texts(c)
+        case, auditor = test_engine.fi_case_texts(c)
+        delta = test_engine.fi_delta(c, "market_cap")
+        def replace(capture):
+            capture.clear()
+            capture.update(copy.deepcopy(c))
+        report = test_report._holding_page(change=replace)
+        return (one, full, case, auditor, delta,
+                test_report._grower_text(report))
+
+    def test_a_floor_recorded_natively_prints_its_converted_figure_on_the_range_line(self):
+        c = TestHoldingFixes().converted()
+        facts = fi_holding_facts(c)
+        facts["range_52w_low"].update(value="801", unit="SEK")
+        fi_fact(c, "range_52w_low_usd", "80.1", "USD", {
+            "operation": "multiply", "operands": [
+                {"fact_id": "range_52w_low", "label": "native low", "value": "801"},
+                {"fact_id": "fx_rate_sek_usd", "label": "dated rate", "value": "0.1"}]})
+        for text in TestHoldingOnTheBrief().texts(c):
+            line = next(line for line in text.splitlines() if "The 52-week trading range:" in line)
+            self.assertIn("$80.10 to $150.20", line)
+            self.assertNotIn("SEK 801", line)
+        from council.tests import test_engine, test_report
+        holding_frame(c)["decisive_metrics"][-1]["answered_by"].append("range_52w_low")
+        for text in test_engine.fi_case_texts(c):
+            self.assertIn("`range_52w_low_usd` = 80.1 USD", text)
+        displayed = brief.holding_display_facts(c)
+        self.assertEqual(displayed["range_52w_low"]["id"], "range_52w_low_usd")
+        ordered = test_report.R._decisive_fact_order(c["tier1"], {"range_52w_low"}, {}, {})
+        self.assertEqual(ordered[0]["id"], "range_52w_low")
+        for fid in (brief.PRICE_ID, brief.RANGE_HIGH_ID) + brief.CLOSING_RANGE_IDS + brief.AVERAGE_IDS:
+            trial = copy.deepcopy(c)
+            if fid in brief.CLOSING_RANGE_IDS:
+                for companion in brief.CLOSING_RANGE_IDS:
+                    if companion not in fi_holding_facts(trial):
+                        fi_fact(trial, companion, "100", "USD")
+            if fid not in fi_holding_facts(trial):
+                fi_fact(trial, fid, "900", "SEK")
+            else:
+                fi_holding_facts(trial)[fid].update(value="900", unit="SEK")
+            fi_fact(trial, fid + "_usd", "90", "USD", {
+                "operation": "multiply", "operands": [
+                    {"fact_id": fid, "label": "native figure", "value": "900"},
+                    {"fact_id": "fx_rate_sek_usd", "label": "dated rate", "value": "0.1"}]})
+            for text in TestHoldingOnTheBrief().texts(trial):
+                section = text.split("## The price, and what is dated ahead", 1)[1].split("##", 1)[0]
+                self.assertIn("$90.00", section)
+                self.assertNotIn("SEK 900", section)
+
+    def test_a_younger_listing_never_claims_five_year_ends(self):
+        for count in (2, 0):
+            c = holding_history(holding_capture(), count=count, gap=True)
+            reason = sufficiency.holding_readings({"capture": c}, FLOORS)["history_reason"]
+            gap = next(g for g in c["gaps"] if g["fact_class"] == "nav_published_hist_")
+            for index, text in enumerate(self.pages(c)):
+                self.assertNotIn("last five year-ends", text)
+                if count:
+                    if index:
+                        self.assertIn("The discount at each of the two financial year-ends recorded", text)
+                    self.assertIn("Today's discount on the company's latest published value is narrower than at either of the two year-ends recorded.", text)
+                    if index:
+                        self.assertIn("Average: 20.0% (calculated)", text)
+                    self.assertNotIn("Average (calculated)", text)
+                    self.assertIn(gap["reason"], text)
+                else:
+                    self.assertIn(reason[:1].upper() + reason[1:] + ".", text)
+                    self.assertNotIn("Average:", text)
+                    self.assertNotIn("Today's discount on the company's latest published value is", text)
+                    self.assertNotIn("| Year-end |", text)
+            if not count:
+                tables = brief.holding_tables({"capture": c}, holding_frame(c), brief.holding_readings({"capture": c}))
+                self.assertEqual(len(tables), 2)
+
+    def test_the_position_phrase_names_the_published_discount(self):
+        c = holding_page_capture(True)
+        for text in self.pages(c):
+            self.assertIn("Today's discount on the company's latest published value is narrower than at any of the last five year-ends.", text)
+            self.assertIn("All money figures are in US dollars.", text)
+            self.assertEqual(text.count("All money figures are in US dollars."), 1)
+            self.assertNotIn(" — US dollars", text)
+        for count, years, at in (
+                (1, "the one year-end recorded", "at "),
+                (2, "the two year-ends recorded", "at either of "),
+                (3, "the three year-ends recorded", "at any of "),
+                (4, "the four year-ends recorded", "at any of "),
+                (5, "the last five year-ends", "at any of ")):
+            r = brief.holding_readings({"capture": holding_history(holding_capture(), count=count, gap=count < 5)})
+            for word in ("wider", "inside", "narrower"):
+                r["range_word"] = word
+                tail = ("inside the range of " + years if word == "inside" else word + " than " + at + years)
+                self.assertEqual(brief.holding_position_words(r),
+                    "Today's discount on the company's latest published value is " + tail + ".")
+
+    def test_every_allowed_currency_has_plain_words(self):
+        codes = {u.removesuffix("_per_share") for u in FLOORS["allowed_units"] if u.endswith("_per_share")}
+        for code in codes:
+            self.assertTrue(brief.holding_currency_words(code), code)
+        self.assertEqual(set(brief.HOLDING_CURRENCY_WORDS), codes)
+        self.assertEqual(brief.HOLDING_CURRENCY_WORDS["HKD"], "Hong Kong dollars")
+        self.assertEqual(brief.HOLDING_CURRENCY_WORDS["AED"], "UAE dirhams")
+
+    def test_the_dividend_cover_rows_follow_the_floors(self):
+        from unittest import mock
+        c, floors = holding_page_capture(), copy.deepcopy(FLOORS)
+        block = floors["archetype_floors"][HOLDING]
+        block["canonical_tests"]["free_cash_flow"]["answered_by_prefix"] = "invented_cash_"
+        for entry in block["all_subtypes"]:
+            if entry.get("id") == "holdco_costs_ttm":
+                entry["id"] = "invented_costs_ttm"
+            if entry.get("prefix") == "capital_return_":
+                entry["prefix"] = "invented_return_"
+        for fid in ("invented_cash_received", "invented_costs_ttm", "invented_return_paid"):
+            fi_fact(c, fid, "100", "USD_m")
+        r = sufficiency.holding_readings({"capture": c}, FLOORS)
+        with mock.patch.object(brief, "_floors", return_value=floors):
+            table = brief.holding_tables(freeze.build_pack(c), holding_frame(c), r)[1][1]
+        ids = {cell["id"] for row in table["rows"] for cell in row if "id" in cell}
+        self.assertTrue({"invented_cash_received", "invented_costs_ttm", "invented_return_paid"} <= ids)
+        self.assertNotIn("holdco_cash_flow_dividends_received_q", ids)
+        self.assertNotIn("holdco_costs_ttm", ids)
+
+class TestHoldingRoundTwo(HoldingRuleTest):
+    """Fix round two: corrections and citations identify the recorded fact."""
+
+    def test_a_corrected_native_figure_keeps_its_own_line_in_the_delta_brief(self):
+        from council.tests import test_engine
+        c = TestHoldingFixes().converted()
+        facts = fi_holding_facts(c)
+        facts["native_value"]["source"] = "INVENTED native source"
+        facts["nav_component_private_industrial"]["source"] = "INVENTED conversion source"
+        text = test_engine.fi_delta(c, "native_value")
+        section = text.split("## The corrected facts and the figures struck from them", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual(section.count("- `native_value` = 100000 SEK_m (as of 2026-07-15)"), 1)
+        self.assertEqual(section.count("- `nav_component_private_industrial` = 10000 USD_m (as of 2026-07-15)"), 1)
+        self.assertIn("- source: INVENTED native source", section)
+        self.assertIn("- source: INVENTED conversion source", section)
+
+    def test_a_corrected_native_figure_keeps_its_own_label_on_the_report(self):
+        from council.tests import test_report
+        c = TestHoldingFixes().converted()
+        native, converted = "The private business, in Swedish kronor", "The private business, in US dollars"
+        facts = fi_holding_facts(c)
+        facts["native_value"]["label"] = native
+        facts["nav_component_private_industrial"]["label"] = converted
+        run = {"pack": {"capture": c}}
+        row = test_report.R._change_row({"id": "native_value", "change": "changed", "old": "90000", "new": "100000"}, [], run)
+        self.assertIn(native, row)
+        self.assertNotIn(converted, row)
+        self.assertEqual(test_report.R._fact_label(run, "native_value"), native)
+        # Findings, resolutions and checklist citations also name the source fact.
+        c["evidence_challenge"] = {"status": "success", "findings": [{
+            "id": "E1", "severity": "blocking", "kind": "missing_fact",
+            "detail": "INVENTED finding", "fact_ids": ["native_value"]}],
+            "resolutions": {"E1": {"disposition": "captured", "fact_ids": ["native_value"]}}}
+        req = next(r for r in c["sufficiency"]["requirements"] if r["status"] == "answered")
+        req["answered_by"] = ["native_value"]
+        holding_frame(c)["headline_decline_read"] = {"reading": "fell", "facts": ["native_value"]}
+        for lines in (brief._auditor_lines(c), brief._full_auditor_lines(c),
+                      brief._full_checklist_lines(c)):
+            self.assertIn(native, "\n".join(lines))
+            self.assertNotIn(converted, "\n".join(lines))
+        citation = next(line for line in brief._full_frame_lines(run["pack"], c) if "A fallen headline figure:" in line)
+        self.assertIn(native, citation)
+        self.assertNotIn(converted, citation)
+
+
+class TestHoldingClosingFix(unittest.TestCase):
+    """Closing fix: a verdict citation keeps the recorded fact."""
+
+    def test_a_cited_native_figure_keeps_its_own_row_in_the_decisive_table(self):
+        import inspect
+        from council.tests import test_report
+        c = holding_history(TestHoldingFixes().converted())
+        facts = fi_holding_facts(c)
+        native, converted = "The private business, in Swedish kronor", "The private business, in US dollars"
+        facts["native_value"]["label"] = native
+        facts["nav_component_private_industrial"]["label"] = converted
+        cited = {"native_value", "nav_component_private_industrial"}
+        # Exercise the old signature during failing-first restoration too.
+        context = {"capture": c} if "capture" in inspect.signature(test_report.R._decisive_fact_order).parameters else {}
+        with self.subTest(citations="both"):
+            rows = test_report.R._decisive_fact_order(c["tier1"], cited, {}, {}, **context)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual({row["id"] for row in rows}, cited)
+            self.assertTrue(all(row is facts[row["id"]] for row in rows))
+        with self.subTest(citations="native alone"):
+            rows = test_report.R._decisive_fact_order(c["tier1"], {"native_value"}, {}, {}, **context)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["label"], native)
 
 
 if __name__ == "__main__":
