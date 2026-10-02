@@ -6917,7 +6917,8 @@ GROWER_SECTION = "What kind of growth company this is"
 GROWER_BASE_REPORTS = {
     "council-aapl-2026-08-31-acceptance-2":
         "0a58d15a85f934e39c78cf0696999f7352d9ccb59e0aa6f7ec0deabdf55f823b",
-    "council-btc-2026-08-31": "8351b92f107f9ebb4df3831a3ff2bb9877f1d598788ea91cfae6393a1bd23b68",
+    # re-pinned at MONETARY-COIN(b), architect ruling M2: the re-rendered record prints the recorded block reward (3.125, 1.5625), never a rounded one; the record's files are unchanged
+    "council-btc-2026-08-31": "8ca516a0502c40eead6b2922a54282a1d0f63d64b6402717f54d756ff4f87e5d",
     "council-btc-2026-09-01": "312619e10712ff4055ca497aa18a0bff62d3d688e264d9a77bc70c5a309041a7",
     "council-coin-2026-09-04": "2afb6241761b8a25529367d3a61b31bed9a031d05833d13999c6f6e7222d76bb",
     "council-goog-2026-08-31": "108bbb245d4d486bd7ed2ef90d52f29a7b211f54e12446290a3107aeba8647ac",
@@ -6932,7 +6933,8 @@ GROWER_BASE_DOCUMENT_PAGES = {
         "3c5841aa304124f3bcea306bba560f9313558ac96e5e517885fb61c45d2eea7d",
     "council-aapl-2026-08-31-acceptance-2":
         "3c5841aa304124f3bcea306bba560f9313558ac96e5e517885fb61c45d2eea7d",
-    "council-btc-2026-08-31": "cf48acf840fc661e2e1ea34379d164ca90276ee31a4cc5e4a078a15dedeb83b5",
+    # re-pinned at MONETARY-COIN(b), architect ruling M2: the re-rendered record prints the recorded block reward (3.125, 1.5625), never a rounded one; the record's files are unchanged
+    "council-btc-2026-08-31": "893d7267ec93b713e5c4c3c734c4a5c1d156c44bf658c54a889c622da65999df",
     "council-btc-2026-09-01": "f2022fd04c172467556e4ca58c67a06671115b45c5d05b617d7eacf847eb6710",
     "council-coin-2026-09-04": "2ecb0004b5f6d71bf90cb910a52500792138ac2040121f5785ea0c8411cf0241",
     "council-goog-2026-08-31": "8398924d9a735e692a58ba7e1668ffbb24fb58940249cd33caea46b58940278e",
@@ -7323,6 +7325,115 @@ class TestHoldingOnThePage(unittest.TestCase):
                 (test_evidence.JPM_RUN, test_evidence.WULF_RUN)):
             self.skipTest("the runs on record are not in this copy")
         TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
+
+
+def _coin_page(unnamed=False):
+    capture = (test_evidence.load_fixture("btc-pass.json") if unnamed else
+               test_evidence.coin_capture(issuance_per_block="3.125"))
+    with tempfile.TemporaryDirectory(prefix="report-coin-") as tmp:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        def change(verdict):
+            verdict["subject"] = capture["subject"]
+            verdict["atlas_envelope"].update(subject_kind=capture["subject"]["kind"],
+                asset_class=capture["subject"]["asset_class"], product=capture["subject"].get("product"))
+        _rewrite_verdict(run_dir, change)
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+
+
+class TestCoinOnTheReport(unittest.TestCase):
+    def test_the_rating_box_names_zcash_as_a_privacy_coin(self):
+        self.assertIn("The subject is %s, a privacy coin." % test_evidence.coin_capture()[
+            "subject"]["name"], _grower_text(_coin_page()))
+
+    def test_the_hand_off_row_names_the_coin(self):
+        page = _coin_page()
+        row = re.search(r'<th class="nowrap">Subject kind</th>\s*<td>(.*?)</td>', page).group(1)
+        self.assertEqual(_grower_text(row), test_evidence.coin_capture()["subject"]["name"] + ", a privacy coin")
+
+    def test_the_front_card_prints_the_supply_readings(self):
+        front = _front(_coin_page())
+        summary = pack_brief.coin_summary(freeze.build_pack(test_evidence.coin_capture(issuance_per_block="3.125")))
+        text = _grower_text(front)
+        self.assertIn("What kind of coin, and how it is rated", text)
+        for window in summary["windows"]:
+            self.assertIn(window["new_coins_text"], text)
+            self.assertIn(window["share_text"], text)
+        self.assertIn(summary["turnover_share_text"], text)
+        self.assertIn(summary["one_fund_sentence"], text)
+        self.assertIn(summary["absent_sentence"], text)
+
+    def test_the_venues_card_for_a_privacy_coin(self):
+        front = _grower_text(_front(_coin_page()))
+        self.assertIn("Regulated venue", front)
+        self.assertIn("Invented Licensed Exchange", front)
+        self.assertIn("INVENTED current listing and United Kingdom licence", front)
+
+    def test_a_reward_prints_unrounded_in_the_evidence_table(self):
+        unit = test_evidence.FLOORS["asset_classes"]["crypto"]["products"][
+            test_evidence.coin_capture.__defaults__[0]]["unit"]
+        self.assertIn(unit + " 3.125/block", _grower_text(_coin_page()))
+
+    def test_every_new_term_has_a_scoped_hover_note(self):
+        terms = ("Privacy coin", "Regulated venue", "Delisting scenario",
+                 "New supply over one month", "Issuance against turnover")
+        for term in terms:
+            row = next(row for row in R.GLOSSARY["terms"] if row["term"] == term)
+            self.assertEqual(row["scope"], "coin")
+            self.assertLessEqual(len(row["note"].split()), 30)
+            self.assertIsNotNone(_grower_note(R._glossed(term, scope="coin"), term))
+            self.assertNotIn('class="gl"', R._glossed(term))
+        front = _front(_coin_page())
+        for term in ("privacy coin", "Regulated venue", "New supply over one month", "Issuance against turnover"):
+            self.assertIsNotNone(_grower_note(front, term))
+        self.assertNotIn("supply", R._TERM_NOTES)
+        self.assertNotIn("venue", R._TERM_NOTES)
+
+    def test_an_unnamed_bitcoin_front_is_unchanged(self):
+        # Control: the new front card is absent from an earlier subject.
+        front = _grower_text(_coin_page(True))
+        self.assertIn("The subject is " + R._kind_words(test_evidence.load_fixture(
+            "btc-pass.json")["subject"]) + ".", front)
+        self.assertNotIn("What kind of coin, and how it is rated", front)
+
+
+
+
+
+class TestTheCoinChart(unittest.TestCase):
+    def test_band_covers_the_real_year(self):
+        from council.tests.test_evidence import invented_coin_series, coin_capture, FLOORS
+        c = coin_capture()
+        c["price_series"] = invented_coin_series(FLOORS["asset_classes"]["crypto"][
+            "products"][c["subject"]["product"]]["series_ticker"])
+        c = freeze._with_tape(c, FLOORS)
+        drawing = R.chart.figure(c, {}, True, R.format_number, R.format_date, year_bars=365)
+        band = re.search(r'<rect class="ch-band" x="([^"]+)"', drawing).group(1)
+        frame = R.chart._Frame(1826, decimal.Decimal("100"), decimal.Decimal("200"))
+        # The drawing widens its left margin for the page's own price labels.
+        frame.left = max([R.chart.PLOT_LEFT] + [
+            R.chart.TICK_LABEL_GAP + R.chart.LABEL_CHAR_UNITS * len(
+                R.format_number(format(tick.normalize(), "f"), "USD"))
+            for tick in frame.price_ticks()])
+        self.assertEqual(band, frame.x(1826 - 365))
+        facts, gaps = R.chart.tape_entries(c)
+        line = R.chart._figure_line("tape_closes_above_sma200_252", None, facts, gaps,
+                                    R.format_number, R.format_date, year_bars=365)
+        self.assertIn("of the last 365 trading days", line)
+        self.assertIn("of the last 365 trading days", R.chart.tape_table(
+            c, R.format_number, R.format_date, year_bars=365))
+
+    def test_all_days_glossary_names_the_real_year(self):
+        self.assertIn("square root of 365", R._tape_term("Volatility", "tape_realized_vol_21", year_bars=365))
+
+    def test_equity_chart_svg_is_identical(self):
+        # CONTROL: digest of the base AAPL-style XNYS chart fixture's SVG.
+        import hashlib
+        drawing = _chart(_taped_html())
+        svg = drawing[drawing.index("<svg"):drawing.index("</svg>") + len("</svg>")]
+        self.assertEqual(hashlib.sha256(svg.encode()).hexdigest(),
+                         "6430f965518b34d6651acbda28714ae6470623cc452c1da3bb246aae44b6debc")
 
 
 if __name__ == "__main__":

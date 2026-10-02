@@ -248,7 +248,7 @@ class TestContractSchemas(unittest.TestCase):
                   "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
         self.assertEqual(doc["properties"]["capture_version"]["const"],
-                         "1.12.0")
+                         "1.13.0")
         for optional in ("price_series", "benchmark_series", "benchmark",
                          "question_line"):
             self.assertIn(optional, doc["properties"])
@@ -312,7 +312,7 @@ class TestContractSchemas(unittest.TestCase):
         with open(os.path.join(ROOT, "council", "floors", "floors.json"),
                   "rb") as f:
             floors = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(floors["floors_version"], "1.20.0")
+        self.assertEqual(floors["floors_version"], "1.23.0")
         table = floors["archetype_measures"]["table"]
         self.assertEqual(sorted(table["financial_institution"]["subtypes"]),
                          ["alternative_asset_manager", "bank",
@@ -448,8 +448,9 @@ class TestListingCalendarData(unittest.TestCase):
         # carries USD's pure magnitudes and its per-share spelling.
         suffixes = {unit[3:] for unit in units
                     if re.fullmatch(r"USD(?:_[a-z]+)?", unit)}
+        coin_units = {row["unit"] for row in self.floors["asset_classes"]["crypto"]["products"].values()}
         currencies = sorted(unit for unit in units
-                            if re.fullmatch(r"[A-Z]{3}", unit) and unit != "BTC")
+                            if re.fullmatch(r"[A-Z]{3}", unit) and unit not in coin_units)
         for currency in currencies:
             with self.subTest(currency=currency):
                 self.assertEqual({unit[3:] for unit in units

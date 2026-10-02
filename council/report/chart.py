@@ -32,7 +32,7 @@ import re
 from bisect import bisect_right
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, localcontext
 
-from council.evidence import gate, tape
+from council.evidence import brief, gate, tape
 
 
 class ChartRefused(Exception):
@@ -299,12 +299,15 @@ def _line_swatch(css_class):
     return _swatch('<line class="%s" x1="0" y1="5" x2="24" y2="5"/>' % css_class)
 
 
-def figure(capture, verdict, single, format_number, format_date, benchmarks=None):
+def figure(capture, verdict, single, format_number, format_date, benchmarks=None,
+           *, year_bars=None):
     """The chart as one <figure> of inline SVG. `single` is False for a basket or theme;
     `format_number` and `format_date` are the page's own display rules; `benchmarks` names a
     benchmark fund by its ticker for the caption. Raises ChartRefused where a drawn average would
     disagree with the tape."""
     benchmarks = benchmarks or {}
+    if year_bars is None:
+        year_bars = tape.series_year_bars(capture, brief._floors())
     series = capture["price_series"]
     bars = series["bars"]
     ticker = str(series.get("ticker") or "")
@@ -321,7 +324,7 @@ def figure(capture, verdict, single, format_number, format_date, benchmarks=None
     high, low = facts.get("tape_high_close_252"), facts.get("tape_low_close_252")
     band = None
     if high and low and _number(high.get("value")) is not None \
-            and _number(low.get("value")) is not None and len(bars) >= tape.YEAR_BARS:
+            and _number(low.get("value")) is not None and len(bars) >= year_bars:
         band = (_number(high["value"]), _number(low["value"]))
     levels = _drawn_levels(verdict, ticker, unit, single)
     mark = _ruling_mark(verdict, price_id, unit, single)
@@ -345,7 +348,7 @@ def figure(capture, verdict, single, format_number, format_date, benchmarks=None
                                         for _tick, text in ticks])
         parts = []
         if band:
-            first = len(bars) - tape.YEAR_BARS
+            first = len(bars) - year_bars
             top, bottom = frame.y(band[0]), frame.y(band[1])
             title = ("<title>The 52-week range of closes, %s to %s</title>"
                      % (_esc(format_number(low["value"], unit)),
@@ -477,7 +480,8 @@ def provenance(capture, format_date):
 
 # --- the tape's one-page display ---------------------------------------------------------------
 
-def _figure_line(fact_id, name, facts, gaps, format_number, format_date):
+def _figure_line(fact_id, name, facts, gaps, format_number, format_date,
+                 *, year_bars=tape.YEAR_BARS):
     """One figure of a display row, through the page's display rules; a declared gap as a gap."""
     lead = "%s: " % name if name else ""
     fact = facts.get(fact_id)
@@ -489,18 +493,20 @@ def _figure_line(fact_id, name, facts, gaps, format_number, format_date):
     if fact.get("unit") == "bars":
         # A count of closes, read against the year it is counted in (unit READ-A).
         shown = "%s of the last %d trading days" % (format_number(fact.get("value")),
-                                                    tape.YEAR_BARS)
+                                                    year_bars)
     dated = (fact.get("derived") or {}).get("date")
     if dated:
         shown += " on %s" % format_date(dated)
     return "<div>%s%s</div>" % (_esc(lead), _esc(shown))
 
 
-def tape_table(capture, format_number, format_date, term=None):
+def tape_table(capture, format_number, format_date, term=None, *, year_bars=None):
     """The fifteen display rows as one table, or None where every row is a declared gap (the
     caller prints the brief's own all-gaps line instead). The figure column is headed by the
     close the tape is read at. `term(title, fact_id)` gives a row title's HTML (the page's hover
     note); without it the title is escaped text."""
+    if year_bars is None:
+        year_bars = tape.series_year_bars(capture, brief._floors())
     facts, gaps = tape_entries(capture)
     if not facts and all(fact_id in gaps for fact_id in tape.ROW_IDS):
         return None
@@ -509,10 +515,11 @@ def tape_table(capture, format_number, format_date, term=None):
     for title, figures in TAPE_DISPLAY_ROWS:
         fact_id = figures[0][0]
         if title is None:
-            title = (facts.get(fact_id) or {}).get("label") or tape.LABELS[fact_id]
+            title = (facts.get(fact_id) or {}).get("label") or tape.labels(year_bars)[fact_id]
         rows.append('<tr class="taperow"><td>%s</td><td>%s</td></tr>'
                     % (term(title, fact_id), "".join(
-                        _figure_line(fact_id, name, facts, gaps, format_number, format_date)
+                        _figure_line(fact_id, name, facts, gaps, format_number, format_date,
+                                     year_bars=year_bars)
                         for fact_id, name in figures)))
     bars = (capture.get("price_series") or {}).get("bars") or []
     close = (" ".join(format_date(bars[-1]["date"]).split()[:2]) if bars else "")

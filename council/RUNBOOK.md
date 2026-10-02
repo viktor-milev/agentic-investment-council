@@ -693,6 +693,95 @@ Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.5. Do not copy its tables
 The first sitting's seed adds any exchange calendar or `SEK`
 unit the listing needs; this page unit makes no such data change (charter F7).
 
+### 1.0e A coin (owner rulings AC67, AC68)
+
+A monetary coin stays kind `bitcoin`, with asset class `crypto`.
+Name its coin in `subject.product`: `bitcoin` or `zcash`.
+Write `subject.name` exactly as the registry spells it: Bitcoin or Zcash.
+Read `asset_classes.crypto.products` and `monetary_coin_rule` in the floors
+before gathering; the registry decides the coin's units and evidence.
+Coins are admitted one at a time by the owner's ruling.
+A fund wrapping coins stays kind `etf`; this coin rule does not bind it.
+
+Read price, circulating supply and trading volume from CoinGecko,
+through the CoinGecko connector or its public pages.
+Read price and circulating supply again from the ONE second source
+the floors name: Coin Metrics. Read both sources on the same day.
+The source sentence names the actual source for each figure.
+Keep every figure as the exact string observed, with its own date.
+Do not average away a disagreement between sources.
+The floors' tolerances decide whether the sitting can proceed.
+
+Record `price_last` and `price_last_cross_check` in the coin's price unit.
+Record `supply_circulating` and `supply_circulating_cross_check`
+in the coin's own unit, never another coin's unit.
+For `turnover_30d_avg_daily`, read CoinGecko's thirty daily volumes,
+sum them and divide by thirty in declared arithmetic.
+Record the average in `USD_per_day`; retain the dated operands and
+the sum's declared arithmetic so the gate can recompute the result.
+Name CoinGecko in the source sentence of price, supply and turnover.
+The cross-check facts name Coin Metrics, independently of CoinGecko.
+
+Gather the issuance schedule from the protocol's own documents
+or a dated block explorer. Record all of these facts:
+
+- `issuance_per_block`: the total new coins per block now.
+- `issuance_per_block_after_halving`: total new coins after the next halving.
+- `block_interval_target_seconds`: the protocol's target interval in seconds.
+- `block_height_current`: today's block height.
+- `halving_next_block`: the next halving's block height.
+
+New supply counts every newly issued coin, whoever receives it.
+Do not subtract a reserve-fund share or any other recipient's share.
+The machine computes supply FORWARD over one, three and twelve months,
+including a reward change where the recorded next halving falls inside
+the window, and compares daily issuance value with daily turnover.
+Do not write those worked-out figures into the capture as facts.
+The named-past-derate comparison is optional for a monetary coin.
+
+For a privacy coin, record one `regulated_venue_` fact per regulated
+venue listing it today, from that venue's own current listing page.
+Its unit is `venue`; its value is the venue's name.
+Its source records its licence in the United States, European Union
+or United Kingdom. A listing without that regulated basis is insufficient.
+The privacy coin's delisting scenario is handled in sub-charge (b).
+
+Read funds' flows from each fund's primary daily publication.
+For a coin with ONE listed spot fund, capture that fund alone:
+the registry names The Zcash ETF, NYSE Arca ZCSH, for Zcash.
+Bitcoin's existing published table covers its US spot funds together.
+Keep required evidence not expressly lifted by the coin's registry entry.
+
+Default to 'I don't know' over fabrication.
+A figure that cannot be sourced is a declared gap, never an estimate.
+Do not disguise another coin as Bitcoin to use its evidence or units.
+A coin's daily series is optional (AC72(3)); without it the sitting has no chart.
+The operator saves the Coin Metrics community reply for the coin in the run's
+own folder; the code makes no network call. Then run:
+
+```
+python3.13 -m council.evidence.series --coinmetrics <file> --asset <id> --ticker <series_ticker> --calendar CRYPTO_24_7 --as-of <D> --source "<words naming Coin Metrics>" --last-date <D> --out <file>
+```
+
+Use the coin registry's series_ticker. The daily closes carry no volume;
+the volume tape figure is not available, with its reason (AC72(2)).
+Compute realized_volatility_5y from the same series file and record its
+declared arithmetic for the gate to recompute (AB13.2). A PriceUSD row
+dated D is the close at the end of D; the latest completed day may be
+the day before capture. The last close must agree with price_last within
+the ruled price tolerance and date span (AC72(1)).
+The capture contract is 1.13.0; each daily bar's volume is optional.
+A coin may sit once sub-charge (b) merges, without a price chart (AC70(1)).
+The evidence pages and report name the coin prominently (AC70(2)).
+A privacy coin's ladder names a scenario with the word 'delisting' (AC68(2)).
+A capture never carries a fact its coin's registry entry lifts (M8).
+For price_last: CoinGecko (the CoinGecko connector or its public coin page),
+the exact figure observed; cross-checked the same day against Coin Metrics
+as price_last_cross_check (AC71(3)).
+For supply_circulating: CoinGecko's circulating supply (the CoinGecko connector
+or its public coin page), the exact figure observed; cross-checked the same day
+against Coin Metrics as supply_circulating_cross_check (AC71(3)).
+
 ### 1.1 Gather, then write the capture
 
 **Listings outside the US.** The listing name as the broker writes it binds
@@ -920,9 +1009,9 @@ rules that matter most in practice:
   — copy its arithmetic and its source sentences, but note that it was
   written to an older contract (`capture_version` 1.2.0) and carries neither
   the tags nor a business frame, because runs on record are never rewritten.
-  Your capture is 1.12.0 and needs both. The migrations are set out in
+  Your capture is 1.13.0 and needs both. The migrations are set out in
   `council/tests/test_evidence.py`, `to_contract_1_4_1` through
-  `to_contract_1_12_0`, and the same file prints
+  `to_contract_1_13_0`, and the same file prints
   exactly which frame rows the two single-name sittings on record would have
   needed.
 - **The four sizing facts, in the units the hand-off is pinned to (ruling

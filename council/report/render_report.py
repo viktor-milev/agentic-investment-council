@@ -114,7 +114,12 @@ _DATE_UNITS = frozenset(["iso_date", "fiscal_quarter_end_date", "results_date_ch
 
 # Units that are never rounded at all: a Bitcoin block reward of 3.125 rounded to 3.13 states a
 # reward nobody has ever been paid, and a block height is an ordinal no rounding could improve.
-UNROUNDED_UNITS = ("BTC", "block_height")
+_COIN_REGISTRY = brief._floors()["asset_classes"]["crypto"]["products"]
+_BARE_COIN_UNIT = _COIN_REGISTRY[brief._floors()["asset_classes"]["crypto"][
+    "monetary_coin_rule"]["unnamed_coin"]]["unit"]
+UNROUNDED_UNITS = ("block_height",) + tuple(
+    unit for row in _COIN_REGISTRY.values()
+    for unit in (row["unit"], row["unit"] + "_per_block"))
 
 # The most digits BEFORE the point that any real figure has. A magnitude past this would print
 # a page of digits, so it survives as the text it arrived as instead of being rounded.
@@ -483,7 +488,10 @@ def format_number(value, unit=None, currency=None):
     if exact is None:
         return fallback
     if unit in UNROUNDED_UNITS:
-        return fallback
+        if unit in ("block_height", _BARE_COIN_UNIT):
+            return fallback
+        return unit.replace("_per_block", "") + " " + fallback + (
+            "/block" if unit.endswith("_per_block") else "")
     if exact and exact.adjusted() >= MAX_FIGURE_DIGITS:
         return fallback
 
@@ -862,6 +870,9 @@ def _kind_words(subject):
     """The subject's kind in plain words (THEMES-BASKETS-SPEC section 7).
     `subject` needs only `kind` and, for a basket, `constituents`."""
     kind = subject.get("kind")
+    coin = subjects.named_coin(subject, brief._floors())
+    if coin is not None:
+        return _COIN_REGISTRY[coin]["report_words"]
     if kind == "basket":
         return ("a basket of %d named instruments judged as one idea"
                 % len(subject.get("constituents") or []))
@@ -945,9 +956,10 @@ def _glossed(text, scope=None):
     return "".join(out) + esc(text[last:])
 
 
-def _tape_term(title, fact_id):
+def _tape_term(title, fact_id, *, year_bars=tape.YEAR_BARS):
     """A tape row's title with the row's own note, keyed by the row's first figure."""
-    note = GLOSSARY["tape"].get(fact_id)
+    note = (GLOSSARY["tape_all_days"].get(fact_id) if year_bars != tape.YEAR_BARS
+            else None) or GLOSSARY["tape"].get(fact_id)
     return _note_span(title, note) if note else esc(title)
 
 
@@ -2756,6 +2768,22 @@ def _sitting_clocks(page, run, now):
         page.add('<div class="card"><span class="lead">Time</span>%s.</div>' % ", ".join(bits))
 
 
+def _front_coin(page, run):
+    """M3, M11: named-coin figures, from the evidence page's one summary."""
+    summary = brief.coin_summary(run.get("pack") or {})
+    if summary is None:
+        return
+    lines = brief.coin_lines(dict(summary, venues=[]))
+    page.add('<div class="card"><span class="lead">What kind of coin, '
+             'and how it is rated</span>%s</div>' % "".join(
+                 '<div>%s</div>' % _glossed(line[2:], scope="coin") for line in lines))
+    if summary["privacy_coin"]:
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+                 _glossed("Regulated venue", scope="coin"),
+                 "".join('<div>%s — %s</div>' % (esc(v["name"]), esc(v["source"]))
+                         for v in summary["venues"])))
+
+
 def _front_archetype(page, run):
     """The business archetype and the rating measure it calls for, beside
     the rating (owner ruling AC15, P2). A single name only - a basket, a
@@ -2892,13 +2920,16 @@ def _front_chart_and_tape(page, run):
         page.add('<p class="muted">%s</p>' % esc(brief.tape_placeholder(capture)))
         return
     subject = run["verdict"].get("subject") or {}
+    year = tape.series_year_bars(run["pack"], brief._floors())
     page.add(chart.figure(capture, run["verdict"], subject.get("kind") not in _MULTI_MEMBER_KINDS,
-                          format_number, format_date, GLOSSARY["benchmarks"]))
+                          format_number, format_date, GLOSSARY["benchmarks"], year_bars=year))
     # The capture's own provenance sentences, folded under the chart (owner's finding 1).
     page.add("<details><summary>Where the price history comes from</summary><div class=\"body\">"
              "%s</div></details>" % "".join("<p>%s</p>" % esc(line) for line in
                                             chart.provenance(capture, format_date)))
-    table = chart.tape_table(capture, format_number, format_date, _tape_term)
+    table = chart.tape_table(capture, format_number, format_date,
+                             lambda title, fid: _tape_term(title, fid, year_bars=year),
+                             year_bars=year)
     page.add(table or '<p class="muted">%s</p>' % esc(brief.TAPE_ALL_GAPS))
 
 
@@ -3107,6 +3138,7 @@ def _front_section(page, run, now):
     _front_decisive_argument(page, run["verdict"])
     _front_chart_and_tape(page, run)
     _front_archetype(page, run)
+    _front_coin(page, run)
     _front_theme_thesis(page, run["verdict"])
     _front_price_read(page, run)
     _front_rationale(page, run["verdict"])
@@ -4603,6 +4635,7 @@ def _atlas_section(page, run):
                          "<td>%s</td></tr>"
                          % esc(_kind_words(
                              {"kind": envelope["subject_kind"],
+                              "product": envelope.get("product"),
                               "constituents": envelope.get(
                                   "constituents")})))
     constituents = envelope.get("constituents") or []

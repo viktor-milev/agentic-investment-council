@@ -93,7 +93,7 @@ def minimal_capture():
     refuses at sufficiency - which is where the refusals it drives
     already live."""
     return {
-        "capture_version": "1.12.0",
+        "capture_version": "1.13.0",
         "subject": {"kind": "single_stock",
                     "asset_class": "equity",
                     "name": "Example Manufacturing Co",
@@ -537,7 +537,7 @@ class TestGateUnitIsOnTheList(GateTest):
                 self.assertTrue(gate._UNIT_TOKEN.fullmatch(unit))
 
     def test_the_floors_version_is_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.20.0")
+        self.assertEqual(FLOORS["floors_version"], "1.23.0")
         self.assertIn("direction", FLOORS["allowed_units"])
         self.assertEqual(len(set(FLOORS["allowed_units"])),
                          len(FLOORS["allowed_units"]))
@@ -3536,7 +3536,7 @@ class TestFloorsOneThreeZero(unittest.TestCase):
         # company's own buying as single-stock floors (owner ruling AC4,
         # unit U4(b)), then with those two made real (owner ruling
         # AC35(2), unit U4(d)).
-        self.assertEqual(FLOORS["floors_version"], "1.20.0")
+        self.assertEqual(FLOORS["floors_version"], "1.23.0")
 
     def test_segment_revenue_absent_without_a_gap_refuses(self):
         capture = self.one_business(
@@ -4643,6 +4643,14 @@ def to_contract_1_12_0(capture, run_id):
     return capture
 
 
+def to_contract_1_13_0(capture, run_id):
+    """AC72: the previous migration, then the version string only.
+    Every earlier bar keeps its volume; no field is invented or removed."""
+    capture = to_contract_1_12_0(capture, run_id)
+    capture["capture_version"] = "1.13.0"
+    return capture
+
+
 def frame_migration_report(run_id):
     """What this sitting on record would have had to carry, row by row,
     and what answered each: a figure it already carried under another id,
@@ -4755,7 +4763,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
 
     def stages(self, run_id):
         capture = to_floors_1_8_0(
-            to_contract_1_12_0(self.recorded(run_id), run_id))
+            to_contract_1_13_0(self.recorded(run_id), run_id))
         gated = gate.validate_capture(capture, SCHEMA)
         self.assertEqual(gated["result"], "accepted", gated["reasons"])
         # Today's law (architect ruling, 2026-09-08) pays no seat until
@@ -4779,7 +4787,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         for run_id in ("council-coin-2026-09-04", "council-lulu-2026-09-05",
                        "council-btc-2026-09-01"):
             capture = to_floors_1_8_0(
-                to_contract_1_12_0(self.recorded(run_id), run_id))
+                to_contract_1_13_0(self.recorded(run_id), run_id))
             self.assertNotIn("evidence_challenge", capture)
             outcome = sufficiency_of(freeze.build_pack(capture), FLOORS)
             self.assertEqual(outcome["result"], "refuse", run_id)
@@ -4798,7 +4806,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """LULU bought back shares and recorded them under ids the
         repurchase floor does not read (architect ruling 2 on the U4(d)
         seed): its migrated gap says so, and never that it buys none."""
-        capture = to_floors_1_8_0(to_contract_1_12_0(
+        capture = to_floors_1_8_0(to_contract_1_13_0(
             self.recorded("council-lulu-2026-09-05"),
             "council-lulu-2026-09-05"))
         reasons = [gap["reason"] for gap in capture["gaps"]
@@ -4819,7 +4827,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """The migration's whole cost, for a coin: one string. Bitcoin
         declares no capital-spending gap, so it grows no bound tags, and
         it has no business to frame, so it grows no frame either."""
-        capture = to_contract_1_12_0(
+        capture = to_contract_1_13_0(
             self.recorded("council-btc-2026-09-01"),
             "council-btc-2026-09-01")
         self.assertEqual([fact for fact in capture["tier1"]
@@ -4847,12 +4855,12 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         contract the capture is refused until it says."""
         for run_id in ("council-lulu-2026-09-05",
                        "council-coin-2026-09-04"):
-            capture = to_contract_1_12_0(self.recorded(run_id), run_id)
+            capture = to_contract_1_13_0(self.recorded(run_id), run_id)
             ticker = FRAME_MIGRATIONS[run_id]["ticker"]
             self.assertEqual(
                 capture["business_frame"][ticker]
                 ["headline_decline_read"]["reading"], "unknown", run_id)
-            stripped = to_contract_1_12_0(self.recorded(run_id), run_id)
+            stripped = to_contract_1_13_0(self.recorded(run_id), run_id)
             stripped["business_frame"][ticker][
                 "headline_decline_read"] = None
             reasons = gate.validate_capture(stripped, SCHEMA)["reasons"]
@@ -4900,7 +4908,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         freshness rule. Only the id and the source label change."""
         for run_id, plan in FRAME_MIGRATIONS.items():
             recorded = self.recorded(run_id)
-            migrated = to_contract_1_12_0(self.recorded(run_id), run_id)
+            migrated = to_contract_1_13_0(self.recorded(run_id), run_id)
             carried = {fact["id"]: fact for fact in migrated["tier1"]}
             for source_id, ruled_id in plan["rekeyed"]:
                 original = fact_in(recorded, source_id)
@@ -7137,7 +7145,7 @@ class TestTheBriefCarriesTheOneLineQuestion(unittest.TestCase):
     LINE = "INVENTED FIXTURE - the one line the approver reads"
     LABEL = "The question, in one line:"
 
-    def _capture(self, version="1.12.0"):
+    def _capture(self, version="1.13.0"):
         capture = load_fixture("exmp-pass.json")
         capture["capture_version"] = version
         capture["question_line"] = self.LINE
@@ -10160,7 +10168,7 @@ class TestTheWulfSittingIsTheArchetypeRulesAcceptance(unittest.TestCase):
     file on disk is never rewritten (owner ruling AB20)."""
 
     def migrated(self):
-        return to_contract_1_12_0(
+        return to_contract_1_13_0(
             canonical.read_json(os.path.join(LIVE_RUNS, WULF_RUN, "evidence",
                                              "capture.json")),
             WULF_RUN)
@@ -11323,7 +11331,7 @@ class TestListingsOutsideTheUs(GateTest):
             if not os.path.exists(path):
                 continue
             capture = canonical.read_json(path)
-            for reading in (capture, to_contract_1_12_0(
+            for reading in (capture, to_contract_1_13_0(
                     copy.deepcopy(capture), run_id)):
                 self.assertEqual(gate.validate_capture(reading, SCHEMA, FLOORS),
                                  gate.validate_capture(reading, SCHEMA, before),
@@ -11761,7 +11769,7 @@ class TestBenchmarkRule(GateTest):
         return gate.validate_capture(capture, SCHEMA)["reasons"]
 
     def test_the_floors_carry_the_ruled_benchmarks(self):
-        self.assertEqual(FLOORS["floors_version"], "1.20.0")
+        self.assertEqual(FLOORS["floors_version"], "1.23.0")
         rule = FLOORS["benchmarks"]["by_asset_class"]
         self.assertEqual(rule["equity"]["us_listing"]["ticker"], "SPY")
         for absolute in ("crypto", "gold", "commodity"):
@@ -11968,7 +11976,7 @@ class TestEveryPackOnRecordStillValidatesUnder170(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.12.0", name)
+                self.assertEqual(capture["capture_version"], "1.13.0", name)
                 self.assertNotIn("price_series", capture, name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  os.path.join(folder, name))
@@ -13115,7 +13123,7 @@ class TestFIContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.12.0", name)
+                self.assertEqual(capture["capture_version"], "1.13.0", name)
                 self.assertEqual(capture["question_line"],
                                  question_line_of(
                                      capture["question_verbatim"]), name)
@@ -14021,7 +14029,7 @@ class TestQuestionLine(GateTest):
         for run_id in ("council-lulu-2026-09-05", "council-btc-2026-09-01"):
             recorded = canonical.read_json(os.path.join(
                 LIVE_RUNS, run_id, "evidence", "capture.json"))
-            migrated = to_contract_1_12_0(copy.deepcopy(recorded), run_id)
+            migrated = to_contract_1_13_0(copy.deepcopy(recorded), run_id)
             self.assertEqual(migrated["question_line"],
                              question_line_of(recorded["question_verbatim"]))
             self.assertEqual(gate_check(migrated)["result"], "accepted",
@@ -14771,11 +14779,11 @@ class TestFIFixturesUnderTheInsiderAndBuybackFloors(FISufficiencyTest):
     the insider_flow_ or buyback_ floor, so both refuse on them."""
 
     def test_the_bank_fixture_passes_under_floors_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.20.0")
+        self.assertEqual(FLOORS["floors_version"], "1.23.0")
         self.passes(load_fixture(U4B_FI_BANK_FIXTURE))
 
     def test_the_holding_fixture_passes_under_the_insider_and_buyback_floors(self):
-        self.assertEqual(FLOORS["floors_version"], "1.20.0")
+        self.assertEqual(FLOORS["floors_version"], "1.23.0")
         self.passes(load_fixture(U4B_FI_HOLDING_FIXTURE))
 
 
@@ -16419,7 +16427,7 @@ class TestARoundedShareOrYield(GateTest):
 # evidence may claim to stay current longer. The number is data in the
 # floors.
 CLOSED_PERIOD_CEILING_DAYS = 1826
-FLOORS_VERSION_NOW = "1.20.0"
+FLOORS_VERSION_NOW = "1.23.0"
 # The JPM capture on record, gated as written: its broker figure (item
 # 8) and its six history facts ruled current for longer than five years
 # (item 6) are the only refusals.
@@ -17529,7 +17537,7 @@ def jpm_with_live_year():
     # Written today, to the contract in force: 1.10.0 and 1.11.0 add only
     # the growth and producer archetypes' optional fields, so the version
     # string is all that moves.
-    capture["capture_version"] = "1.12.0"
+    capture["capture_version"] = "1.13.0"
     by_date = {}
     for fact in capture["tier1"]:
         if fact["id"].startswith(gate._REVISED_PREFIX) and fact["id"] in \
@@ -18781,7 +18789,7 @@ class TestGrowthContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.12.0", name)
+                self.assertEqual(capture["capture_version"], "1.13.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a grower (architect ruling A12).
@@ -20962,7 +20970,7 @@ class TestProducerContract(GateTest):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.12.0", name)
+                self.assertEqual(capture["capture_version"], "1.13.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a producer or an integrated major
@@ -21605,7 +21613,7 @@ class TestTheProducerRunsOnRecord(unittest.TestCase):
             if os.path.exists(path):
                 # As recorded, and migrated to this contract so the whole
                 # gate runs past the version line.
-                for capture in (canonical.read_json(path), to_contract_1_12_0(
+                for capture in (canonical.read_json(path), to_contract_1_13_0(
                         canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(capture),
                                                 SCHEMA, before)
@@ -23722,7 +23730,7 @@ class TestHoldingContract(unittest.TestCase):
                 if not isinstance(c, dict) or "capture_version" not in c:
                     continue
                 found += 1
-                self.assertEqual(c["capture_version"], "1.12.0")
+                self.assertEqual(c["capture_version"], "1.13.0")
                 self.assertEqual(validate.validate(c, SCHEMA), [], name)
                 for frame in (c.get("business_frame") or {}).values():
                     self.assertNotEqual(frame.get("archetype"), HOLDING)
@@ -23744,9 +23752,9 @@ class TestHoldingContract(unittest.TestCase):
             if not os.path.exists(path):
                 continue
             old = to_contract_1_11_0(canonical.read_json(path), run_id)
-            new = to_contract_1_12_0(canonical.read_json(path), run_id)
+            new = to_contract_1_13_0(canonical.read_json(path), run_id)
             expected = copy.deepcopy(old)
-            expected["capture_version"] = "1.12.0"
+            expected["capture_version"] = "1.13.0"
             self.assertEqual(new, expected, run_id)
 
     def test_the_migration_changes_only_the_version(self):
@@ -23755,8 +23763,8 @@ class TestHoldingContract(unittest.TestCase):
         c["capture_version"] = "1.11.0"
         old = to_contract_1_11_0(copy.deepcopy(c), "invented")
         expected = copy.deepcopy(old)
-        expected["capture_version"] = "1.12.0"
-        self.assertEqual(to_contract_1_12_0(c, "invented"), expected)
+        expected["capture_version"] = "1.13.0"
+        self.assertEqual(to_contract_1_13_0(c, "invented"), expected)
 
     def test_an_unknown_valuation_basis_fails_the_schema(self):
         from council.lib import validate
@@ -24586,7 +24594,7 @@ class TestTheHoldingRunsOnRecordRegateUnchanged(unittest.TestCase):
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
             if os.path.exists(path):
-                for c in (canonical.read_json(path), to_contract_1_12_0(canonical.read_json(path), run_id)):
+                for c in (canonical.read_json(path), to_contract_1_13_0(canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(c), SCHEMA, before)
                     for floors in (FLOORS, earliest):
                         self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, floors), old)
@@ -25033,6 +25041,1024 @@ class TestHoldingClosingFix(unittest.TestCase):
             rows = test_report.R._decisive_fact_order(c["tier1"], {"native_value"}, {}, {}, **context)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["label"], native)
+
+
+
+# AC67-AC69: invented captures in code, no new fixture file.
+_COIN_INPUTS = {
+    "price": ("price_last", "100", "price_unit"),
+    "price_check": ("price_last_cross_check", "100", "price_unit"),
+    "supply": ("supply_circulating", "1000000", "unit"),
+    "supply_check": ("supply_circulating_cross_check", "1000000", "unit"),
+    "reward": ("issuance_per_block", "4", "unit_per_block"),
+    "reward_after_event": ("issuance_per_block_after_halving", "2", "unit_per_block"),
+    "interval": ("block_interval_target_seconds", "600", "seconds"),
+    "height": ("block_height_current", "1000", "block_height"),
+    "event_height": ("halving_next_block", "1000000", "block_height"),
+    "turnover": ("turnover_30d_avg_daily", "1000000", "USD_per_day"),
+}
+
+
+def coin_capture(coin="zcash", **overrides):
+    """Invented dated inputs; the seed expressly names this builder's default."""
+    c = load_fixture("btc-pass.json")
+    registry = FLOORS["asset_classes"]["crypto"].get("products") or {}
+    # The fallback lets the new tests execute against base DATA as well as logic.
+    row = registry.get(coin) or {"names": [coin.title()], "unit": next(
+        f["unit"] for f in c["tier1"] if f["id"] == "supply_circulating"),
+        "price_unit": c["subject"]["currency"]}
+    c["subject"].update(product=coin, name=row["names"][0])
+    c["captured_at"] = "2026-10-03T06:00Z"
+    for fact in c["tier1"] + c["tier2"]:
+        fact["as_of"] = "2026-10-03"
+    existing = {f["id"]: f for f in c["tier1"]}
+    for role, (fid, value, selector) in _COIN_INPUTS.items():
+        unit = row["unit"] + "_per_block" if selector == "unit_per_block" else row.get(selector, selector)
+        source = "INVENTED Coin Metrics reading" if role.endswith("_check") else (
+            "INVENTED CoinGecko reading" if role in ("price", "supply", "turnover") else
+            "INVENTED protocol documents and dated block explorer")
+        fact = dict(id=fid, value=value, unit=unit, source=source, as_of="2026-10-03",
+                    freshness_rule_days=1 if role in ("price", "price_check", "height", "turnover") else 7,
+                    derived=None)
+        if fid in existing:
+            existing[fid].update(fact)
+        else:
+            c["tier1"].append(fact)
+    # Sum thirty invented daily observations; divide the sum by thirty.
+    total = dict(id="turnover_30d_total", value="30000000", unit="USD",
+                 source="INVENTED CoinGecko thirty daily volumes", as_of="2026-10-03",
+                 freshness_rule_days=1, derived={"operation": "add", "operands": [
+                     {"label": "invented day %s" % n, "value": "1000000"} for n in range(30)]})
+    c["tier1"].append(total)
+    next(f for f in c["tier1"] if f["id"] == _COIN_INPUTS["turnover"][0])["derived"] = {
+        "operation": "divide", "operands": [
+            {"label": "thirty-day sum", "fact_id": total["id"], "value": total["value"]},
+            {"label": "days", "value": "30"}]}
+    c["tier1"].append(dict(id="regulated_venue_example", value="Invented Licensed Exchange",
+        unit="venue", source="INVENTED current listing and United Kingdom licence",
+        as_of="2026-10-03", freshness_rule_days=FLOORS["asset_classes"]["crypto"].get(
+            "monetary_coin_rule", {}).get("venue_role", {}).get("max_freshness_days", 1), derived=None))
+    lifts = row.get("class_anchors_lifted") or {}
+    prefixes = [a["prefix"] for a in FLOORS["asset_classes"]["crypto"][
+        "monetary_coin_rule"]["privacy_coin_anchors"]]
+    c["tier1"] = [f for f in c["tier1"] if f["id"] not in lifts and (
+        row.get("privacy_coin") or not any(f["id"].startswith(p) for p in prefixes))]
+    for requirement in c["sufficiency"]["requirements"]:
+        requirement["answered_by"] = [fid for fid in requirement["answered_by"] if fid not in lifts]
+    for fid, value in overrides.items():
+        next(f for f in c["tier1"] if f["id"] == fid)["value"] = value
+    h = gate.evidence_body_sha256(c)
+    c["evidence_challenge"].update(evidence_sha256=h, post_audit_sha256=h)
+    return c
+
+
+class CoinTest(unittest.TestCase):
+    def gate(self, c):
+        # The seed's future-dated invented capture uses a fixed validating clock.
+        from unittest import mock
+        from datetime import datetime, timezone
+        with mock.patch.object(gate, "datetime", wraps=gate.datetime) as clock:
+            clock.now.return_value = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+            return gate_check(c)
+
+    def facts(self, c):
+        return {f["id"]: f for f in c["tier1"]}
+
+    def outcome(self, c=None, floors=None):
+        return sufficiency_of(freeze.build_pack(c or coin_capture()), floors or FLOORS)
+
+    def passes(self, c=None, floors=None):
+        out = self.outcome(c, floors)
+        self.assertEqual(out["result"], "pass", out["message"])
+        return out
+
+    def refuses(self, c, *words, floors=None):
+        out = self.outcome(c, floors)
+        self.assertEqual(out["result"], "refuse", out["message"])
+        for word in words:
+            self.assertIn(word, out["message"])
+        return out
+
+    def registry(self, floors=None):
+        return (floors or FLOORS)["asset_classes"]["crypto"]["products"]
+
+    def rule(self, floors=None):
+        return (floors or FLOORS)["asset_classes"]["crypto"]["monetary_coin_rule"]
+
+    def old_coin(self):
+        return load_fixture("btc-pass.json")["subject"]["name"].lower()
+
+    def new_coin(self):
+        return coin_capture.__defaults__[0]
+
+
+class TestCoinRegistryData(CoinTest):
+    def test_both_admitted_coins_are_in_the_registry(self):
+        self.assertEqual(set(self.registry()), {self.old_coin(), self.new_coin()})
+
+    def test_every_coin_entry_carries_the_ruled_fields(self):
+        for key, row in self.registry().items():
+            with self.subTest(coin=key):
+                self.assertTrue(set(("names", "unit", "price_unit", "series_ticker",
+                                     "privacy_coin", "spot_funds", "anchors", "why")) <= set(row))
+                self.assertIn(row["unit"], FLOORS["allowed_units"])
+                self.assertIn(row["unit"] + "_per_block", FLOORS["allowed_units"])
+                self.assertEqual(row["anchors"], [])
+        self.assertEqual(len(self.registry()[self.new_coin()]["spot_funds"]), 1)
+        self.assertIsNone(self.registry()[self.old_coin()]["spot_funds"])
+
+    def test_the_unnamed_coin_reads_as_bitcoin(self):
+        from council.lib import subjects
+        self.assertEqual(subjects.coin(load_fixture("btc-pass.json")["subject"], FLOORS), self.old_coin())
+        self.assertIsNone(subjects.coin(load_fixture("gold-pass.json")["subject"], FLOORS))
+
+    def test_every_rule_constant_carries_its_why(self):
+        rule = self.rule()
+        self.assertEqual(set(rule) - {"why"}, set(rule["why"]))
+        for words in rule["why"].values():
+            self.assertIn("AC", words)
+        for spec in rule["roles"].values():
+            self.assertIn("AC", spec["why"])
+
+    def test_every_new_anchor_carries_applies_from(self):
+        rule = self.rule()
+        for a in rule["anchors"] + rule["privacy_coin_anchors"]:
+            self.assertEqual(a["applies_from"], "2026-10-03")
+
+    def test_the_crypto_class_anchors_are_unchanged(self):
+        """Control: frozen data hashes pass on base by design (AB15)."""
+        expected = {"crypto": "6b4f1e91f4b606f15a4ae244bdfa9cf5f1774ddbb507026c64cc061ef4b6303e", "common_anchorless": "156f044ebfe7c58c5b6d231b4e35b589798a717b93df833b00c23e85a41495de"}
+        from council.lib import subjects
+        for key, digest in expected.items():
+            raw = json.dumps(FLOORS["asset_classes"][key]["anchors"], sort_keys=True).encode()
+            self.assertEqual(hashlib.sha256(raw).hexdigest(), digest)
+        old = (FLOORS["asset_classes"]["common_anchorless"]["anchors"]
+               + FLOORS["asset_classes"]["crypto"]["anchors"])
+        returned = subjects.class_anchors(FLOORS, load_fixture("btc-pass.json")["subject"])
+        self.assertEqual(returned[:len(old)], old)
+
+
+class TestACoinNamesItself(CoinTest):
+    def test_a_crypto_subject_may_name_its_coin(self):
+        self.assertEqual(self.gate(coin_capture())["result"], "accepted")
+
+    def test_an_equity_naming_a_product_still_refuses(self):
+        c = load_fixture("aapl-pass.json")
+        c["subject"]["product"] = self.new_coin()
+        reasons = "\n".join(gate._check_subject_kind(c))
+        self.assertIn("only a commodity, or a coin, names a product", reasons)
+
+    def test_an_unadmitted_coin_refuses_with_the_admission_words(self):
+        c = coin_capture()
+        c["subject"].update(product="unadmitted", name="Unadmitted")
+        self.assertEqual(gate._check_subject_kind(c), [])
+        self.refuses(c, "admitted one at a time", "asset_classes.crypto.products")
+
+    def test_an_unregistered_commodity_product_refuses_as_before(self):
+        """Control: the commodity's C2 words pass on base by design."""
+        c = load_fixture("copper-pass.json")
+        c["subject"]["product"] = "unregistered"
+        self.refuses(c, "no evidence items have been ruled for this product",
+                     "asset_classes.commodity.products")
+
+    def test_zcash_named_but_read_as_bitcoin_refuses(self):
+        c = load_fixture("btc-pass.json")
+        c["subject"]["name"] = self.new_coin().title()
+        self.refuses(c, c["subject"]["name"], self.old_coin().title())
+
+    def test_a_coin_from_applies_from_without_a_name_refuses(self):
+        c = coin_capture(self.old_coin())
+        c["subject"].pop("product")
+        self.refuses(c, "name the coin")
+
+    def test_a_coin_before_applies_from_reads_as_bitcoin(self):
+        """Control: the original capture passes on base by design."""
+        self.passes(load_fixture("btc-pass.json"))
+
+    def test_a_fund_holding_coins_is_untouched(self):
+        """Control: no coin-kind rule applies to a fund on base or head."""
+        from council.lib import subjects
+        c = load_fixture("btc-pass.json")
+        c["subject"].update(kind="etf", ticker="FUND", name="Invented Coin Fund", listing="NYSE Arca")
+        c["captured_at"] = "2026-10-03T06:00Z"
+        for fact in c["tier1"] + c["tier2"]:
+            fact["as_of"] = "2026-10-03"
+        fund = load_fixture("etf-pass.json")
+        core = set(self.facts(c))
+        c["tier1"] += [dict(f, as_of="2026-10-03") for f in fund["tier1"] if f["id"] not in core]
+        c["gaps"] += fund["gaps"]
+        self.passes(c)
+        old = (FLOORS["asset_classes"]["common_anchorless"]["anchors"]
+               + FLOORS["asset_classes"]["crypto"]["anchors"])
+        self.assertEqual(subjects.class_anchors(FLOORS, c["subject"]), old)
+
+
+class TestZcashAnchorSet(CoinTest):
+    def test_zcash_passes_on_its_own_anchor_set(self):
+        c = coin_capture()
+        lifted = set(self.registry()[self.new_coin()]["class_anchors_lifted"])
+        c["tier1"] = [f for f in c["tier1"] if f["id"] not in lifted]
+        for req in c["sufficiency"]["requirements"]:
+            req["answered_by"] = [fid for fid in req["answered_by"] if fid not in lifted]
+        self.assertEqual(self.gate(c)["result"], "accepted")
+        self.passes(c)
+
+    def test_zcash_without_a_regulated_venue_refuses(self):
+        c = coin_capture()
+        c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith("regulated_venue_")]
+        self.refuses(c, "regulated_venue_")
+
+    def test_a_lifted_anchor_is_not_required_of_zcash(self):
+        from council.lib import subjects
+        anchors = subjects.class_anchors(FLOORS, coin_capture()["subject"])
+        for fid in self.registry()[self.new_coin()]["class_anchors_lifted"]:
+            with self.subTest(fact=fid):
+                self.assertNotIn(fid, [a.get("id") for a in anchors])
+
+    def test_bitcoin_keeps_every_anchor(self):
+        """Control: Bitcoin keeps the frozen existing list on base by design."""
+        from council.lib import subjects
+        old = (FLOORS["asset_classes"]["common_anchorless"]["anchors"]
+               + FLOORS["asset_classes"]["crypto"]["anchors"])
+        actual = subjects.class_anchors(FLOORS, load_fixture("btc-pass.json")["subject"])
+        self.assertEqual(actual[:len(old)], old)
+
+    def test_the_lift_is_read_from_the_data(self):
+        from council.lib import subjects
+        floors = copy.deepcopy(FLOORS)
+        lifts = self.registry(floors)[self.new_coin()]["class_anchors_lifted"]
+        lifts["difficulty"] = "AC69 test of the mechanism"
+        anchors = subjects.class_anchors(floors, coin_capture()["subject"])
+        self.assertNotIn("difficulty", [a.get("id") for a in anchors])
+        lifts["absent_id"] = "AC69 deliberately broken data"
+        with self.assertRaisesRegex(ValueError, "absent_id"):
+            subjects.class_anchors(floors, coin_capture()["subject"])
+
+
+class TestThePriceCrossCheck(CoinTest):
+    def test_a_price_beyond_the_tolerance_refuses(self):
+        self.refuses(coin_capture(price_last_cross_check="102"), "102", "100", "Coin Metrics", "CoinGecko", "1 percent")
+
+    def test_a_price_within_the_tolerance_passes(self):
+        """The exact comparison boundary is accepted."""
+        self.passes(coin_capture(price_last_cross_check="101"))
+
+    def test_a_supply_beyond_the_tolerance_refuses(self):
+        self.refuses(coin_capture(supply_circulating_cross_check="1020000"), "1020000", "1000000", "tolerance")
+
+    def test_the_tolerance_is_read_from_the_floors(self):
+        c = coin_capture(price_last_cross_check="102")
+        self.refuses(c, "tolerance")
+        floors = copy.deepcopy(FLOORS)
+        self.rule(floors)["cross_check_tolerance_percent"]["price"] = "2"
+        self.passes(c, floors)
+
+    def test_a_cross_check_from_the_price_source_refuses(self):
+        c = coin_capture()
+        self.facts(c)["price_last_cross_check"]["source"] = "INVENTED CoinGecko and Coin Metrics"
+        self.refuses(c, "price_last_cross_check", "independently")
+
+    def test_a_price_not_from_the_ruled_source_refuses(self):
+        c = coin_capture()
+        self.facts(c)["price_last"]["source"] = "INVENTED different source"
+        self.refuses(c, "price_last", "CoinGecko")
+
+    def test_cross_checks_days_apart_refuse(self):
+        c = coin_capture()
+        self.facts(c)["supply_circulating_cross_check"]["as_of"] = "2026-10-01"
+        self.refuses(c, "cross-check dates", "2026-10-01", "2026-10-03")
+
+
+class TestCoinSupplyReadings(CoinTest):
+    def read(self, c=None):
+        return sufficiency.coin_readings(freeze.build_pack(c or coin_capture()), FLOORS)
+
+    def test_the_windows_without_an_event(self):
+        r = self.read()
+        for w in r["windows"]:
+            self.assertEqual(w["blocks"], Decimal(w["days"]) * 144)
+            self.assertEqual(w["new_coins"], Decimal(w["days"]) * 576)
+            self.assertEqual(w["share_of_supply_percent"], w["new_coins"] / 10000)
+            self.assertFalse(w["crosses_event"])
+        self.assertEqual([w["days"] for w in r["windows"]], self.rule()["supply_windows_days"])
+
+    def test_an_event_inside_a_window_changes_the_reward_after_it(self):
+        r = self.read(coin_capture(halving_next_block="6760"))
+        self.assertFalse(r["windows"][0]["crosses_event"])
+        for w in r["windows"][1:]:
+            self.assertTrue(w["crosses_event"])
+            self.assertEqual(w["new_coins"], 5760 * 4 + (w["blocks"] - 5760) * 2)
+
+    def test_issuance_against_turnover(self):
+        r = self.read()
+        self.assertEqual(r["daily_issuance"], Decimal(576))
+        self.assertEqual(r["issuance_vs_turnover_percent"], Decimal("5.76"))
+
+    def test_the_readings_are_never_written_to_the_pack(self):
+        p = freeze.build_pack(coin_capture())
+        before = canonical.canonical_bytes(p)
+        sufficiency.coin_readings(p, FLOORS)
+        sufficiency.coin_role_set(p, FLOORS)
+        self.assertEqual(canonical.canonical_bytes(p), before)
+
+    def test_a_supply_in_another_coins_unit_refuses(self):
+        c = coin_capture()
+        other = self.registry()[self.old_coin()]["unit"]
+        self.facts(c)["supply_circulating"]["unit"] = other
+        self.refuses(c, "supply_circulating", other, self.registry()[self.new_coin()]["unit"])
+
+    def test_a_missing_input_refuses_naming_it(self):
+        for fid, _, _ in _COIN_INPUTS.values():
+            with self.subTest(fact=fid):
+                c = coin_capture()
+                c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                self.refuses(c, fid)
+
+    def test_an_event_behind_the_height_refuses(self):
+        for height in ("1000", "999"):
+            self.refuses(coin_capture(halving_next_block=height), "already behind")
+
+    def test_every_input_is_in_the_one_role_set(self):
+        p = freeze.build_pack(coin_capture())
+        roles = sufficiency.coin_role_set(p, FLOORS)
+        for role, spec in self.rule()["roles"].items():
+            self.assertIn(role, roles[spec["id"]])
+        self.assertEqual(roles["regulated_venue_example"], {"venue"})
+        self.assertEqual(self.read()["facts"], {r: spec["id"] for r, spec in self.rule()["roles"].items()})
+
+    def test_the_message_prints_the_readings(self):
+        summary = brief.coin_summary(freeze.build_pack(coin_capture()))
+        message = self.passes()["message"]
+        self.assertEqual(message.count("Supply pressure"), 1)
+        for w in summary["windows"]:
+            self.assertIn(w["words"], message)
+            self.assertIn(w["new_coins_text"], message)
+        self.assertIn(summary["turnover_share_text"], message)
+
+    def test_each_role_enforces_its_unit_freshness_and_numeric_shape(self):
+        for role, spec in self.rule()["roles"].items():
+            stale = (date(2026, 10, 3) - timedelta(days=spec["max_freshness_days"] + 1)).isoformat()
+            for field, value in (("unit", "venue"), ("as_of", stale), ("value", "unknown")):
+                with self.subTest(role=role, field=field):
+                    c = coin_capture()
+                    self.facts(c)[spec["id"]][field] = value
+                    self.refuses(c, spec["id"])
+
+    def test_zero_divisors_and_negative_issuance_refuse(self):
+        for role, value in (("supply", "0"), ("interval", "0"), ("turnover", "0"), ("reward", "-1")):
+            with self.subTest(role=role):
+                spec = self.rule()["roles"][role]
+                self.refuses(coin_capture(**{spec["id"]: value}), spec["id"])
+
+    def test_the_venue_names_its_regulated_jurisdiction(self):
+        c = coin_capture()
+        self.facts(c)["regulated_venue_example"]["source"] = "INVENTED unlicensed listing"
+        self.refuses(c, "regulated_venue_example", *self.rule()["regulated_venue_jurisdiction_words"])
+
+    def test_turnover_has_the_ruled_average_arithmetic(self):
+        for change in (None, "multiply", "31"):
+            c = coin_capture()
+            fact = self.facts(c)["turnover_30d_avg_daily"]
+            if change is None:
+                fact["derived"] = None
+            elif change == "multiply":
+                fact["derived"]["operation"] = change
+            else:
+                fact["derived"]["operands"][-1]["value"] = change
+            self.refuses(c, "turnover_30d_avg_daily", "declared arithmetic")
+
+
+class TestTheCoinSeriesBindsToItsCoin(CoinTest):
+    def series(self, c, ticker):
+        c["price_series"] = invented_series(ticker, end="2026-08-28", as_of="2026-08-30", calendar="CRYPTO_24_7")
+        return c
+
+    def test_another_coins_series_on_bitcoin_refuses(self):
+        c = self.series(load_fixture("btc-pass.json"), "OTHER-USD")
+        reasons = gate._check_price_series(c, FLOORS)
+        self.assertIn("the series names OTHER-USD, which is not the subject or one of its members", "\n".join(reasons))
+
+    def test_bitcoins_own_series_passes(self):
+        """Control: the coin's own series passes on base by design."""
+        c = self.series(load_fixture("btc-pass.json"), "BTC-USD")
+        self.assertEqual(gate._check_price_series(c, FLOORS), [])
+
+    def test_zcash_series_binds_to_its_own_ticker(self):
+        c = load_fixture("btc-pass.json")
+        c["subject"].update(product=self.new_coin(), name=self.new_coin().title())
+        self.series(c, self.registry()[self.new_coin()]["series_ticker"])
+        self.assertEqual(gate._check_price_series(c, FLOORS), [])
+        self.series(c, self.registry()[self.old_coin()]["series_ticker"])
+        self.assertIn("another instrument's history", "\n".join(gate._check_price_series(c, FLOORS)))
+
+    def test_bullion_and_a_contract_bind_as_before(self):
+        """Control: tickerless non-crypto binding is untouched on base."""
+        for name in ("gold-pass.json", "copper-pass.json"):
+            c = self.series(load_fixture(name), "OTHER-USD")
+            self.assertIn("no calendar", "\n".join(gate._check_price_series(c, FLOORS)))
+
+
+class TestTheBitcoinRecordsUnchanged(CoinTest):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        base = copy.deepcopy(FLOORS)
+        base["asset_classes"]["crypto"].pop("products")
+        base["asset_classes"]["crypto"].pop("monetary_coin_rule")
+        earliest = copy.deepcopy(FLOORS)
+        crypto = earliest["asset_classes"]["crypto"]
+        rule = crypto["monetary_coin_rule"]
+        rule["applies_from"] = "2026-08-01"
+        anchors = rule["anchors"] + rule["privacy_coin_anchors"]
+        anchors += [entry for row in crypto["products"].values() for entry in row["anchors"]]
+        for entry in anchors:
+            entry["applies_from"] = "2026-08-01"
+        gated = checked = frozen = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                for c in (canonical.read_json(path), to_contract_1_13_0(canonical.read_json(path), run_id)):
+                    old = gate.validate_capture(copy.deepcopy(c), SCHEMA, base)
+                    coin = c["subject"]["kind"] in rule["coin_kinds"]
+                    for floors in ((FLOORS,) if coin else (FLOORS, earliest)):
+                        self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, floors), old)
+                    if coin:
+                        gate.validate_capture(copy.deepcopy(c), SCHEMA, earliest)
+                gated += 1
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            with open(path, "rb") as handle:
+                self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])), handle.read())
+            frozen += 1
+            coin = pack["capture"]["subject"]["kind"] in rule["coin_kinds"]
+            try:
+                old = sufficiency.check(copy.deepcopy(pack), base)
+            except ValueError as exc:
+                for floors in (FLOORS, earliest):
+                    with self.assertRaises(ValueError) as caught:
+                        sufficiency.check(copy.deepcopy(pack), floors)
+                    self.assertEqual(str(caught.exception), str(exc))
+                continue
+            for floors in ((FLOORS,) if coin else (FLOORS, earliest)):
+                self.assertEqual(sufficiency.check(copy.deepcopy(pack), floors), old)
+            if coin:
+                try:
+                    sufficiency.check(copy.deepcopy(pack), earliest)
+                except ValueError:
+                    pass
+            checked += 1
+        self.assertGreater(min(gated, checked, frozen), 0)
+
+
+class TestCoinFixRoundOne(CoinTest):
+    def dated(self, c, day="2026-10-02"):
+        c["captured_at"] = day + "T06:00Z"
+        for fact in c["tier1"] + c["tier2"]:
+            fact["as_of"] = day
+        h = gate.evidence_body_sha256(c)
+        c["evidence_challenge"].update(evidence_sha256=h, post_audit_sha256=h)
+        return c
+
+    def test_zcash_before_applies_from_is_still_bound(self):
+        from council.engine import briefs
+        for fault in ("missing", "unit"):
+            with self.subTest(fault=fault):
+                c = self.dated(coin_capture())
+                if fault == "missing":
+                    removed = {entry["id"] for entry in self.rule()["anchors"]}
+                    removed.update(("turnover_30d_total", "regulated_venue_example"))
+                    c["tier1"] = [f for f in c["tier1"] if f["id"] not in removed]
+                    self.refuses(c, "price_last_cross_check")
+                else:
+                    self.facts(c)["supply_circulating"]["unit"] = self.registry()[self.old_coin()]["unit"]
+                    self.refuses(c, "supply_circulating", self.registry()[self.new_coin()]["unit"])
+                for text in (
+                        briefs.build_evidence_brief(c, "n" * 32, "a" * 64, FLOORS),
+                        briefs.build_evidence_delta_brief(c, "n" * 32, "a" * 64,
+                            [{"fact_id": "price_last"}], c["evidence_challenge"], FLOORS)):
+                    for entry in self.rule()["anchors"]:
+                        self.assertIn(entry["id"], text)
+                    self.assertIn("regulated_venue_", text)
+
+    def test_a_named_bitcoin_before_applies_from_is_bound_too(self):
+        c = self.dated(coin_capture(self.old_coin()))
+        self.assertIsNotNone(sufficiency.coin_readings(freeze.build_pack(c), FLOORS))
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "price_last_cross_check"]
+        self.refuses(c, "price_last_cross_check")
+
+    def test_a_missing_coin_input_is_listed_once(self):
+        for spec in self.rule()["roles"].values():
+            fid = spec["id"]
+            for fault in ("missing", "stale"):
+                with self.subTest(fact=fid, fault=fault):
+                    c = coin_capture(self.old_coin())
+                    if fault == "missing":
+                        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                    else:
+                        fact = self.facts(c)[fid]
+                        fact["as_of"] = (date(2026, 10, 3) - timedelta(
+                            days=max(spec["max_freshness_days"], fact["freshness_rule_days"]) + 1)).isoformat()
+                    out = self.refuses(c, fid)
+                    self.assertEqual(out["message"].count("- Missing: %s\n" % fid), 1)
+
+    def test_a_venue_inside_the_confirmed_freshness_window_passes(self):
+        c = coin_capture()
+        fact = self.facts(c)["regulated_venue_example"]
+        fact["as_of"] = "2026-09-26"
+        fact["freshness_rule_days"] = self.rule()["venue_role"]["max_freshness_days"]
+        self.passes(c)
+
+    def test_a_crypto_fund_naming_a_coin_refuses(self):
+        c = coin_capture()
+        c["subject"].update(kind="etf", ticker="FUND", name="Invented Coin Fund", listing="NYSE Arca")
+        fund = load_fixture("etf-pass.json")
+        core = set(self.facts(c))
+        c["tier1"] += [dict(f, as_of="2026-10-03") for f in fund["tier1"] if f["id"] not in core]
+        c["gaps"] += fund["gaps"]
+        self.refuses(c, "etf", "only a coin")
+
+
+class TestCoinCurrencyReading(unittest.TestCase):
+    def test_a_coin_unit_is_never_read_as_a_currency(self):
+        from council.tests import test_foundations
+        from council.engine import chair_fields
+        # Exercise the existing currency invariant rather than copying its filter.
+        listing = test_foundations.TestListingCalendarData(
+            "test_currency_magnitude_suffixes_equal_usd")
+        listing.setUp()
+        listing.test_currency_magnitude_suffixes_equal_usd()
+        rows = FLOORS["asset_classes"]["crypto"]["products"].values()
+        coins = {row["unit"] for row in rows}
+        currencies = {u.removesuffix("_per_share") for u in FLOORS["allowed_units"]
+                      if u.endswith("_per_share")}
+        self.assertFalse(coins & currencies)
+        scales = FLOORS["prose_figure_marks"]["currency_scale_units"]
+        self.assertFalse(coins & {u.split("_")[0] for u in scales})
+        self.assertFalse(coins & chair_fields._currency_codes(trace.config(FLOORS)))
+        capture, floors = holding_capture(), holding_floors()
+        before = sufficiency_of(freeze.build_pack(copy.deepcopy(capture)), floors)
+        self.assertEqual(before["result"], "pass", before["message"])
+        for index, unit in enumerate(sorted(coins)):
+            for suffix in ("", "_per_block"):
+                with self.subTest(unit=unit + suffix):
+                    self.assertEqual(brief.holding_currency_words(unit + suffix), "")
+                    fi_fact(capture, "invented_coin_%s%s" % (index, suffix), "10", unit + suffix)
+        facts = {f["id"]: f for f in capture["tier1"]}
+        tagged, _, _ = sufficiency._holding_roles(floors, holding_frame(capture), {}, facts)
+        for fid in facts:
+            if fid.startswith("invented_coin_"):
+                self.assertFalse(any(role.startswith("currency:") for role in tagged.get(fid, ())))
+        after = sufficiency_of(freeze.build_pack(capture), floors)
+        self.assertEqual(after, before)
+
+
+class TestCoinOnTheEvidencePage(CoinTest):
+    def pack(self, coin=None):
+        return freeze.build_pack(coin_capture(coin or self.new_coin(),
+            issuance_per_block="3.125", issuance_per_block_after_halving="1.5625",
+            supply_circulating="16000000", supply_circulating_cross_check="16000000"))
+
+    def page(self, pack=None):
+        return brief.render(pack or self.pack(), "a" * 64)
+
+    def test_the_kind_line_is_read_per_coin(self):
+        from unittest import mock
+        for key, row in self.registry().items():
+            with self.subTest(coin=key):
+                expected = ("rated from a scenario ladder against cash, as %s is." %
+                            self.registry()[self.old_coin()]["report_words"] if row["privacy_coin"]
+                            else "rated from a scenario ladder against cash.")
+                pack = self.pack(key)
+                summary = brief.coin_summary(pack)
+                self.assertEqual(brief.coin_lines(summary)[0],
+                                 "- Coin: %s — %s" % (row["report_words"], expected))
+                self.assertEqual(row["kind_line_words"], expected)
+                floors = copy.deepcopy(FLOORS)
+                self.registry(floors)[key]["kind_line_words"] = "INVENTED kind-line words."
+                with mock.patch.object(brief, "_floors", return_value=floors):
+                    self.assertIn("- Coin: %s — INVENTED kind-line words." % row["report_words"],
+                                  self.page(pack))
+
+    def test_the_head_names_zcash_as_a_privacy_coin(self):
+        name = self.registry()[self.new_coin()]["names"][0]
+        self.assertIn("**%s, a privacy coin.**" % name, self.page())
+
+    def test_an_unnamed_bitcoin_head_is_unchanged(self):
+        # Control: the old subject keeps its exact head.
+        p = freeze.build_pack(load_fixture("btc-pass.json"))
+        self.assertIn("**%s, %s.**" % (p["capture"]["subject"]["name"],
+                      brief.SUBJECT_KIND_WORDS[p["capture"]["subject"]["kind"]]), self.page(p))
+
+    def test_the_supply_readings_print_in_house_figures(self):
+        for text in (self.page(), brief.render_full(self.pack(), "a" * 64)):
+            self.assertIn("13,500 " + self.registry()[self.new_coin()]["unit"], text)
+            self.assertIn("0.1% of supply (calculated)", text)
+            self.assertIn("Issuance against turnover: 4.5% (calculated)", text)
+        p = self.pack()
+        self.facts(p["capture"])["halving_next_block"]["value"] = "1001"
+        self.assertIn("the next halving falls inside this window", self.page(p))
+
+    def test_every_reading_comes_from_coin_readings(self):
+        from unittest import mock
+        p = self.pack()
+        readings = sufficiency.coin_readings(p, FLOORS)
+        readings["windows"][0].update(new_coins=Decimal(12345), share_of_supply_percent=Decimal(7))
+        readings.update(daily_issuance=Decimal(987), issuance_vs_turnover_percent=Decimal(8))
+        with mock.patch.object(sufficiency, "coin_readings", return_value=readings) as reader:
+            text = self.page(p)
+        reader.assert_called_once()
+        for value in ("12,345", "7.0%", "987", "8.0%"):
+            self.assertIn(value, text)
+
+    def test_the_one_fund_sentence_for_one_fund(self):
+        fund = self.registry()[self.new_coin()]["spot_funds"][0]
+        self.assertIn("These flows are one fund's: %s (%s: %s)." % (
+            fund["name"], fund["listing"], fund["ticker"]), self.page())
+
+    def test_no_fund_sentence_for_bitcoin(self):
+        # Control: the multi-fund reading has no one-fund claim.
+        self.assertNotIn("These flows are one fund's:", self.page(self.pack(self.old_coin())))
+
+    def test_the_venues_are_listed_for_a_privacy_coin(self):
+        self.assertIn("Regulated venue: Invented Licensed Exchange", self.page())
+        self.assertIn("INVENTED current listing and United Kingdom licence", self.page())
+
+    def test_a_venue_name_is_neutralised(self):
+        p = self.pack()
+        self.facts(p["capture"])["regulated_venue_example"]["value"] = "<script>invented</script>"
+        text = self.page(p)
+        self.assertIn(brief._safe("<script>invented</script>"), text)
+        self.assertNotIn("<script>", text)
+
+    def test_the_absent_sentence_names_what_zcash_skips(self):
+        sentence = self.registry()[self.new_coin()]["absent_sentence"]
+        self.assertIn(sentence, self.page())
+        self.assertIn("recent and by long-term owners", sentence)
+
+    def test_the_block_is_cut_last_on_the_one_page(self):
+        summary = brief.coin_summary(self.pack())
+        rows = brief.coin_lines(summary)
+        for row in rows:
+            self.assertTrue(row.startswith(brief.SHAPE_PREFIXES), row)
+        body = ["## The business, before the numbers", ""] + rows + [
+            "- invented expendable row " + str(n) for n in range(40)]
+        removed = brief._rows_to_cut(body, 10)[0]
+        self.assertFalse(any(i in removed for i in range(2, 2 + len(rows))))
+
+
+class TestCoinUnits(CoinTest):
+    def test_a_coin_unit_is_never_rounded(self):
+        from council.report import render_report as renderer
+        unit = self.registry()[self.new_coin()]["unit"]
+        self.assertEqual(renderer.format_number("16000000", unit), unit + " 16000000")
+
+    def test_a_per_block_reward_is_never_rounded(self):
+        from council.report import render_report as renderer
+        for row in self.registry().values():
+            self.assertEqual(renderer.format_number("3.125", row["unit"] + "_per_block"),
+                             row["unit"] + " 3.125/block")
+
+    def test_the_units_are_read_from_the_registry(self):
+        from council.report import render_report as renderer
+        expected = {"block_height"} | {u for row in self.registry().values()
+                     for u in (row["unit"], row["unit"] + "_per_block")}
+        self.assertEqual(set(renderer.UNROUNDED_UNITS), expected)
+
+
+class TestCoinRuleFollowUps(CoinTest):
+    def setUp(self):
+        from council.lib import subjects
+        self.subjects = subjects
+    def test_a_zero_price_refuses(self):
+        c = coin_capture(price_last="0", price_last_cross_check="0")
+        self.assertIsNone(sufficiency.coin_readings(freeze.build_pack(c), FLOORS))
+        self.refuses(c, "price_last", "a price of zero cannot be read")
+
+    def test_the_note_prints_house_figures(self):
+        c = coin_capture(issuance_per_block="3.125", issuance_per_block_after_halving="1.5625",
+                         supply_circulating="16000000", supply_circulating_cross_check="16000000")
+        message = self.passes(c)["message"]
+        for text in ("13,500", "0.1%", "4.5%"):
+            self.assertIn(text, message)
+        self.assertNotIn("13500.0000", message)
+
+    def test_a_lifted_fact_on_zcash_refuses(self):
+        for fid, why in self.registry()[self.new_coin()]["class_anchors_lifted"].items():
+            with self.subTest(fact=fid):
+                c = coin_capture()
+                c["tier1"].append(copy.deepcopy(self.facts(load_fixture("btc-pass.json"))[fid]))
+                out = self.refuses(c, fid, "evidence does not exist for this coin", why)
+                self.assertEqual(out["message"].count("- Missing: %s\n" % fid), 1)
+
+    def test_a_venue_fact_on_bitcoin_refuses(self):
+        c = coin_capture(self.old_coin())
+        c["tier1"].append(copy.deepcopy(self.facts(coin_capture())["regulated_venue_example"]))
+        self.refuses(c, "regulated_venue_example", "evidence does not exist for this coin")
+
+    def test_each_role_refuses_once_past_its_own_limit(self):
+        # Control on base; both independent freshness mutants must fail it.
+        for role, spec in self.rule()["roles"].items():
+            with self.subTest(role=role):
+                c = coin_capture(self.old_coin())
+                fact = self.facts(c)[spec["id"]]
+                limit = spec["max_freshness_days"]
+                fact.update(freshness_rule_days=30, as_of=(date(2026, 10, 3) -
+                    timedelta(days=limit + 1)).isoformat())
+                out = self.refuses(c, "against its %s-day rule" % limit)
+                self.assertEqual(out["message"].count("- Missing: %s\n" % spec["id"]), 1)
+
+    def test_one_helper_lists_the_appended_anchors(self):
+        for key, row in self.registry().items():
+            subject = coin_capture(key)["subject"]
+            expected = row["anchors"] + self.rule()["anchors"] + (
+                self.rule()["privacy_coin_anchors"] if row["privacy_coin"] else [])
+            self.assertEqual(self.subjects.coin_appended_anchors(FLOORS, subject), expected)
+
+    def test_a_later_dated_coin_anchor_keeps_its_own_date(self):
+        floors = copy.deepcopy(FLOORS)
+        entry = dict(kind="id", id="invented_later_coin_fact", level="required",
+                     applies_from="2027-01-01", likely_source="invented source", why="AC46(2)")
+        self.registry(floors)[self.new_coin()]["anchors"].append(entry)
+        subject = coin_capture()["subject"]
+        self.assertFalse(self.subjects.coin_applies_on(subject, floors, date(2026, 10, 3), entry))
+        self.assertTrue(self.subjects.coin_applies_on(subject, floors, date(2027, 1, 1), entry))
+
+    def missing_source(self, fid):
+        c = coin_capture()
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        out = self.refuses(c, fid)
+        missing = next(m for m in out["missing"] if m["what"] == fid)
+        self.assertEqual(missing["where_it_likely_lives"], self.rule()["class_anchor_source_words"][fid])
+
+    def test_a_missing_price_names_coingecko_for_a_named_coin(self):
+        self.missing_source("price_last")
+
+    def test_a_missing_supply_names_coingecko_for_a_named_coin(self):
+        self.missing_source("supply_circulating")
+
+    def test_an_unbound_capture_keeps_the_frozen_words(self):
+        # Control: the frozen list is the earlier record's source of words.
+        c = load_fixture("btc-pass.json")
+        old = self.subjects.class_anchors(FLOORS, c["subject"])
+        binding = (self.subjects.class_anchors_on(FLOORS, c["subject"],
+                   date.fromisoformat(c["captured_at"][:10])) if hasattr(self.subjects, "class_anchors_on")
+                   else [e for e in old if self.subjects.coin_applies_on(c["subject"], FLOORS,
+                         date.fromisoformat(c["captured_at"][:10]), e)])
+        for entry in binding:
+            self.assertTrue(any(entry is e for e in old))
+
+    def test_the_frozen_anchor_rows_are_unchanged(self):
+        # AB15: the reviewed frozen-text digest is independent of git history.
+        with open(os.path.join(ROOT, "council", "floors", "floors.json"), encoding="utf-8") as handle:
+            current = handle.read()
+        def frozen(text):
+            start = text.index('\n      "anchors": [', text.index('    "crypto": {'))
+            return text[start:text.index('\n      "reading_rule":', start)]
+        self.assertEqual(hashlib.sha256(frozen(current).encode("utf-8")).hexdigest(),
+                         "78d19fa7ceb8505557f5f992f940079663a3c01a7ad978182eedb846dbddad08")
+
+
+
+
+
+# MONETARY-COIN(c): invented all-days history, AC72 and architect M1-M10.
+def coinmetrics_reply(asset="zec", count=600, end="2026-10-02",
+                      base="40.000000000001", step="0.01"):
+    """INVENTED: one string price per calendar day, as the service writes it."""
+    last = date.fromisoformat(end)
+    return json.dumps({"data": [
+        {"asset": asset, "time": (last - timedelta(days=count - 1 - i)).isoformat()
+         + "T00:00:00.000000000Z", "PriceUSD": str(Decimal(base) + Decimal(step) * i)}
+        for i in range(count)]})
+
+
+def invented_coin_series(ticker, count=1826, end="2026-10-02", as_of="2026-10-02"):
+    last = date.fromisoformat(end)
+    return {"ticker": ticker, "calendar": "CRYPTO_24_7", "as_of": as_of,
+            "source": "INVENTED Coin Metrics community PriceUSD", "bars": [
+                {"date": (last - timedelta(days=count - 1 - i)).isoformat(),
+                 "close": str(Decimal("100.00") + Decimal("0.05") * i
+                              + (3 if i % 7 == 0 else 0))} for i in range(count)]}
+
+
+class TestTheCoinMetricsReader(SeriesHelperCase):
+    def read(self, text=None, last_date=None):
+        return self.series.bars_from_coinmetrics(text or coinmetrics_reply(), "zec", last_date)
+
+    def bad_row(self, change, words):
+        reply = json.loads(coinmetrics_reply())
+        change(reply["data"])
+        with self.assertRaises(self.series.Refusal) as caught:
+            self.read(json.dumps(reply))
+        for word in words:
+            self.assertIn(word, str(caught.exception))
+
+    def test_reads_exact_strings_without_volume(self):
+        rows = json.loads(coinmetrics_reply())["data"]
+        self.assertEqual(self.read(), [{"date": r["time"][:10], "close": r["PriceUSD"]}
+                                       for r in rows])
+
+    def test_missing_day_refuses(self):
+        self.bad_row(lambda r: r.pop(1), ("row 2", "calendar day"))
+
+    def test_repeated_day_refuses(self):
+        self.bad_row(lambda r: r[1].update(time=r[0]["time"]), ("row 2", "calendar day"))
+
+    def test_wrong_asset_refuses(self):
+        self.bad_row(lambda r: r[1].update(asset="invented-other"), ("row 2", "asset"))
+
+    def test_json_number_refuses(self):
+        self.bad_row(lambda r: r[1].update(PriceUSD=40), ("row 2", "price"))
+
+    def test_non_numeric_price_refuses(self):
+        self.bad_row(lambda r: r[1].update(PriceUSD="n/a"), ("row 2", "price"))
+
+    def test_negative_price_refuses(self):
+        self.bad_row(lambda r: r[1].update(PriceUSD="-1"), ("row 2", "price"))
+
+    def test_missing_price_refuses(self):
+        self.bad_row(lambda r: r[1].pop("PriceUSD"), ("row 2", "price"))
+
+    def test_short_history_refuses(self):
+        with self.assertRaises(self.series.Refusal):
+            self.read(coinmetrics_reply(count=tape.bars_needed(365) - 1))
+
+    def test_reply_without_data_refuses(self):
+        with self.assertRaises(self.series.Refusal):
+            self.read('{"other": []}')
+
+    def test_invalid_date_refuses(self):
+        self.bad_row(lambda r: r[1].update(time="2026-02-30T00:00Z"), ("row 2", "date"))
+
+    def cli(self, inputs):
+        out = os.path.join(self.tmp, "coin-series.json")
+        args = ["--ticker", "INVENTED-USD", "--calendar", "CRYPTO_24_7",
+                "--as-of", "2026-10-02", "--source", "INVENTED Coin Metrics",
+                "--out", out] + inputs
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = self.series.main(args)
+        return code, canonical.read_json(out) if os.path.exists(out) else None
+
+    def test_main_writes_coinmetrics_block(self):
+        path = os.path.join(self.tmp, "reply.json")
+        with open(path, "w") as handle:
+            handle.write(coinmetrics_reply())
+        code, block = self.cli(["--coinmetrics", path, "--asset", "zec",
+                                "--last-date", "2026-10-01"])
+        self.assertEqual(code, 0)
+        self.assertEqual(block["bars"], self.read(last_date="2026-10-01"))
+        self.assertEqual(len(block["bars"]), 599)
+
+    def test_both_or_neither_input_refuses(self):
+        # CONTROL: missing input was already refused by the broker-only CLI.
+        for inputs in ([], ["transcript.jsonl", "--contract", "1", "--coinmetrics",
+                            "reply.json", "--asset", "zec"]):
+            self.assertEqual(self.cli(inputs), (1, None))
+
+
+class TestTheCoinYearIs365(unittest.TestCase):
+    def table(self, year=365):
+        s = invented_coin_series("INVENTED-USD")
+        return tape.tape_table(s, s, price_unit="USD", freshness_rule_days=3, year_bars=year)
+
+    def test_windows_labels_and_the_year_figures(self):
+        self.assertEqual(tape.year_bars(FLOORS["price_series"]["exchange_calendars"][
+            "CRYPTO_24_7"]), 365)
+        facts = {f["id"]: f for f in self.table()["facts"]}
+        for old, actual in zip(tape.RETURN_WINDOWS, (30, 91, 183, 365)):
+            for stem in ("tape_return_", "tape_return_vs_benchmark_"):
+                fact = facts[stem + str(old)]
+                self.assertTrue(fact["derived"]["window"].startswith(str(actual) + " bars"))
+                self.assertIn(str(actual) + " trading days", fact["label"])
+        for old, actual in zip(tape.VOLATILITY_WINDOWS, (30, 91, 365)):
+            f = facts["tape_realized_vol_" + str(old)]
+            self.assertTrue(f["derived"]["window"].startswith(str(actual) + " bars"))
+            self.assertIn("* 365", f["derived"]["formula"])
+            self.assertIn(str(actual) + " trading days", f["label"])
+        for fid in ("tape_range_place_252", "tape_drawdown_from_high_252",
+                    "tape_high_close_252", "tape_low_close_252", "tape_closes_above_sma200_252"):
+            self.assertIn("last 365 bars, 2025-10-03 to 2026-10-02", facts[fid]["derived"]["window"])
+        self.assertIn("365 one-day changes", facts["tape_largest_fall_252"]["derived"]["window"])
+
+    def test_volatility_recomputed_by_hand(self):
+        s = invented_coin_series("INVENTED-USD")
+        with localcontext() as ctx:
+            ctx.prec = 60
+            closes = [Decimal(b["close"]) for b in s["bars"][-366:]]
+            logs = [(b / a).ln() for a, b in zip(closes, closes[1:])]
+            mean = sum(logs) / 365
+            value = (sum((r - mean) ** 2 for r in logs) / 364 * 365).sqrt()
+            expected = format(value.quantize(Decimal("0.0000000001"), rounding=ROUND_HALF_UP), "f")
+        f = next(f for f in self.table()["facts"] if f["id"] == "tape_realized_vol_252")
+        self.assertEqual(f["value"], expected)
+
+    def test_equity_tape_is_exactly_the_base_strings(self):
+        # CONTROL: whole-table digest captured by item zero on the base.
+        table = gate.expected_tape(series_capture(), FLOORS)
+        self.assertEqual(hashlib.sha256(json.dumps(table, sort_keys=True).encode()).hexdigest(),
+                         "a698c7cc4a92e1d6762b4d9e1956c52e498bcaffd1212c2f45480341b8989283")
+        f = next(f for f in table["facts"] if f["id"] == "tape_return_21")
+        self.assertEqual(f["label"], "Price return over 21 trading days")
+        self.assertEqual(f["derived"]["window"], "21 bars, close 2026-07-30 to close 2026-08-28")
+
+    def test_fixed_averages_and_slope_are_identical(self):
+        # CONTROL: calendar conversion leaves these market conventions fixed.
+        c = series_capture()
+        c["price_series"] = invented_coin_series("AAPL")
+        for bar in c["price_series"]["bars"]:
+            bar["volume"] = "1"
+        a = gate.expected_tape(c, FLOORS)
+        c["price_series"]["calendar"] = "XNYS"
+        b = gate.expected_tape(c, FLOORS)
+        ids = set(tape.LEVEL_IDS) | {"tape_close_vs_sma" + str(k) for k in tape.SMA_WINDOWS}
+        ids.add("tape_sma200_slope_60")
+        def fixed(table):
+            return [{k: v for k, v in f.items() if k != "freshness_rule_days"}
+                    for f in table["facts"] if f["id"] in ids]
+        self.assertEqual(fixed(a), fixed(b))
+
+
+class TestAClosesOnlySeries(CoinTest):
+    def capture(self):
+        c = coin_capture()
+        ticker = self.registry()[self.new_coin()]["series_ticker"]
+        c["price_series"] = invented_coin_series(ticker)
+        return c
+
+    def test_gate_accepts_closes_only(self):
+        self.assertEqual(self.gate(self.capture())["result"], "accepted")
+
+    def test_gate_refuses_mixed_volume(self):
+        c = self.capture()
+        c["price_series"]["bars"][0]["volume"] = "0"
+        self.assertIn("mixes bars with and without volume",
+                      " ".join(gate._check_price_series(c, FLOORS)))
+        out = self.gate(c)
+        self.assertEqual(out["result"], "refused")
+        self.assertIn("mixes bars with and without volume", " ".join(out["reasons"]))
+
+    def test_volume_is_the_only_additional_gap(self):
+        c = self.capture()
+        table = gate.expected_tape(c, FLOORS)
+        volume = next(g for g in table["gaps"] if g["fact_class"] == "tape_volume_20_vs_250")
+        self.assertEqual(volume["reason_kind"], "absent_by_design")
+        self.assertEqual(volume["reason"], "the series carries closes only - its source publishes no daily volume - so recent volume against its usual level is not computed")
+        self.assertEqual({g["fact_class"] for g in table["gaps"]},
+                         {"tape_return_vs_benchmark_" + str(k) for k in tape.RETURN_WINDOWS}
+                         | {"tape_volume_20_vs_250"})
+        self.assertEqual(len(table["facts"]) + len(table["gaps"]), len(tape.ROW_IDS))
+        s = c["price_series"]
+        complete = tape.tape_table(s, s, price_unit="USD", freshness_rule_days=3,
+                                   year_bars=365)
+        self.assertEqual([g["fact_class"] for g in complete["gaps"]],
+                         ["tape_volume_20_vs_250"])
+
+    def test_broker_volume_still_requires_a_number(self):
+        # CONTROL: AC72 does not change the broker reply reader.
+        from council.evidence import series
+        with self.assertRaises(series.Refusal):
+            series.bars_from_reply('{"time":["2026-10-02"],"close":[100],"volume":["0"]}')
+
+
+class TestTheCoinSeriesMeetsItsPrice(CoinTest):
+    def capture(self, close="100", end="2026-10-02"):
+        c = coin_capture(price_last="100", price_last_cross_check="100")
+        c["price_series"] = invented_coin_series(self.registry()[self.new_coin()]["series_ticker"], end=end)
+        for bar in c["price_series"]["bars"]:
+            bar["volume"] = "1"
+        c["price_series"]["bars"][-1]["close"] = close
+        return c
+
+    def test_within_one_percent_passes(self):
+        # CONTROL on base: the stricter check still permits the boundary and prior day.
+        for close in ("99", "101"):
+            self.passes(self.capture(close))
+
+    def test_beyond_one_percent_refuses_both_figures(self):
+        for close in ("98", "102"):
+            self.refuses(self.capture(close), close, "100", "percent")
+
+    def test_dates_two_days_apart_refuse(self):
+        self.refuses(self.capture(end="2026-10-01"), "2026-10-01", "2026-10-03", "apart")
+
+    def test_unruled_series_source_refuses(self):
+        c = self.capture()
+        c["price_series"]["source"] = "INVENTED other daily history"
+        self.refuses(c, "daily history", *self.rule().get(
+            "series_source_words", self.rule()["cross_check_source_words"]))
+
+    def test_other_ticker_is_left_to_gate_binding(self):
+        # CONTROL: no second sufficiency refusal for a mismatched ticker.
+        c = self.capture("1000")
+        c["price_series"]["ticker"] = "INVENTED-OTHER"
+        self.passes(c)
+        self.assertEqual(self.gate(c)["result"], "refused")
+
+    def test_without_series_sits_as_today(self):
+        # CONTROL: AC72 keeps the series optional.
+        self.passes(coin_capture())
 
 
 if __name__ == "__main__":

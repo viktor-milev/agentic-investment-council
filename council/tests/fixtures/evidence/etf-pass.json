@@ -1,5 +1,5 @@
 {
- "capture_version": "1.12.0",
+ "capture_version": "1.13.0",
  "captured_at": "2026-08-30T21:30Z",
  "gaps": [
   {
@@ -200,8 +200,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186574662d70617373",
-  "evidence_sha256": "d739e132c59cb0c694f50518dca10b3769be515b99df2c0bd0e3db78778d5c59",
+  "evidence_sha256": "f21490e784ca1cf2746954c0ce1fe1bb33a288687bda16cc0a685baee93f5343",
   "post_audit_changes": [],
-  "post_audit_sha256": "d739e132c59cb0c694f50518dca10b3769be515b99df2c0bd0e3db78778d5c59"
+  "post_audit_sha256": "f21490e784ca1cf2746954c0ce1fe1bb33a288687bda16cc0a685baee93f5343"
  }
 }

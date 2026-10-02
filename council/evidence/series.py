@@ -25,15 +25,24 @@ are not the same length, when a stamp is not text beginning with a date
 written YYYY-MM-DD, or when a close or a volume did not arrive as a number
 - a quoted figure, whatever it spells, a null or a missing figure refuses,
 naming the bar and its date.
+
+AC72, architect M5: alternatively save the public daily-history reply
+and use --coinmetrics <reply.json> --asset <id>, without a transcript or
+contract. Its data rows carry a date and a string PriceUSD; the close is
+kept exactly and no volume is invented. One calendar day separates each
+row, and enough rows remain after --last-date for every tape window.
+The code fetches nothing. The gate checks the operator's source words.
 """
 
 import argparse
 import json
 import re
 import sys
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 from council.lib import canonical
+from council.evidence import gate, tape
 
 _TOOL_SUFFIX = "get_price_history"
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -149,6 +158,45 @@ def bars_from_reply(text, last_date=None):
     return bars
 
 
+def bars_from_coinmetrics(text, asset, last_date=None, *, calendar="CRYPTO_24_7"):
+    """AC72: the saved community reply, closes only, exactly as observed."""
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        raise Refusal("the daily-history reply is not an object with a data list")
+    if not isinstance(reply, dict) or not isinstance(reply.get("data"), list):
+        raise Refusal("the daily-history reply is not an object with a data list")
+    pattern = gate.load_capture_schema()["properties"]["price_series"][
+        "properties"]["bars"]["items"]["properties"]["close"]["pattern"]
+    bars, previous = [], None
+    for index, row in enumerate(reply["data"], 1):
+        stamp = row.get("time") if isinstance(row, dict) else None
+        day = stamp[:10] if isinstance(stamp, str) else "unknown date"
+        hint = "row %d (%s)" % (index, day)
+        if not _is_date(day):
+            raise Refusal("%s has no real date written YYYY-MM-DD" % hint)
+        if row.get("asset") != asset:
+            raise Refusal("%s names asset %r rather than %s" % (hint, row.get("asset"), asset))
+        close = row.get("PriceUSD")
+        if (not isinstance(close, str) or re.fullmatch(pattern, close) is None
+                or Decimal(close) <= 0):
+            raise Refusal("%s has no price string above zero: %r" % (hint, close))
+        current = date.fromisoformat(day)
+        if previous is not None and current - previous != timedelta(days=1):
+            raise Refusal("%s does not follow %s by exactly one calendar day" % (hint, previous))
+        previous = current
+        if last_date is None or day <= last_date:
+            bars.append({"date": day, "close": close})
+    floors = canonical.read_json(gate._FLOORS_PATH)
+    # M5 defaults to all days; the CLI supplies its own declared calendar.
+    capture = {"price_series": {"calendar": calendar}}
+    needed = tape.bars_needed(tape.series_year_bars(capture, floors))
+    if len(bars) < needed:
+        raise Refusal("the daily history has %d rows on or before the last date; the tape needs %d"
+                      % (len(bars), needed))
+    return bars
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stdout)
@@ -161,8 +209,10 @@ def main(argv=None):
                      description="Write a capture series block from the "
                                  "broker's price-history reply in a "
                                  "session transcript.")
-    parser.add_argument("transcript")
-    parser.add_argument("--contract", required=True)
+    parser.add_argument("transcript", nargs="?")
+    parser.add_argument("--coinmetrics")
+    parser.add_argument("--asset")
+    parser.add_argument("--contract")
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--calendar", required=True)
     parser.add_argument("--as-of", required=True, dest="as_of")
@@ -174,14 +224,25 @@ def main(argv=None):
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 1
     try:
+        if bool(args.transcript) == bool(args.coinmetrics):
+            raise Refusal("name exactly one input: a transcript or --coinmetrics")
+        if args.coinmetrics and (not args.asset or args.contract):
+            raise Refusal("--coinmetrics needs --asset and no --contract")
+        if args.transcript and (not args.contract or args.asset):
+            raise Refusal("a transcript needs --contract and no --asset")
         if args.last_date is not None and not _is_date(args.last_date):
             raise Refusal("--last-date %r is not a date written YYYY-MM-DD"
                           % args.last_date)
-        text = last_reply(args.transcript, str(args.contract))
-        if text is None:
-            raise Refusal("no price-history reply for contract %s in %s"
-                          % (args.contract, args.transcript))
-        bars = bars_from_reply(text, args.last_date)
+        if args.coinmetrics:
+            with open(args.coinmetrics, encoding="utf-8") as handle:
+                bars = bars_from_coinmetrics(handle.read(), args.asset, args.last_date,
+                                             calendar=args.calendar)
+        else:
+            text = last_reply(args.transcript, str(args.contract))
+            if text is None:
+                raise Refusal("no price-history reply for contract %s in %s"
+                              % (args.contract, args.transcript))
+            bars = bars_from_reply(text, args.last_date)
         if not bars:
             raise Refusal("the reply carries no bar%s" % (
                 "" if args.last_date is None

@@ -50,7 +50,8 @@ from council.evidence.brief import (
     producer_subject_frame, producer_tables, HOLDING_ARCHETYPE, HOLDING_KIND_WORDS, ONE_HOLDING_SENTENCE,
     MOSTLY_PRIVATE_SENTENCE, VALUATION_BASIS_WORDS, HOLDING_POSITION_WORDS,
     holding_subject_frame, holding_readings, holding_tables, holding_summary,
-    holding_sentences, holding_facts_read, holding_currency_line, holding_display_facts)
+    holding_sentences, holding_facts_read, holding_currency_line, holding_display_facts,
+    coin_summary, coin_lines)
 from council.lib import canonical, subjects
 from council.engine import chair_fields
 
@@ -306,7 +307,7 @@ TAPE_METHODS = {
 }
 
 
-def advisor_remit(seat_kind, subject=None, framed=False, taped=False):
+def advisor_remit(seat_kind, subject=None, framed=False, taped=False, *, capture=None):
     """The remit an advisor is briefed with: its method paragraph when the
     capture carries a business frame (the tables the method names), its
     lens sentence otherwise - an ETF, basket or theme with no frame
@@ -316,6 +317,12 @@ def advisor_remit(seat_kind, subject=None, framed=False, taped=False):
     stock, where it rides untaped too (unit U4(b))."""
     if taped and seat_kind in TAPE_METHODS:
         method = TAPE_METHODS[seat_kind]
+        year = tape.series_year_bars(capture, floors_data())
+        returns, volatilities = tape.windows(year)
+        for old, actual in ((tape.RETURN_WINDOWS, returns), (tape.VOLATILITY_WINDOWS, volatilities)):
+            method = method.replace(
+                ", ".join(map(str, old[:-1])) + " and %d trading days" % old[-1],
+                ", ".join(map(str, actual[:-1])) + " and %d trading days" % actual[-1])
         if (seat_kind == "advisor_market_structure"
                 and (subject or {}).get("kind") == "single_stock"):
             method += TAPE_INSIDER_STEP
@@ -591,7 +598,13 @@ def seat_emphasis(subject, seat_kind, floors=None):
     anchors. None where the class names no emphasis for this seat."""
     if not subjects.is_anchorless(subject):
         return None
-    entry = subjects.class_registry(floors or floors_data(), subject) or {}
+    floors = floors or floors_data()
+    entry = subjects.class_registry(floors, subject) or {}
+    coin = subjects.named_coin(subject, floors)
+    if coin is not None:
+        emphasis = (entry["products"][coin].get("seat_emphasis") or {}).get(seat_kind)
+        if emphasis is not None:
+            return emphasis
     return (entry.get("seat_emphasis") or {}).get(seat_kind)
 
 
@@ -603,7 +616,11 @@ def class_reading_rule(subject, floors=None):
     none."""
     if not subjects.is_anchorless(subject):
         return None
-    entry = subjects.class_registry(floors or floors_data(), subject) or {}
+    floors = floors or floors_data()
+    entry = subjects.class_registry(floors, subject) or {}
+    coin = subjects.named_coin(subject, floors)
+    if coin is not None and entry["products"][coin].get("reading_rule"):
+        return entry["products"][coin]["reading_rule"]
     return entry.get("reading_rule")
 
 
@@ -701,6 +718,15 @@ def _falsifier_lines(theme):
                         _one_line(falsifier.get("description")))))
     lines.append(QUOTE_FENCE_CLOSE)
     return lines
+
+
+def _subject_kind_line(subject, floors=None):
+    """Architect ruling M13: the named coin beside its unchanged kind."""
+    floors = floors_data() if floors is None else floors
+    coin = subjects.named_coin(subject, floors)
+    suffix = (" (the coin: %s)" % floors["asset_classes"]["crypto"]["products"][
+        coin]["report_words"] if coin is not None else "")
+    return "- Kind: %s%s" % (subject.get("kind"), suffix)
 
 
 def _subject_kind_lines(subject):
@@ -2190,6 +2216,18 @@ def _business_frame_lines(capture):
     return lines
 
 
+class _Casefile(str):
+    """Ruling 1: unchanged case text carries its capture to the advisor reader.
+
+    The host already passes this string directly; no prose parsing or global
+    state, and no new host argument or recorded field is needed.
+    """
+    def __new__(cls, text, capture):
+        result = super().__new__(cls, text)
+        result.capture = capture
+        return result
+
+
 def render_casefile(pack, sufficiency_result, framed_question, subject,
                     seat_kind=None):
     """The ONE canonical case file for this run, rendered deterministically
@@ -2220,7 +2258,7 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
     # the case file's own voice (audit finding THEMES-B r5-1, the same
     # entity read - fix-checklist 8a). Kind is an enum and the ticker is
     # pattern-bound; they stay the file's own words.
-    lines.append("- Kind: %s" % subject.get("kind"))
+    lines.append(_subject_kind_line(subject))
     lines.append("- Ticker: %s" % (ticker if ticker else "none"))
     lines.append("- Identity:")
     lines.append("")
@@ -2229,6 +2267,35 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
     lines.append(QUOTE_FENCE_CLOSE)
     lines.extend(_subject_kind_lines(subject))
     lines.append("")
+    summary = coin_summary(pack)
+    if summary is not None:
+        lines += ["## The coin", ""]
+        # Capture words stay in the quote fence; references name only tier-1 ids.
+        facts = {f["id"]: f for f in capture.get("tier1") or ()}
+        refs = summary["facts"]
+        supply_ids = [refs[r] for r in ("supply", "reward", "reward_after_event",
+                      "interval", "height", "event_height")]
+        citations = [[], *[supply_ids for w in summary["windows"]],
+                     [refs["reward"], refs["interval"]],
+                     [refs[r] for r in ("reward", "interval", "price", "turnover")]]
+        if summary["one_fund_sentence"]:
+            citations.append([])
+        citations.extend([[v["fact_id"]] for v in summary["venues"]])
+        if summary["absent_sentence"]:
+            citations.append([])
+        for line, ids in zip(coin_lines(summary), citations):
+            references = ["`%s` = %s %s" % (fid, facts[fid]["value"], facts[fid]["unit"])
+                          for fid in ids if fid in facts]
+            lines += [QUOTE_FENCE_OPEN, _quote_lines(line + (
+                " Recorded inputs: " + "; ".join(references) if references else "")),
+                QUOTE_FENCE_CLOSE]
+        # Cross-checks retain their recorded ids beside the calculated reading.
+        for role in ("price_check", "supply_check"):
+            fid = refs[role]
+            if fid in facts:
+                lines += [QUOTE_FENCE_OPEN, _quote_lines("`%s` = %s %s" % (
+                    fid, facts[fid]["value"], facts[fid]["unit"])), QUOTE_FENCE_CLOSE]
+        lines.append("")
     lines.append("## The question before the council")
     lines.append("")
     lines.append(str(framed_question).strip())
@@ -2284,7 +2351,7 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
                             _one_line(req.get("weakened_test",
                                               "not stated"))))
     lines.append("")
-    return "\n".join(lines)
+    return _Casefile("\n".join(lines), capture)
 
 
 def _isolation_footer(answer_path):
@@ -2413,6 +2480,15 @@ def _headings_block():
             "once to add it.\n")
 
 
+def _coin_instruction(subject):
+    """M9: the privacy instruction is ruled data, appended only there."""
+    floors = floors_data()
+    coin = subjects.named_coin(subject or {}, floors)
+    registry = floors["asset_classes"]["crypto"]
+    return ("\n" + registry["monetary_coin_rule"]["delisting_instruction"] + "\n"
+            if coin is not None and registry["products"][coin]["privacy_coin"] else "")
+
+
 def _advisor_answer_contract(subject):
     """The advisor's answer shape: one key on an anchored subject, and the
     scenario ladder beside it where the rating must be earned. Either way
@@ -2437,13 +2513,14 @@ Every number you lean on should be a number the case file carries, quoted as the
 states it. Every value carrying a figure is a JSON STRING.
 
 %s
-""" % _LADDER_CONTRACT + _headings_block()
+""" % (_LADDER_CONTRACT + _coin_instruction(subject)) + _headings_block()
 
 
 def _advisor_brief(run_id, seat_kind, casefile, subject=None, framed=False,
                    taped=False):
     title = LENS_TITLES[seat_kind]
-    definition = advisor_remit(seat_kind, subject, framed, taped)
+    definition = advisor_remit(seat_kind, subject, framed, taped,
+                               capture=getattr(casefile, "capture", None))
     emphasis = seat_emphasis(subject or {}, seat_kind)
     emphasis_block = ""
     if emphasis:
@@ -2458,6 +2535,10 @@ Every seat reads the whole case file. Yours leads with %s
 Other seats lead with other evidence. Do not try to cover everything equally: the bench is
 worth five seats only if the five do not converge on one essay.
 """ % emphasis
+    floors = floors_data()
+    if subjects.named_coin(subject or {}, floors) is not None:
+        emphasis_block += "\n## How to read a price move\n\n" + floors[
+            "asset_classes"]["crypto"]["monetary_coin_rule"]["rally_line"] + "\n"
     head = """# ADVISOR BRIEF - council run `%s`
 
 ## Your lens
@@ -2899,6 +2980,14 @@ ONE_HOLDING_NOTE = "\n- " + ONE_HOLDING_SENTENCE + "\n"
 MOSTLY_PRIVATE_NOTE = "\n- " + MOSTLY_PRIVATE_SENTENCE + "\n"
 
 
+COIN_SUPPLY_NOTE = """
+- New supply over one, three and twelve months and issuance against the
+  thirty-day average daily turnover are required printed evidence. Cite the
+  recorded supply, issuance schedule, price and turnover ids in the case file
+  when reading these calculated figures.
+"""
+
+
 def draft_contract(subject, price_units=None, runway_below=False,
                    reserve_price_below=False, one_holding=None, mostly_private=False):
     """The draft-verdict contract for this subject: the base text plus
@@ -2911,7 +3000,9 @@ def draft_contract(subject, price_units=None, runway_below=False,
                 .replace("__PRICE_UNITS__", _price_unit_words(price_units))
                 .replace("__CHAIR_FIELDS__", _chair_field_lines()))
     if subjects.is_anchorless(subject):
-        text += _CHAIR_LADDER_CONTRACT
+        text += _CHAIR_LADDER_CONTRACT + _coin_instruction(subject)
+        if subjects.named_coin(subject, floors_data()) is not None:
+            text += COIN_SUPPLY_NOTE
     else:
         text += _EQUITY_LADDER_CONTRACT
         # The rating measure is a single-name rule (AC15 P2): a basket,
@@ -3464,7 +3555,11 @@ def _floors_block(subject, floors=None, capture=None):
     entries = [entry for entry in entries
                if not (entry.get("kind") == "id"
                        and entry.get("id") in lifted)]
-    entries += list(subjects.class_anchors(floors, subject))
+    # AC46(2), architect rulings 3 and 5: both auditor briefs read dated
+    # anchors and named coins through the sufficiency gate's predicate.
+    entries += (subjects.class_anchors_on(floors, subject,
+                    sufficiency._as_of_moment(capture["captured_at"]).date())
+                if capture is not None else subjects.class_anchors(floors, subject))
     entries += sufficiency._archetype_floor_entries(floors, declared)
     lift_lines = []
     if lifted:
@@ -3510,7 +3605,7 @@ capture_sha256: %s
          EVIDENCE_AUDITOR_TASK, WRITING_RULES_SHORT)
 
     lines = ["## The subject", "",
-             "- Kind: %s" % subject.get("kind"),
+             _subject_kind_line(subject, floors),
              "- Asset class: %s" % subject.get("asset_class"),
              "- Ticker: %s" % (subject.get("ticker") or "none"),
              # The auditor is asked to name a figure that is stale for
@@ -3822,7 +3917,7 @@ capture_sha256: %s
                  if fid in set(changed_ids) or fid in dependents]
 
     lines = ["## The subject", "",
-             "- Kind: %s" % subject.get("kind"),
+             _subject_kind_line(subject, floors),
              "- Asset class: %s" % subject.get("asset_class"),
              "- Ticker: %s" % (subject.get("ticker") or "none"),
              "- Captured at: %s. Judge every as-of date below against "

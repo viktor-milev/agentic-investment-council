@@ -12436,5 +12436,242 @@ class TestHoldingInTheCaseFile(unittest.TestCase):
                              test_evidence.holding_frame(Context.pack["capture"])["nav_bridge"]["components"][-1]["name"])
 
 
+class TestDatedCoinAnchors(unittest.TestCase):
+    def test_a_dated_anchor_is_not_listed_for_an_earlier_capture(self):
+        floors = test_evidence.FLOORS
+        rule = floors["asset_classes"]["crypto"]["monetary_coin_rule"]
+        new_ids = [entry["id"] for entry in rule["anchors"]]
+        for day, binds in (("2026-10-02", False), (rule["applies_from"], True)):
+            capture = test_evidence.load_fixture("btc-pass.json")
+            capture["captured_at"] = day + "T06:00Z"
+            auditor = briefs.build_evidence_brief(capture, "n" * 32, "a" * 64, floors)
+            delta = briefs.build_evidence_delta_brief(
+                capture, "n" * 32, "a" * 64,
+                [{"fact_id": "price_last"}], capture["evidence_challenge"], floors)
+            for reader, text in (("auditor", auditor), ("delta", delta)):
+                for fid in new_ids:
+                    with self.subTest(day=day, reader=reader, fact=fid):
+                        self.assertEqual(fid in text, binds)
+
+    def test_sufficiency_calls_the_shared_date_predicate(self):
+        """Mechanism control: both main loops call the shared reader."""
+        from unittest import mock
+        from council.lib import subjects
+        floors = copy.deepcopy(test_evidence.FLOORS)
+        marker = dict(kind="id", id="invented_dated_floor", level="required",
+                      applies_from="2026-10-03", why="AC46(2) test of the shared reader",
+                      likely_source="INVENTED dated evidence")
+        floors["classes"]["bitcoin"]["floors"].append(marker)
+        pack = freeze.build_pack(test_evidence.load_fixture("btc-pass.json"))
+        with mock.patch.object(subjects, "applies_on", wraps=subjects.applies_on) as applies:
+            outcome = sufficiency_check.check(pack, floors)
+        self.assertEqual(outcome["result"], "pass", outcome["message"])
+        entries = [call.args[0] for call in applies.call_args_list]
+        self.assertIn(marker, entries)
+        for entry in floors["asset_classes"]["crypto"]["monetary_coin_rule"]["anchors"]:
+            self.assertIn(entry, entries)
+
+
+class TestCoinBriefs(unittest.TestCase):
+    def setUp(self):
+        self.capture = test_evidence.coin_capture()
+        self.subject = self.capture["subject"]
+        self.pack = freeze.build_pack(self.capture)
+        self.floors = test_evidence.FLOORS
+        self.registry = self.floors["asset_classes"]["crypto"]
+        self.row = self.registry["products"][self.subject["product"]]
+        self.rule = self.registry["monetary_coin_rule"]
+
+    def test_the_subject_block_names_the_coin(self):
+        captures = [test_evidence.coin_capture(key) for key in self.registry["products"]]
+        captures.append(test_evidence.load_fixture("btc-pass.json"))
+        for capture in captures:
+            subject = capture["subject"]
+            pack = freeze.build_pack(capture)
+            case = briefs.render_casefile(pack, sufficiency_check.check(pack, self.floors),
+                                          "INVENTED question", subject)
+            expected = "- Kind: " + subject["kind"]
+            key = subject.get("product")
+            if key:
+                expected += " (the coin: %s)" % self.registry["products"][key]["report_words"]
+            # The unnamed subject is a control: its original kind line remains exact.
+            texts = {"case": case,
+                     "auditor": briefs.build_evidence_brief(capture, "n" * 32, "a" * 64),
+                     "delta": briefs.build_evidence_delta_brief(capture, "n" * 32, "a" * 64,
+                         [{"fact_id": "price_last"}], capture["evidence_challenge"])}
+            texts.update({seat: "\n".join(briefs._advisor_brief("INVENTED", seat, case, subject))
+                          for seat in self.registry["seat_emphasis"]})
+            for reader, text in texts.items():
+                with self.subTest(coin=key, reader=reader):
+                    block = text.split("## The subject\n", 1)[1].split("\n## ", 1)[0]
+                    actual = next(line for line in block.splitlines() if line.startswith("- Kind:"))
+                    self.assertEqual(actual, expected)
+
+    def test_zcash_reads_its_own_reading_rule(self):
+        self.assertEqual(briefs.class_reading_rule(self.subject), self.row["reading_rule"])
+
+    def test_bitcoin_reads_the_class_rule(self):
+        # Control: the named earlier coin uses the same class rule.
+        key = self.rule["unnamed_coin"]
+        self.assertEqual(briefs.class_reading_rule(test_evidence.coin_capture(key)["subject"]),
+                         self.registry["reading_rule"])
+
+    def test_zcash_seats_read_their_own_emphasis(self):
+        for seat, words in self.row["seat_emphasis"].items():
+            self.assertEqual(briefs.seat_emphasis(self.subject, seat), words)
+
+    def test_the_case_file_carries_the_coin_block(self):
+        out = sufficiency_check.check(self.pack, self.floors)
+        text = briefs.render_casefile(self.pack, out, "INVENTED question", self.subject)
+        self.assertIn("## The coin", text)
+        summary = brief.coin_summary(self.pack)
+        for window in summary["windows"]:
+            self.assertIn(window["new_coins_text"], text)
+        for fid in summary["facts"].values():
+            fact = next(f for f in self.capture["tier1"] if f["id"] == fid)
+            self.assertIn("`%s` = %s %s" % (fid, fact["value"], fact["unit"]), text)
+        for fid in self.row["class_anchors_lifted"]:
+            self.assertNotIn("`%s` =" % fid, text)
+
+    def test_the_rally_line_is_in_every_advisor_brief_for_a_named_coin(self):
+        for key in self.registry["products"]:
+            subject = test_evidence.coin_capture(key)["subject"]
+            for seat in self.registry["seat_emphasis"]:
+                text = briefs._advisor_brief("INVENTED", seat, "case", subject)[0]
+                self.assertIn("## How to read a price move\n\n" + self.rule["rally_line"], text)
+
+    def test_no_rally_line_for_an_unnamed_bitcoin(self):
+        # Control: every earlier advisor instruction keeps its words.
+        subject = test_evidence.load_fixture("btc-pass.json")["subject"]
+        for seat in self.registry["seat_emphasis"]:
+            self.assertNotIn("## How to read a price move", briefs._advisor_brief(
+                "INVENTED", seat, "case", subject)[0])
+
+    def test_a_privacy_coin_seat_is_told_to_include_delisting(self):
+        self.assertIn(self.rule["delisting_instruction"], briefs._advisor_answer_contract(self.subject))
+
+    def test_the_chair_is_told_to_include_delisting(self):
+        contract = briefs.draft_contract(self.subject)
+        self.assertIn(self.rule["delisting_instruction"], contract)
+        self.assertIn(briefs.COIN_SUPPLY_NOTE, contract)
+        self.assertNotIn(self.rule["rally_line"], contract)
+
+    def test_the_auditor_brief_quotes_the_amended_source_words(self):
+        for text in (briefs.build_evidence_brief(self.capture, "n" * 32, "a" * 64),
+                     briefs.build_evidence_delta_brief(self.capture, "n" * 32, "a" * 64,
+                         [{"fact_id": "price_last"}], self.capture["evidence_challenge"])):
+            for words in self.rule["class_anchor_source_words"].values():
+                self.assertIn(words, text)
+
+
+class TestTheDelistingScenario(unittest.TestCase):
+    def setUp(self):
+        self.capture = test_evidence.coin_capture()
+        self.subject = self.capture["subject"]
+        self.rule = test_evidence.FLOORS["asset_classes"]["crypto"]["monetary_coin_rule"]
+        self.rungs = rungs("50", "100", "200", "0.25", "0.5", "0.25")
+
+    def advisor_reasons(self, subject=None):
+        from types import SimpleNamespace
+        payload = dict(fixture_answer("advisor_bear"), scenario_ladder={
+            "horizon_months": "12", "scenarios": self.rungs})
+        ctx = SimpleNamespace(pack=freeze.build_pack(dict(self.capture,
+            subject=subject or self.subject)), schemas=host._seat_schemas())
+        return host._check_advisor(payload, ctx)
+
+    def chair_reasons(self, subject=None):
+        facts = {f["id"]: f for f in self.capture["tier1"]}
+        block = chair_ladder(self.rungs)
+        rating = ladder.compute(block, facts, test_evidence.FLOORS)["rating"]
+        return host.check_scenario_rating(dict(rating=rating, scenario_rating=block),
+                                          subject or self.subject, facts)
+
+    def test_a_seat_ladder_without_delisting_is_reasked(self):
+        self.assertTrue(any(self.rule["delisting_refusal"] in r for r in self.advisor_reasons()))
+
+    def test_a_chair_ladder_without_delisting_is_reasked(self):
+        self.assertIn(self.rule["delisting_refusal"], self.chair_reasons())
+
+    def test_a_scenario_named_delisting_passes(self):
+        self.rungs[0]["name"] = "INVENTED DELISTING case"
+        self.assertEqual(self.advisor_reasons(), [])
+        self.assertEqual(self.chair_reasons(), [])
+        self.assertIsNone(ladder.delisting_reason({"scenarios": self.rungs},
+                          self.rule["delisting_scenario_words"], "refusal"))
+
+    def test_the_word_is_read_from_the_floors(self):
+        from unittest import mock
+        self.assertIn(self.rule["delisting_refusal"], self.chair_reasons())
+        floors = copy.deepcopy(test_evidence.FLOORS)
+        floors["asset_classes"]["crypto"]["monetary_coin_rule"]["delisting_scenario_words"] = ["invented access case"]
+        self.rungs[0]["name"] = "INVENTED ACCESS CASE"
+        with mock.patch.object(host, "_floors", return_value=floors):
+            self.assertEqual(self.advisor_reasons(), [])
+            self.assertEqual(self.chair_reasons(), [])
+
+    def test_the_rationale_alone_does_not_count(self):
+        self.rungs[0]["rationale"] = "INVENTED delisting case"
+        self.assertIn(self.rule["delisting_refusal"], self.chair_reasons())
+
+    def test_bitcoin_needs_no_delisting_scenario(self):
+        # Control: a coin without privacy evidence keeps its ladder.
+        subject = test_evidence.coin_capture(self.rule["unnamed_coin"])["subject"]
+        self.assertEqual(self.advisor_reasons(subject), [])
+        self.assertEqual(self.chair_reasons(subject), [])
+
+    def test_an_equity_ladder_is_untouched(self):
+        # Control: the supporting ladder follows the existing equity path.
+        subject = evidence_fixture("aapl-pass.json")["subject"]
+        self.assertEqual(self.chair_reasons(subject), [])
+
+
+
+
+
+class TestTheCoinTapeMethod(unittest.TestCase):
+    def method_brief(self, capture, seat):
+        pack = test_evidence.freeze.build_pack(capture)
+        casefile = briefs.render_casefile(pack, test_evidence.sufficiency_of(pack),
+            capture["question_line"], capture["subject"], seat_kind=seat)
+        return briefs.build_brief(seat, "coin-tape-run", "answer.json", casefile=casefile,
+            subject=capture["subject"], taped=bool(capture.get("price_series")))
+
+    def test_coin_methods_name_the_tape_windows(self):
+        c = test_evidence.coin_capture()
+        c["price_series"] = test_evidence.invented_coin_series("INVENTED-USD")
+        market = self.method_brief(c, "advisor_market_structure")
+        risk = self.method_brief(c, "advisor_risk")
+        self.assertIn("30, 91, 183 and 365 trading days", market)
+        self.assertIn("30, 91 and 365 trading days", risk)
+
+    def test_the_year_follows_the_series_calendar_not_the_subject(self):
+        for calendar in ("XNYS", "CRYPTO_24_7", None):
+            c = test_evidence.coin_capture()
+            if calendar:
+                c["price_series"] = test_evidence.invented_coin_series("INVENTED-USD")
+                c["price_series"]["calendar"] = calendar
+            for seat in ("advisor_market_structure", "advisor_risk"):
+                with self.subTest(calendar=calendar, seat=seat):
+                    text = self.method_brief(c, seat)
+                    expected = briefs.advisor_remit(seat, c["subject"], taped=bool(calendar))
+                    if calendar == "CRYPTO_24_7":
+                        words = ("30, 91, 183 and 365 trading days" if seat == "advisor_market_structure"
+                                 else "30, 91 and 365 trading days")
+                        self.assertIn(words, text)
+                    elif calendar:
+                        self.assertIn(briefs.TAPE_METHODS[seat] + briefs.TAPE_CITE, text)
+                    else:
+                        self.assertIn(expected, text)
+
+    def test_equity_method_is_todays_sentence(self):
+        # CONTROL: default calendar keeps the base sentences exactly.
+        subject = {"kind": "single_stock", "asset_class": "equity"}
+        for seat in ("advisor_market_structure", "advisor_risk"):
+            expected = briefs.TAPE_METHODS[seat]
+            if seat == "advisor_market_structure":
+                expected += briefs.TAPE_INSIDER_STEP
+            self.assertEqual(briefs.advisor_remit(seat, subject, taped=True), expected + briefs.TAPE_CITE)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

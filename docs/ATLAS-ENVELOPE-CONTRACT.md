@@ -43,6 +43,12 @@ can appear. Fields marked **[1.3.0]** are new in this contract.
 - **`subject_kind`** — `single_stock`, `etf`, `bitcoin`, `gold`, `commodity`, `theme` or `basket`;
   **`asset_class`** — `equity`, `crypto`, `gold`, `commodity`; **`product`** — the ruled product
   name for a commodity (copper is the first), else null. All three are **required** as of 1.3.0.
+  **IN FORCE from 2026-10-02, owner ruling AC70(2) (unit UPGRADE2-MONETARY-COIN (b)):** a monetary coin is named
+  in `product` too — `"bitcoin"` or `"zcash"` — while `subject_kind` stays `bitcoin` for EVERY coin. A coin
+  verdict published before this date carries `product: null` and is Bitcoin. **Atlas must read `product`, never
+  the kind alone, to tell one coin from another. No Zcash verdict is handed to Atlas until Atlas's architect
+  confirms this in writing.** No schema change: the field's type and requiredness are as in 1.3.0; the
+  version bump for its widened meaning follows with that confirmation (register item P-COINb-10).
 - **`constituents`**, **`vehicle`**, **`thesis_proportions`** — the members, the traded wrapper and
   the thesis emphasis of a basket or theme; null for a single subject.
 - **`scenario_rating`** — for an anchorless subject, the full ladder with the published arithmetic,

@@ -2024,8 +2024,7 @@ def _profitability_failures(floors, declared, capture, facts_by_id,
         if (entry.get("kind") == "parallel_prefixes"
                 and prefix in (entry.get("prefixes") or ())):
             source = entry.get("likely_source") or source
-            if (entry.get("applies_from") and captured_day
-                    < date.fromisoformat(entry["applies_from"])):
+            if not subjects.applies_on(entry, captured_day):
                 return []
     failures = []
     suffix = _continuing_profit_suffix(floors, declared, capture)
@@ -3451,6 +3450,244 @@ def producer_role_set(pack, floors):
         _ROLE_SINK = None
 
 
+def _coin_context(pack, floors):
+    """One reading of the coin registry and rule (AC67(4), AC68)."""
+    capture = (pack or {}).get("capture") or {}
+    subject = capture.get("subject") or {}
+    entry = subjects.class_registry(floors, subject) or {}
+    rule = entry.get("monetary_coin_rule") or {}
+    key = subjects.coin(subject, floors)
+    row = (entry.get("products") or {}).get(key)
+    if subject.get("kind") not in rule.get("coin_kinds", ()) or not row:
+        return None
+    return key, row, rule
+
+
+def _coin_bound(pack, context, floors):
+    return bool(context and subjects.coin_applies_on(
+        pack["capture"]["subject"], floors,
+        _as_of_moment(pack["capture"]["captured_at"]).date()))
+
+
+def _coin_unit(spec, row):
+    """The one reader of monetary role units (AC67(4))."""
+    unit = spec["unit"]
+    if unit == "unit_per_block":
+        return row["unit"] + "_per_block"
+    return row.get(unit, unit)
+
+
+def coin_role_set(pack, floors):
+    """Every fact read by the dated coin rule, tagged once (AC67-AC69)."""
+    context = _coin_context(pack, floors)
+    if not _coin_bound(pack, context, floors):
+        return {}
+    _, row, rule = context
+    roles = {}
+    for role, spec in rule["roles"].items():
+        roles.setdefault(spec["id"], set()).add(role)
+    if row["privacy_coin"]:
+        for anchor in rule["privacy_coin_anchors"]:
+            for fact in pack["capture"].get("tier1") or ():
+                if fact["id"].startswith(anchor["prefix"]):
+                    roles.setdefault(fact["id"], set()).add("venue")
+    return roles
+
+
+def coin_readings(pack, floors):
+    """Forward new supply, whoever receives it (AC68(3), architect v9).
+
+    Decimal arithmetic only, from the one role set. Invalid inputs read None;
+    the refusal helper names the input. Figures are never written to the pack.
+    """
+    context = _coin_context(pack, floors)
+    if not _coin_bound(pack, context, floors):
+        return None
+    key, row, rule = context
+    facts = {fact["id"]: fact for fact in pack["capture"].get("tier1") or ()}
+    values, refs = {}, {}
+    for fid, roles in coin_role_set(pack, floors).items():
+        for role in roles - {"venue"}:
+            fact = facts.get(fid)
+            if not fact or fact["unit"] != _coin_unit(rule["roles"][role], row):
+                return None
+            value = gate._decimal_or_none(fact["value"])
+            if value is None or value < 0:
+                return None
+            values[role], refs[role] = value, fid
+    if any(values[role] <= 0 for role in ("price", "supply", "interval", "turnover")):
+        return None
+    distance = values["event_height"] - values["height"]
+    if distance <= 0:
+        return None
+    hundred = decimal.Decimal(100)
+    blocks_per_day = decimal.Decimal(86400) / values["interval"]
+    windows = []
+    for days, words in zip(rule["supply_windows_days"], rule["supply_window_words"]):
+        blocks = days * blocks_per_day
+        before = min(blocks, distance)
+        new = (before * values["reward"]
+               + (blocks - before) * values["reward_after_event"])
+        windows.append({"days": days, "words": words, "blocks": blocks,
+                        "new_coins": new,
+                        "share_of_supply_percent": new / values["supply"] * hundred,
+                        "crosses_event": blocks > distance})
+    daily = blocks_per_day * values["reward"]
+    return {"coin": key, "unit": row["unit"], "windows": windows,
+            "daily_issuance": daily,
+            "issuance_vs_turnover_percent": daily * values["price"]
+            / values["turnover"] * hundred, "facts": refs}
+
+
+def _coin_failures(pack, floors, captured_day, fresh):
+    """AC67-AC69: present, fresh facts only; anchors own missing facts.
+
+    Architect rulings 5 and 6: one binding predicate, one role set, and
+    no second presence or freshness refusal beside an anchor's own words.
+    """
+    context = _coin_context(pack, floors)
+    if context is None:
+        return []
+    key, row, rule = context
+    subject = pack["capture"]["subject"]
+    failures = []
+    where = "the coin's entry under asset_classes.crypto.products"
+    if subject.get("name") not in row["names"]:
+        failures.append(("the coin's name",
+                         "the subject names %s but its coin %s names %s"
+                         % (subject.get("name"), key, ", ".join(row["names"])), where))
+    if not subjects.coin_applies_on(subject, floors, captured_day):
+        return failures
+    if not subjects.product(subject):
+        failures.append(("name the coin",
+                         "name the coin in subject.product so its own evidence is read", where))
+    facts = {f["id"]: f for f in pack["capture"].get("tier1") or ()}
+    if subjects.named_coin(subject, floors) is not None:
+        lifts = row.get("class_anchors_lifted") or {}
+        prefixes = [a["prefix"] for a in rule["privacy_coin_anchors"]]
+        for fid in facts:
+            if fid in lifts or (not row["privacy_coin"]
+                               and any(fid.startswith(p) for p in prefixes)):
+                failures.append((fid, "the evidence does not exist for this coin: %s" % (
+                    lifts.get(fid) or rule["privacy_coin_anchors"][0]["why"]), where))
+    values = {}
+    for fid, roles in coin_role_set(pack, floors).items():
+        fact = facts.get(fid)
+        if fact is None or not fresh(fid):
+            continue
+        for role in sorted(roles):
+            spec = rule["venue_role"] if role == "venue" else rule["roles"][role]
+            source_hint = ("the venue's own listing page and its licence" if role == "venue"
+                           else ", ".join(rule["cross_check_source_words"])
+                           if spec["cross_check_source"] else
+                           ", ".join(rule["price_source_words"]) if spec["price_source"]
+                           else "the protocol documents or a dated block explorer")
+            ruling = "AC69(3)" if role == "venue" else "AC68(3)"
+            unit = _coin_unit(spec, row)
+            if fact["unit"] != unit:
+                failures.append((fid, "owner ruling %s: %s is in %s; coin %s requires %s"
+                                 % (ruling, fid, fact["unit"], key, unit), source_hint))
+            source = fact["source"].casefold()
+            if role == "venue":
+                words = rule["regulated_venue_jurisdiction_words"]
+                if not str(fact["value"]).strip() or not any(w.casefold() in source for w in words):
+                    failures.append((fid, "owner ruling AC69(3): %s must name its venue and its licence in %s"
+                                     % (fid, ", ".join(words)), source_hint))
+                continue
+            value = gate._decimal_or_none(fact["value"])
+            if value is None:
+                failures.append((fid, "owner ruling AC68(3): %s must be a number" % fid, source_hint))
+            elif role == "price" and value <= 0:
+                failures.append((fid, "a price of zero cannot be read" if value == 0
+                                 else "a price below zero cannot be read", source_hint))
+            elif value < 0 or (role in ("supply", "interval", "turnover") and value == 0):
+                failures.append((fid, "owner ruling AC68(3): %s cannot be used in the forward supply arithmetic: %s"
+                                 % (fid, fact["value"]), source_hint))
+            else:
+                values[role] = value
+            price_source = any(w.casefold() in source for w in rule["price_source_words"])
+            if spec["price_source"] and not price_source:
+                failures.append((fid, "owner ruling AC68(1): %s must name %s as its source"
+                                 % (fid, ", ".join(rule["price_source_words"])), source_hint))
+            if spec["cross_check_source"] and (price_source or not any(
+                    w.casefold() in source for w in rule["cross_check_source_words"])):
+                failures.append((fid, "owner rulings AC68(1), AC69(2): %s must come from %s, independently of %s"
+                                 % (fid, ", ".join(rule["cross_check_source_words"]),
+                                    ", ".join(rule["price_source_words"])), source_hint))
+            arithmetic = spec.get("arithmetic")
+            if arithmetic:
+                derived = fact.get("derived") or {}
+                operands = derived.get("operands") or []
+                if (derived.get("operation") != arithmetic["operation"]
+                        or len(operands) != 2 or gate._decimal_or_none(
+                            operands[-1].get("value")) != decimal.Decimal(arithmetic["divisor"])):
+                    failures.append((fid, "owner ruling AC68(3): %s needs declared arithmetic for the thirty-day average"
+                                     % fid, source_hint))
+    for role, tolerance in rule["cross_check_tolerance_percent"].items():
+        other = role + "_check"
+        if role not in values or other not in values:
+            continue
+        a = facts.get(rule["roles"][role]["id"])
+        b = facts.get(rule["roles"][other]["id"])
+        if abs(values[role] - values[other]) * 100 > (
+                decimal.Decimal(tolerance) * values[role]):
+            failures.append((b["id"], "owner rulings AC68(1), AC69(2): %s from %s and %s from %s disagree beyond the %s percent tolerance"
+                             % (a["value"], a["source"], b["value"], b["source"], tolerance),
+                             "same-day readings from %s and %s" % (
+                                 ", ".join(rule["price_source_words"]),
+                                 ", ".join(rule["cross_check_source_words"]))))
+        if a and b and abs((_as_of_moment(a["as_of"]).date()
+                           - _as_of_moment(b["as_of"]).date()).days) > rule["cross_check_max_days_apart"]:
+            failures.append((b["id"], "owner ruling AC68(1): the cross-check dates %s and %s are more than %s day(s) apart"
+                             % (a["as_of"], b["as_of"], rule["cross_check_max_days_apart"]),
+                             "same-day readings from %s and %s" % (
+                                 ", ".join(rule["price_source_words"]),
+                                 ", ".join(rule["cross_check_source_words"]))))
+    # AC72, M6: optional history binds once to the registry's own ticker.
+    series = pack["capture"].get("price_series")
+    if series and series.get("ticker") == row["series_ticker"]:
+        source_hint = ", ".join(rule["series_source_words"])
+        if not any(w.casefold() in series["source"].casefold()
+                   for w in rule["series_source_words"]):
+            failures.append(("price_series", "owner ruling AC68(1): the coin's daily history must come from %s"
+                             % source_hint, source_hint))
+        price = facts.get(rule["roles"]["price"]["id"])
+        last = series["bars"][-1]
+        close = gate._decimal_or_none(last["close"])
+        if price is not None and "price" in values and close is not None:
+            tolerance = rule["cross_check_tolerance_percent"]["price"]
+            if abs(close - values["price"]) * 100 > decimal.Decimal(tolerance) * values["price"]:
+                failures.append(("price_series", "owner ruling AC72(1): last close %s and price_last %s disagree beyond the %s percent tolerance"
+                                 % (last["close"], price["value"], tolerance), source_hint))
+            if abs((date.fromisoformat(last["date"]) - _as_of_moment(price["as_of"]).date()).days
+                   ) > rule["cross_check_max_days_apart"]:
+                failures.append(("price_series", "owner ruling AC68(1): the last close date %s and price_last date %s are more than %s day(s) apart"
+                                 % (last["date"], price["as_of"], rule["cross_check_max_days_apart"]), source_hint))
+    if ("height" in values and "event_height" in values
+            and values["event_height"] <= values["height"]):
+        failures.append((rule["roles"]["event_height"]["id"],
+                         "owner ruling AC68(3): the recorded next halving is already behind the recorded block height",
+                         "the protocol schedule and a dated block explorer"))
+    # Read the same helper the pages will use; no second issuance computation.
+    if (not failures and len(values) == len(rule["roles"])
+            and coin_readings(pack, floors) is None):
+        failures.append(("the coin's supply inputs", "owner ruling AC68(3): the forward supply cannot be computed",
+                         "the protocol schedule and the two price sources"))
+    return failures
+
+
+def _coin_note(pack):
+    """M4: the gate-stage printing reads the pages' house figures."""
+    from council.evidence import brief
+    summary = brief.coin_summary(pack)
+    if summary is None:
+        return None
+    windows = ["%s: %s new coins (%s of supply)" % (
+        w["words"], w["new_coins_text"], w["share_text"]) for w in summary["windows"]]
+    return "Supply pressure — %s; issuance against turnover: %s." % (
+        "; ".join(windows), summary["turnover_share_text"])
+
+
 def check(pack, floors):
     """Verify the pack can answer the question before a seat is paid.
 
@@ -3558,6 +3795,17 @@ def check(pack, floors):
             gap.get("reason_kind"))
     freshness = pack.get("freshness", {})
     facts_by_id = {fact["id"]: fact for fact in capture["tier1"]}
+    captured_day = _as_of_moment(capture["captured_at"]).date()
+    coin_roles = coin_role_set(pack, floors)
+    coin_rule = (subjects.class_registry(floors, subject) or {}).get("monetary_coin_rule") or {}
+    # Architect ruling 6: anchors own freshness, over the same role set.
+    coin_limits = {fid: min((coin_rule["venue_role"] if role == "venue"
+                            else coin_rule["roles"][role])["max_freshness_days"]
+                           for role in roles) for fid, roles in coin_roles.items()}
+    class_anchors = subjects.class_anchors_on(floors, subject, captured_day)
+    coin_anchor_ids = {entry["id"] for entry in class_anchors
+                       if entry["kind"] == "id" and entry["level"] == "required"
+                       and subjects.coin_applies_on(subject, floors, captured_day, entry)} if coin_roles else set()
     holding_kind = (floors["archetype_measures"].get("holding_rule") or {}).get("holding_archetype")
     holding_data = None
     if declared == (holding_kind, None):
@@ -3585,6 +3833,10 @@ def check(pack, floors):
         record = freshness.get(fact_id, {})
         if record.get("status") != "within_rule":
             return fact_id
+        if fact_id in coin_limits:
+            age = (captured_day - _as_of_moment(facts_by_id[fact_id]["as_of"]).date()).days
+            if age < 0 or age > coin_limits[fact_id]:
+                return fact_id
         derived = (facts_by_id.get(fact_id) or {}).get("derived")
         if derived:
             for operand in derived["operands"]:
@@ -3601,11 +3853,14 @@ def check(pack, floors):
     def stale_words(fact_id):
         offender = stale_dependency(fact_id) or fact_id
         record = freshness.get(offender, {})
+        rule_days = record.get("rule_days")
+        if offender in coin_limits:
+            rule_days = min(rule_days, coin_limits[offender])
         words = ("'%s' is present but stale at capture - %s days old "
                  "against its %s-day rule - and a stale must-have "
                  "cannot convene the council"
                  % (offender, record.get("age_days"),
-                    record.get("rule_days")))
+                    rule_days))
         if offender != fact_id:
             words = ("'%s' rests on %s" % (fact_id, words))
         return words
@@ -3827,7 +4082,8 @@ def check(pack, floors):
                 else:
                     satisfied.append(fact_id)
                 ceiling = entry.get("max_freshness_days")
-                if ceiling is not None and tier1_rules[fact_id] > ceiling:
+                if (ceiling is not None and tier1_rules[fact_id] > ceiling
+                        and (fact_id not in coin_roles or fresh(fact_id))):
                     refuse(fact_id,
                            "the ruled freshness for this fact is at "
                            "most %d day(s), but the capture declares a "
@@ -3875,6 +4131,15 @@ def check(pack, floors):
                            entry["likely_source"])
                     return
                 matches = counting
+            # Every regulated listing answers for itself (AC68(2)); one
+            # fresh venue cannot vouch for another in the coin role set.
+            if matches and all(i in coin_roles for i in matches):
+                for fact_id in matches:
+                    if fresh(fact_id):
+                        satisfied.append(fact_id)
+                    else:
+                        enforce_stale(entry, fact_id, stale_words(fact_id))
+                return
             usable = [i for i in matches if fresh(i)]
             if usable:
                 satisfied.append(usable[0])
@@ -4060,8 +4325,11 @@ def check(pack, floors):
     # apart, so no capture on record is judged by it (owner ruling AC46(2)).
     captured_day = _as_of_moment(capture["captured_at"]).date()
     for entry in entries:
-        if (entry.get("applies_from") and captured_day
-                < date.fromisoformat(entry["applies_from"])):
+        if not subjects.applies_on(entry, captured_day):
+            continue
+        # Bound coins read a shared id once, from its required anchor row.
+        # Earlier unnamed records retain the exact existing floor reading.
+        if entry["kind"] == "id" and entry["id"] in coin_anchor_ids:
             continue
         evaluate(entry)
 
@@ -4085,7 +4353,19 @@ def check(pack, floors):
     # template alone is what skips it. The note is the product: what
     # would make this question sittable, at capture cost.
     named_product = subjects.product(subject)
-    if named_product and named_product not in (
+    coin_key = subjects.coin(subject, floors)
+    if (subjects.asset_class(subject) == "crypto" and named_product
+            and subject["kind"] not in coin_rule.get("coin_kinds", ())):
+        refuse("the coin named by a subject of kind '%s'" % subject["kind"],
+               "subject names a coin but its kind is '%s' - only a coin names a coin "
+               "(architect ruling 7, owner ruling AC67(4))" % subject["kind"],
+               "subject.product: remove the coin name from this fund's subject")
+    elif (subjects.asset_class(subject) == "crypto"
+            and class_entry.get("monetary_coin_rule") and coin_key not in (
+            class_entry.get("products") or {})):
+        admission = class_entry["monetary_coin_rule"]["unadmitted"]
+        refuse(admission["what"], admission["why"], admission["where"])
+    elif named_product and named_product not in (
             class_entry.get("products") or {}):
         refuse("the owner's ruling on what %s needs beyond the template"
                % named_product,
@@ -4103,8 +4383,10 @@ def check(pack, floors):
                "product's entry in council/floors/floors.json under "
                "asset_classes.commodity.products - copper is the worked "
                "example to follow")
-    for entry in subjects.class_anchors(floors, subject):
+    for entry in class_anchors:
         evaluate(entry)
+    for what, why, where in _coin_failures(pack, floors, captured_day, fresh):
+        refuse(what, why, where)
 
     requirements = capture["sufficiency"]["requirements"]
     requirements_by_id = {}
@@ -5202,6 +5484,11 @@ def check(pack, floors):
             falsifier_shapes(theme, True)
 
     result = "refuse" if missing else "pass"
+    if result == "pass":
+        if subjects.named_coin(subject, floors) is not None:
+            coin_note = _coin_note(pack)
+            if coin_note is not None:
+                notes.append(coin_note)
     floors_out = {"satisfied": _dedupe(satisfied),
                   "lifted_by_declared_gap": _dedupe(lifted_by_declared_gap),
                   "advisory_missing": _dedupe(advisory_missing)}

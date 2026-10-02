@@ -1722,6 +1722,9 @@ def check_scenario_rating(draft, subject, tier1_by_id):
     if reasons:
         return reasons
     reasons.extend(ladder.check_shape(block, tier1_by_id))
+    reason = _coin_delisting_reason(block, subject)
+    if reason is not None:
+        reasons.append(reason)
     if reasons:
         return reasons
     try:
@@ -1807,6 +1810,18 @@ def _frame_spans(text):
     return [_norm(line) for line in str(text).splitlines() if _norm(line)]
 
 
+def _coin_delisting_reason(block, subject):
+    """M9: both ladder sites read the same privacy-coin rule."""
+    floors = _floors()
+    coin = subjects.named_coin(subject, floors)
+    registry = floors["asset_classes"]["crypto"]
+    if coin is None or not registry["products"][coin]["privacy_coin"]:
+        return None
+    rule = registry["monetary_coin_rule"]
+    return ladder.delisting_reason(block, rule["delisting_scenario_words"],
+                                  rule["delisting_refusal"])
+
+
 def _check_advisor(payload, ctx):
     errors = validate.validate(payload, ctx.schemas["advisor"])
     if errors:
@@ -1825,6 +1840,9 @@ def _check_advisor(payload, ctx):
                     "with a price, a probability and one sentence of "
                     "reasoning, the probabilities adding to 1"]
         shape = ladder.check_shape(seat_ladder, {})
+        reason = _coin_delisting_reason(seat_ladder, subject)
+        if reason is not None:
+            shape.append(reason)
         if shape:
             return ["your scenario ladder: " + reason for reason in shape]
     elif seat_ladder is not None:

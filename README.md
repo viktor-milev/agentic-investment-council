@@ -24,31 +24,33 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 ## What changed since the last snapshot
 
-This snapshot adds one new kind of business the council can rate, opens it to stocks listed
-outside the US, and tightens how a miner's or driller's by-products are shown. In plain terms:
+This snapshot opens the council's coin rules to a second coin. Bitcoin was the only coin the
+council could rate; Zcash, a privacy coin, is now admitted beside it, and every coin follows one
+rule. In plain terms:
 
-- **Holding companies that own other businesses have their own rating rules.** A listed company
-  whose value is mostly stakes in businesses it does not run day to day, and which publishes the
-  value of what it owns, is rated on its price against its net asset value. The council builds
-  that value part by part — every listed stake at today's price, every private stake at the
-  company's own latest dated value (never re-valued by the council, never older than fifteen
-  months), the holding company's own net debt taken off once — and prints it beside the value the
-  company publishes. Today's discount is shown two ways and against each of the last five
-  financial year-ends. Dividend cover answers the cash test. Two sentences are printed where they
-  apply, never as a cap on the rating: when one holding is most of the value, and when most of the
-  value is private. A holding company is always rated as one, whatever its reported profit or
-  loss. One mostly owning banks, insurers or money managers stays a financial institution.
-- **Stocks listed outside the US.** Twelve more exchange calendars are kept as data — Toronto and
-  the TSX Venture, Xetra, Euronext Brussels, Paris and Amsterdam, Nasdaq Stockholm, the Australian,
-  Hong Kong and Abu Dhabi exchanges, London and SIX Swiss — so a price series is checked against
-  the right trading days. Figures may be recorded in Canadian, Australian, Hong Kong dollars,
-  euros, pounds, Swiss francs, Swedish kronor or dirhams. A holding company's evidence is recorded
-  in one currency, its own; a conversion is one figure times one dated exchange rate, shown in
-  full.
-- **By-products priced and dated on their own.** Each by-product reserve of a miner or driller
-  now carries the price it was counted at and today's price, and every reserve row its own date.
-- **The rating rule names the right home.** A company declared the wrong kind of business is
-  pointed to the kind it is, without a second, false pointer.
+- **A coin names itself.** A coin keeps the existing Bitcoin kind of subject but names its coin
+  (`bitcoin` or `zcash`) in the subject. A registry in the evidence floors (`council/floors/floors.json`)
+  holds each admitted coin's names, units, price series and spot funds. Coins are admitted one at a
+  time, as data; a coin with no registry entry is refused, and no coin may borrow another coin's
+  units or evidence.
+- **Two sources, checked against each other.** Price and circulating supply are read from
+  CoinGecko and again, the same day, from Coin Metrics. The two must agree within one percent or
+  the sitting cannot proceed; a disagreement is never averaged away.
+- **New supply worked forward.** The issuance schedule (coins per block now and after the next
+  halving, the block interval, today's block height, the next halving's height) is recorded as
+  evidence, and the machine works out new supply over one, three and twelve months, set against
+  daily trading volume.
+- **A privacy coin's extra risk.** A privacy coin must show the regulated venues that list it
+  today, each with its licence in the United States, the European Union or the United Kingdom. Its
+  scenario ladder must include the case where regulated exchanges delist it.
+- **The pages name the coin.** Every evidence page and the report name the coin plainly. Where a
+  coin has a single listed spot fund, the flows are printed as that one fund's. Evidence that
+  exists only for Bitcoin is named as absent for another coin, not borrowed. The advisors are
+  given a fixed line on how to read a price move.
+- **A coin's daily price history.** A saved Coin Metrics reply is read into a daily series on the
+  coin's always-open calendar, where a year is 365 daily bars, not 252. A daily bar may now carry
+  no volume (capture contract 1.13.0; floors 1.23.0), and the series' last close is checked against
+  the recorded price. Every test fixture is re-versioned to match.
 
 ---
 
@@ -150,19 +152,19 @@ The seven suites, what each covers, and the command to run it:
 | Suite | Tests | Covers | Run |
 |---|---|---|---|
 | `test_foundations` | 40 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the exchange calendars and currency units, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_foundations` |
-| `test_evidence` | 1576 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the listings outside the US, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, growth, resource-producer and holding-company rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
-| `test_engine` | 668 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
+| `test_evidence` | 1678 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the listings outside the US, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, growth, resource-producer and holding-company rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
+| `test_engine` | 690 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
 | `test_bridge` | 150 | the challenger command's exact flag surface, the tool-list probe and the tool-use record, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_bridge` |
-| `test_report` | 461 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, growth, resource-producer and holding-company pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
+| `test_report` | 471 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, growth, resource-producer and holding-company pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
 | `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_e2e_rehearsal` |
 | `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_ledger` |
 
-2963 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+3097 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
 Where `python3` on your machine is older than 3.13, name the newer interpreter instead (for
 example `python3.13`).
 
-**Clean skips.** 136 tests skip here and only here, each with its reason printed, because they
-read material this copy does not publish. 134 read *live run records*: `test_evidence` skips 78
+**Clean skips.** 137 tests skip here and only here, each with its reason printed, because they
+read material this copy does not publish. 135 read *live run records*: `test_evidence` skips 79
 (the live-capture, migration and archetype-acceptance classes re-run the gate over real captures,
 and the approval-document and business-row classes render a real sitting's evidence), `test_report`
 skips 46 (the readability, look-and-feel, business-table and approval-page classes render a real

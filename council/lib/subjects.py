@@ -17,6 +17,15 @@ rating basis. A Bitcoin fund has the shape of a fund and the substance
 of crypto, which is exactly why the two readings are kept separate.
 """
 
+from datetime import date
+
+
+def applies_on(entry, captured_day):
+    """AC46(2): a dated floor or anchor binds from its ruled day onward."""
+    return (not entry.get("applies_from")
+            or captured_day >= date.fromisoformat(entry["applies_from"]))
+
+
 # The classes whose subjects have no earnings to anchor on, so their
 # rating is EARNED from a scenario ladder instead of read off the four
 # canonical tests (ANCHORLESS-SPEC section 3, owner ruling AB13.1).
@@ -89,8 +98,68 @@ def is_anchorless(subject):
 
 
 def product(subject):
-    """The commodity subject's named product, or None."""
+    """A commodity's product or a coin, or None."""
     return subject.get("product") or None
+
+
+def coin(subject, floors):
+    """The crypto subject's registry key (owner ruling AC67(4))."""
+    if asset_class(subject) != "crypto":
+        return None
+    rule = (class_registry(floors, subject) or {}).get("monetary_coin_rule") or {}
+    return product(subject) or rule.get("unnamed_coin")
+
+
+def coin_applies_on(subject, floors, captured_day, entry=None):
+    """Architect ruling 5: named coins bind regardless of date.
+
+    AC46(2) protects earlier unnamed records. Only appended coin anchors
+    share the coin rule's binding; every other entry keeps its own date.
+    """
+    registry = class_registry(floors, subject) or {}
+    rule = registry.get("monetary_coin_rule") or {}
+    is_coin = subject.get("kind") in rule.get("coin_kinds", ())
+    bound = is_coin and (named_coin(subject, floors) is not None
+                         or applies_on(rule, captured_day))
+    if entry is None:
+        return bound
+    dated = applies_on(entry, captured_day)
+    if is_coin and entry in coin_appended_anchors(floors, subject):
+        later = entry.get("applies_from", "") > rule.get("applies_from", "")
+        return bound and (dated if later else True)
+    return dated
+
+
+def named_coin(subject, floors):
+    """M1, AC67(4): the named registry coin on a coin-kind subject."""
+    registry = (floors.get("asset_classes") or {}).get("crypto") or {}
+    rule = registry.get("monetary_coin_rule") or {}
+    key = product(subject)
+    return key if (subject.get("kind") in rule.get("coin_kinds", ())
+                   and key in (registry.get("products") or {})) else None
+
+
+def coin_appended_anchors(floors, subject):
+    """M7: the coin, common coin and privacy anchors, in ruled order."""
+    registry = class_registry(floors, subject) or {}
+    rule = registry.get("monetary_coin_rule") or {}
+    row = (registry.get("products") or {}).get(coin(subject, floors)) or {}
+    anchors = list(row.get("anchors") or ()) + list(rule.get("anchors") or ())
+    if row.get("privacy_coin"):
+        anchors += list(rule.get("privacy_coin_anchors") or ())
+    return anchors
+
+
+def class_anchors_on(floors, subject, captured_day):
+    """M6, AC71(3): binding anchors, with source words on copies only."""
+    registry = class_registry(floors, subject) or {}
+    rule = registry.get("monetary_coin_rule") or {}
+    bound = coin_applies_on(subject, floors, captured_day)
+    sources = rule.get("class_anchor_source_words") or {}
+    return [dict(entry, likely_source=sources[entry["id"]])
+            if bound and entry.get("id") in sources else entry
+            for entry in class_anchors(floors, subject)
+            if coin_applies_on(subject, floors, captured_day, entry)]
 
 
 def class_registry(floors, subject):
@@ -114,9 +183,22 @@ def class_anchors(floors, subject):
         common = registry.get("common_anchorless") or {}
         anchors += list(common.get("anchors") or ())
     anchors += list(entry.get("anchors") or ())
-    named = product(subject)
-    if named:
-        product_entry = (entry.get("products") or {}).get(named)
-        if product_entry:
-            anchors += list(product_entry.get("anchors") or ())
+    crypto = asset_class(subject) == "crypto"
+    named = coin(subject, floors) if crypto else product(subject)
+    product_entry = (entry.get("products") or {}).get(named) or {}
+    rule = entry.get("monetary_coin_rule") or {}
+    if crypto and subject.get("kind") not in rule.get("coin_kinds", ()):
+        return anchors
+    lifts = product_entry.get("class_anchors_lifted") or {}
+    class_ids = {item.get("id") for item in entry.get("anchors") or ()
+                 if item.get("kind") == "id"}
+    if set(lifts) - class_ids:
+        raise ValueError("the coin lifts an id absent from the class anchors: %s"
+                         % sorted(set(lifts) - class_ids))
+    anchors = [item for item in anchors if not (
+        item.get("kind") == "id" and item.get("id") in lifts)]
+    if crypto and subject.get("kind") in rule.get("coin_kinds", ()):
+        anchors += coin_appended_anchors(floors, subject)
+    else:
+        anchors += list(product_entry.get("anchors") or ())
     return anchors

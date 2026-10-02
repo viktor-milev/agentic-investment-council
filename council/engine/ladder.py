@@ -202,6 +202,13 @@ def _plain(value):
     return text
 
 
+def delisting_reason(ladder, words, refusal):
+    """AC68(2), M9: the scenario's name carries the delisting case."""
+    return None if any(word.casefold() in str(scenario.get("name") or "").casefold()
+                       for scenario in ladder.get("scenarios") or ()
+                       for word in words) else refusal
+
+
 def check_shape(ladder, facts):
     """Every reason this ladder cannot earn a rating, in plain words.
     Empty list = the ladder is usable. Shape only: the arithmetic is

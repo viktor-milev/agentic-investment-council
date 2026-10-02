@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.evidence import gate, sufficiency, tape, trace  # noqa: E402
-from council.lib import canonical  # noqa: E402
+from council.lib import canonical, subjects  # noqa: E402
 
 # One page is the ruling (AC3), and a schema-valid capture can write at
 # any length, so this page BOUNDS what it shows and says where the rest
@@ -478,12 +478,15 @@ def _head_lines(pack, pack_sha256):
     lines = ["# The evidence, in one page - what the council will be "
              "allowed to know", ""]
     kind = subject.get("kind")
+    coin = subjects.named_coin(subject, _floors())
+    kind_words = (_floors()["asset_classes"]["crypto"]["products"][coin]["brief_words"]
+                  if coin else SUBJECT_KIND_WORDS.get(kind))
     # Unit READ-B2: the subject in words and the gathering time as a date,
     # never the schema's kind or a machine timestamp.
     lines.append("**%s%s, %s.** Evidence gathered %s."
                  % (name or "Not named",
                     (" (%s)" % ticker) if ticker else "",
-                    SUBJECT_KIND_WORDS.get(kind) or _safe(kind)
+                    kind_words or _safe(kind)
                     or "its kind not stated",
                     _safe(_moment_words(capture.get("captured_at")))
                     or "at a time not recorded"))
@@ -1080,6 +1083,58 @@ def _floors():
     return _FLOORS
 
 
+def coin_summary(pack):
+    """M3, AC68(3): one display reading of the machine's coin arithmetic."""
+    floors = _floors()
+    subject = pack.get("capture", {}).get("subject") or {}
+    key = subjects.named_coin(subject, floors)
+    if key is None:
+        return None
+    registry = floors["asset_classes"]["crypto"]
+    row, rule = registry["products"][key], registry["monetary_coin_rule"]
+    readings = sufficiency.coin_readings(pack, floors)
+    if readings is None:
+        return None
+    funds = row.get("spot_funds") or []
+    one_fund = (rule["one_fund_sentence"] % (
+        funds[0]["name"], funds[0]["listing"], funds[0]["ticker"])) if len(funds) == 1 else None
+    venue_prefixes = [a["prefix"] for a in rule["privacy_coin_anchors"]]
+    return {
+        "coin_words": row["report_words"], "privacy_words": row["brief_words"],
+        "kind_line_words": row["kind_line_words"],
+        "windows": [{"words": w["words"],
+                     "new_coins_text": _format_number(str(w["new_coins"]), None) + " " + row["unit"],
+                     "share_text": _format_number(str(w["share_of_supply_percent"]), "percent"),
+                     "crosses_event": w["crosses_event"]} for w in readings["windows"]],
+        "daily_text": _format_number(str(readings["daily_issuance"]), None) + " " + row["unit"],
+        "turnover_share_text": _format_number(str(readings["issuance_vs_turnover_percent"]), "percent"),
+        "one_fund_sentence": one_fund,
+        "venues": [{"fact_id": f["id"], "name": f["value"], "source": f["source"]}
+                   for f in pack["capture"].get("tier1") or ()
+                   if row["privacy_coin"] and any(f["id"].startswith(p) for p in venue_prefixes)],
+        "absent_sentence": row.get("absent_sentence") if row.get("class_anchors_lifted") else None,
+        "facts": readings["facts"], "privacy_coin": row["privacy_coin"]}
+
+
+def coin_lines(summary):
+    """M3: the same coin block on the evidence pages and in the case file."""
+    lines = ["- Coin: %s — %s" % (summary["coin_words"], summary["kind_line_words"])]
+    for w in summary["windows"]:
+        lines.append("- New supply over %s: %s (calculated); %s of supply (calculated)%s."
+                     % (w["words"], w["new_coins_text"], w["share_text"],
+                        "; the next halving falls inside this window" if w["crosses_event"] else ""))
+    lines += ["- Daily issuance: %s (calculated)." % summary["daily_text"],
+              "- Issuance against turnover: %s (calculated)." % summary["turnover_share_text"]]
+    if summary["one_fund_sentence"]:
+        lines.append("- " + summary["one_fund_sentence"])
+    for venue in summary["venues"]:
+        lines.append("- Regulated venue: %s — %s."
+                     % (_safe(venue["name"]), _safe(venue["source"])))
+    if summary["absent_sentence"]:
+        lines.append("- " + summary["absent_sentence"])
+    return lines
+
+
 def fi_lifted_subtypes():
     """The sub-types whose free-cash test is answered by distributable
     capital (owner ruling AC30(1)), as the floors rule them."""
@@ -1634,6 +1689,9 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
 def _business_lines(pack, facts, passages, capture):
     frames = capture.get("business_frame") or {}
     lines = ["## The business, before the numbers", ""]
+    summary = coin_summary(pack)
+    if summary is not None:
+        return lines + coin_lines(summary) + [""]
     if not frames:
         lines.append("This pack carries no business frame. It is an asset "
                      "with no earnings to frame, or a fund judged on its "
@@ -2195,10 +2253,16 @@ INDENT = "  "
 # The lines that say what SHAPE of subject this is - the business's name,
 # its trace summary, its archetype, its capital and its cycle - which the
 # bound cuts only after every descriptive line (register item P-FIb-5).
-SHAPE_PREFIXES = ("**", "- " + UNTRACED_LEAD, "- Archetype: ",
+SHAPE_PREFIXES = ("**", "- Coin: ", "- New supply over ", "- Daily issuance: ",
+                  "- Issuance against turnover: ", "- These flows are one fund's: ",
+                  "- Regulated venue: ",
+                  "- " + UNTRACED_LEAD, "- Archetype: ",
                   "- Capital beside its requirement: ", "- Cycle: ",
                   "- " + GROWER_MONTHS_LEAD, "- " + GROWER_UNDRAWN_LEAD,
                   "- " + PRODUCER_LIFE_LEAD, "- " + INTEGRATED_BESIDE_LEAD, "- Holding: ")
+SHAPE_PREFIXES += tuple("- " + row["absent_sentence"] for row in
+                        _floors()["asset_classes"]["crypto"]["products"].values()
+                        if row.get("absent_sentence"))
 
 
 def _rows_to_cut(body, lines_wanted):

@@ -8,7 +8,7 @@ the drawdown, the returns (absolute and minus the benchmark), the
 realized volatility, the volume signature and the extremes. Every figure is a derived Tier-1 fact whose operation is
 "series_stat", whose operands name the series it was read from, whose
 window is stated in BARS (trading days, never calendar days; the 52-week
-window is the last 252 bars) and whose formula prints the arithmetic a
+window follows the calendar's year) and whose formula prints the arithmetic a
 reader recomputes it from.
 
 Nothing else is computed: the table is the seats' chart, not a quant
@@ -30,6 +30,11 @@ Benchmark matching (closes register item P-U4a1-9). The benchmark may
 trade on other days than the subject. A return window's two dates are
 each matched to the benchmark's last close ON OR BEFORE that date; where
 the benchmark has no close on or before it, that row is a declared gap.
+
+AC72, architect M1-M3: returns and volatility windows follow the year,
+rounded half-up; annualisation and every 52-week figure use that year.
+The 50-, 100- and 200-bar averages, the 60-bar slope, and the
+20-against-250-bar volume ratio stay fixed as market conventions.
 
 Standard library only. No network, no broker call: the series arrive in
 the pack.
@@ -97,6 +102,45 @@ LABELS = dict(
     + [("tape_sma%d_level" % k, "The %d-day average price" % k)
        for k in SMA_WINDOWS])
 
+
+def year_bars(calendar):
+    """Architect M1: the ONE reader of the calendar's year length."""
+    return int((calendar or {}).get("bars_per_year", YEAR_BARS))
+
+
+def series_year_bars(pack, floors):
+    """Session two ruling 1: read only this capture's own series calendar."""
+    capture = (pack or {}).get("capture", pack or {})
+    series = capture.get("price_series") or {}
+    calendar = floors["price_series"]["exchange_calendars"].get(series.get("calendar"))
+    return year_bars(calendar)
+
+
+def windows(year):
+    """Architect M2: month, quarter, half-year and year, rounded half-up."""
+    returns = tuple(int((Decimal(year) / divisor).quantize(
+        Decimal(1), rounding=ROUND_HALF_UP)) for divisor in (12, 4, 2, 1))
+    return returns, (returns[0], returns[1], returns[3])
+
+
+def bars_needed(year):
+    """The longest tape window: a full year of 200-bar averages."""
+    return year + 199
+
+
+def labels(year):
+    """M3: stable ids, honest counts; the default labels stay exact."""
+    result = dict(LABELS)
+    returns, volatilities = windows(year)
+    for old, actual in zip(RETURN_WINDOWS, returns):
+        result["tape_return_%d" % old] = "Price return over %d trading days" % actual
+        result["tape_return_vs_benchmark_%d" % old] = (
+            "Return against the benchmark, %d trading days" % actual)
+    for old, actual in zip(VOLATILITY_WINDOWS, volatilities):
+        result["tape_realized_vol_%d" % old] = "Realized volatility over %d trading days" % actual
+    return result
+
+
 _WEAKENED = ("the seats read the tape without this figure; the "
              "market-structure and risk reads lean on the rows that remain")
 
@@ -137,13 +181,18 @@ class _Series:
     """One series read once: its dates, its closes as exact strings and
     as Decimals, its volumes, and the running sums the averages use."""
 
-    def __init__(self, series):
+    def __init__(self, series, year=YEAR_BARS):
         bars = series["bars"]
         self.ticker = series["ticker"]
         self.dates = [bar["date"] for bar in bars]
         self.close_text = [bar["close"] for bar in bars]
         self.closes = [Decimal(text) for text in self.close_text]
-        self.volumes = [Decimal(bar["volume"]) for bar in bars]
+        volume_count = sum("volume" in bar for bar in bars)
+        if volume_count not in (0, len(bars)):
+            raise ValueError("the series mixes bars with and without volume")
+        self.volumes = ([Decimal(bar["volume"]) for bar in bars]
+                        if volume_count else None)
+        self.year = year
         self.count = len(bars)
         self.last = self.count - 1
         running = [Decimal(0)]
@@ -228,10 +277,10 @@ def _sma200_slope(subject):
 
 
 def _year_extremes(subject):
-    """(index of the highest, index of the lowest) of the last 252
+    """(index of the highest, index of the lowest) of the last year of
     closes; the earliest such bar on a tie."""
-    subject.need(YEAR_BARS, "the 52-week window (252 bars)")
-    indexes = range(subject.count - YEAR_BARS, subject.count)
+    subject.need(subject.year, "the 52-week window (%d bars)" % subject.year)
+    indexes = range(subject.count - subject.year, subject.count)
     high = min(indexes, key=lambda i: (-subject.closes[i], i))
     low = min(indexes, key=lambda i: (subject.closes[i], i))
     return high, low
@@ -241,15 +290,15 @@ def _range_place(subject):
     high, low = _year_extremes(subject)
     width = subject.closes[high] - subject.closes[low]
     if width == 0:
-        raise _Gap("the last 252 closes are all equal, so the 52-week "
-                   "range has no width to place the last close in")
+        raise _Gap("the last %d closes are all equal, so the 52-week "
+                   "range has no width to place the last close in" % subject.year)
     value = (subject.closes[subject.last] - subject.closes[low]) / width
     formula = ("(last close %s - lowest close %s) / (highest close %s - "
                "lowest close %s)"
                % (subject.close_text[subject.last], subject.close_text[low],
                   subject.close_text[high], subject.close_text[low]))
     return ("fraction_of_range", _rounded(value),
-            _last_bars(subject, YEAR_BARS), formula, None)
+            _last_bars(subject, subject.year), formula, None)
 
 
 def _drawdown(subject):
@@ -258,7 +307,7 @@ def _drawdown(subject):
     formula = ("(last close %s / highest close %s on %s - 1) * 100"
                % (subject.close_text[subject.last],
                   subject.close_text[high], subject.dates[high]))
-    return "%", _rounded(value), _last_bars(subject, YEAR_BARS), formula, None
+    return "%", _rounded(value), _last_bars(subject, subject.year), formula, None
 
 
 def _return(subject, bars):
@@ -315,19 +364,23 @@ def _realized_volatility(subject, bars):
             for i in range(first, subject.count)]
     mean = sum(logs) / bars
     squares = sum((value - mean) ** 2 for value in logs)
-    value = (squares / (bars - 1) * TRADING_DAYS_A_YEAR).sqrt()
+    value = (squares / (bars - 1) * subject.year).sqrt()
     window = ("%d bars of daily log returns, close %s to close %s"
               % (bars, subject.dates[first - 1], subject.dates[subject.last]))
     formula = ("sqrt(S / (%d - 1) * %d): the sample standard deviation of "
                "the %d daily log returns ln(close / prior close), times "
                "sqrt(%d); mean return %s and S = %s, the sum of squared "
                "deviations from it (both exactly as computed)"
-               % (bars, TRADING_DAYS_A_YEAR, bars, TRADING_DAYS_A_YEAR,
+               % (bars, subject.year, bars, subject.year,
                   _working(mean), _working(squares)))
     return "fraction_annualized", _rounded(value), window, formula, None
 
 
 def _volume_ratio(subject):
+    if subject.volumes is None:
+        raise _Gap("the series carries closes only - its source publishes no daily "
+                   "volume - so recent volume against its usual level is not computed",
+                   "absent_by_design")
     subject.need(VOLUME_LONG, "a %d-bar average volume" % VOLUME_LONG)
     short = sum(subject.volumes[subject.count - VOLUME_SHORT:])
     long = sum(subject.volumes[subject.count - VOLUME_LONG:])
@@ -348,16 +401,16 @@ def _volume_ratio(subject):
 
 
 def _largest_fall(subject):
-    subject.need(YEAR_BARS + 1, "252 one-day changes (253 closes)")
-    first = subject.count - YEAR_BARS
+    subject.need(subject.year + 1, "%d one-day changes (%d closes)" % (subject.year, subject.year + 1))
+    first = subject.count - subject.year
     worst = min(range(first, subject.count),
                 key=lambda i: (subject.closes[i] / subject.closes[i - 1], i))
     ratio = subject.closes[worst] / subject.closes[worst - 1]
     if ratio >= 1:
-        raise _Gap("none of the 252 one-day changes from %s to %s is a fall"
-                   % (subject.dates[first], subject.dates[subject.last]))
-    window = ("last 253 bars: 252 one-day changes, close %s to close %s"
-              % (subject.dates[first - 1], subject.dates[subject.last]))
+        raise _Gap("none of the %d one-day changes from %s to %s is a fall"
+                   % (subject.year, subject.dates[first], subject.dates[subject.last]))
+    window = ("last %d bars: %d one-day changes, close %s to close %s"
+              % (subject.year + 1, subject.year, subject.dates[first - 1], subject.dates[subject.last]))
     formula = ("(close %s on %s / close %s on %s - 1) * 100: the largest "
                "of the one-day falls"
                % (subject.close_text[worst], subject.dates[worst],
@@ -369,24 +422,24 @@ def _largest_fall(subject):
 def _year_close(subject, price_unit, highest):
     high, low = _year_extremes(subject)
     index = high if highest else low
-    formula = ("the %s of the last 252 closes: %s on %s (the earliest "
+    formula = ("the %s of the last %d closes: %s on %s (the earliest "
                "such close on a tie)"
-               % ("highest" if highest else "lowest",
+               % ("highest" if highest else "lowest", subject.year,
                   subject.close_text[index], subject.dates[index]))
     return (price_unit, subject.close_text[index],
-            _last_bars(subject, YEAR_BARS), formula, subject.dates[index])
+            _last_bars(subject, subject.year), formula, subject.dates[index])
 
 
 def _closes_above_sma200(subject):
-    subject.need(YEAR_BARS + 199,
-                 "a 200-bar average on each of the last 252 bars (451 "
-                 "closes)")
-    first = subject.count - YEAR_BARS
+    subject.need(subject.year + 199,
+                 "a 200-bar average on each of the last %d bars (%d "
+                 "closes)" % (subject.year, bars_needed(subject.year)))
+    first = subject.count - subject.year
     count = sum(1 for i in range(first, subject.count)
                 if subject.closes[i] > subject.average(i, 200))
-    formula = ("the number of the last 252 closes strictly above the "
-               "average of the 200 closes ending on the same bar")
-    return ("bars", str(count), _last_bars(subject, YEAR_BARS), formula,
+    formula = ("the number of the last %d closes strictly above the "
+               "average of the 200 closes ending on the same bar" % subject.year)
+    return ("bars", str(count), _last_bars(subject, subject.year), formula,
             None)
 
 
@@ -398,14 +451,15 @@ def _row(row_id, subject, benchmark, price_unit):
             return _close_vs_sma(subject, k)
         if row_id == "tape_sma%d_level" % k:
             return _sma_level(subject, k, price_unit)
-    for k in RETURN_WINDOWS:
+    returns, volatilities = windows(subject.year)
+    for k, actual in zip(RETURN_WINDOWS, returns):
         if row_id == "tape_return_%d" % k:
-            return _absolute_return(subject, k)
+            return _absolute_return(subject, actual)
         if row_id == "tape_return_vs_benchmark_%d" % k:
-            return _relative_return(subject, benchmark, k)
-    for k in VOLATILITY_WINDOWS:
+            return _relative_return(subject, benchmark, actual)
+    for k, actual in zip(VOLATILITY_WINDOWS, volatilities):
         if row_id == "tape_realized_vol_%d" % k:
-            return _realized_volatility(subject, k)
+            return _realized_volatility(subject, actual)
     return {
         "tape_sma200_slope_60": lambda: _sma200_slope(subject),
         "tape_range_place_252": lambda: _range_place(subject),
@@ -422,7 +476,7 @@ def _row(row_id, subject, benchmark, price_unit):
 
 
 def tape_table(price_series, benchmark_series=None, *, price_unit,
-               freshness_rule_days):
+               freshness_rule_days, year_bars=YEAR_BARS):
     """The tape table over one subject series and, where the sitting has
     a benchmark, its series (None on an absolute sitting).
 
@@ -435,9 +489,10 @@ def tape_table(price_series, benchmark_series=None, *, price_unit,
     inputs are read, never rewritten."""
     with localcontext() as context:
         context.prec = WORKING_PRECISION
-        subject = _Series(price_series)
+        subject = _Series(price_series, year_bars)
         benchmark = (_Series(benchmark_series)
                      if benchmark_series is not None else None)
+        row_labels = labels(year_bars)
         facts, gaps = [], []
         for row_id in ROW_IDS:
             try:
@@ -457,7 +512,7 @@ def tape_table(price_series, benchmark_series=None, *, price_unit,
             if bar_date is not None:
                 derived["date"] = bar_date
             facts.append({
-                "id": row_id, "label": LABELS[row_id], "value": value,
+                "id": row_id, "label": row_labels[row_id], "value": value,
                 "unit": unit,
                 "as_of": subject.dates[subject.last],
                 "source": ("tape table computed at freeze from the daily "

@@ -200,10 +200,10 @@
    "what_it_does_figures": []
   }
  },
- "capture_version": "1.12.0",
+ "capture_version": "1.13.0",
  "captured_at": "2026-08-30T21:30Z",
  "evidence_challenge": {
-  "evidence_sha256": "0a9f9e79f47c63f93afebf3e1c5786445f72db76839ab1c3fdbe3339bd55b22b",
+  "evidence_sha256": "98896d50c4f7f8ff1c93e22df77e64353ec062bcc290557694d5da7a0f154430",
   "failure_reason": null,
   "failure_status": null,
   "findings": [
@@ -234,7 +234,7 @@
   "nonce": "a1b2c3d4e5f6071865786d702d706173",
   "overall": "INVENTED FIXTURE - the record is strong on what each line earns and weak on what a single contract earns. One point below would change how the mix shift reads; the other would not.",
   "post_audit_changes": [],
-  "post_audit_sha256": "0a9f9e79f47c63f93afebf3e1c5786445f72db76839ab1c3fdbe3339bd55b22b",
+  "post_audit_sha256": "98896d50c4f7f8ff1c93e22df77e64353ec062bcc290557694d5da7a0f154430",
   "resolutions": {
    "E1": {
     "disposition": "captured",

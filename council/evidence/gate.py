@@ -446,10 +446,10 @@ def _check_subject_kind(capture):
                 "(the exchange stocks a product either has or honestly "
                 "lacks) is keyed by the product, so an unnamed product "
                 "cannot be checked against its own minimums")
-    elif named_product:
+    elif named_product and declared_class != "crypto":
         reasons.append(
             "the subject names the product '%s' but its asset_class is "
-            "'%s' - only a commodity subject names a product"
+            "'%s' - only a commodity, or a coin, names a product"
             % (named_product, declared_class))
 
     if kind in ("single_stock", "bitcoin", "gold", "commodity"):
@@ -2688,7 +2688,7 @@ def _listings(subject):
     return [subject.get("listing")]
 
 
-def _series_calendars(subject, series_ticker, rules):
+def _series_calendars(subject, series_ticker, rules, floors):
     """(calendars the subject's own series may name, refusal). The
     series binds to the instrument whose ticker it carries - the
     subject, its vehicle, or a named member: that instrument's listing
@@ -2711,9 +2711,16 @@ def _series_calendars(subject, series_ticker, rules):
                 "instrument's history" % series_ticker)
         listing = match[0].get("listing")
     else:
-        # A subject with no ticker recorded anywhere (a spot coin,
-        # bullion): today's behaviour - its own listing, else its class.
-        # Which coin the series is stays open (P-U4a1-1, registered).
+        # Owner ruling AC33: a tickerless crypto series binds to its coin.
+        if (subjects.asset_class(subject) == "crypto"
+                and subjects.class_registry(floors, subject).get("monetary_coin_rule")):
+            entry = (subjects.class_registry(floors, subject).get("products")
+                     or {}).get(subjects.coin(subject, floors)) or {}
+            if series_ticker != entry.get("series_ticker"):
+                return None, (
+                    "the series names %s, which is not the subject or one of "
+                    "its members - the tape would be computed from another "
+                    "instrument's history" % series_ticker)
         listing = subject.get("listing")
     if listing is not None:
         calendar = _listing_calendar(listing, rules)
@@ -2818,6 +2825,11 @@ def _check_one_series(series, where, captured_at, rules, allowed=None):
                 "trades on %s - the wrong calendar misjudges its gaps and "
                 "freshness" % (where, name, ", ".join(allowed))]
     reasons = []
+    volume_count = sum("volume" in bar for bar in series["bars"])
+    if volume_count not in (0, len(series["bars"])):
+        reasons.append("%s mixes bars with and without volume - a series carries "
+                       "volume on every bar or on none" % where)
+        return reasons
     holidays = frozenset(calendar["holidays"])
     trades = frozenset(calendar["trading_weekdays"])
     days = []
@@ -2914,7 +2926,7 @@ def _check_price_series(capture, floors):
     allowed = None
     if capture.get("price_series"):
         allowed, refusal = _series_calendars(
-            capture["subject"], capture["price_series"]["ticker"], rules)
+            capture["subject"], capture["price_series"]["ticker"], rules, floors)
         if refusal:
             reasons.append(refusal)
     # The benchmark series binds through its benchmark's listing, as the
@@ -2998,7 +3010,8 @@ def expected_tape(capture, floors):
              if ruled_benchmark(capture, floors)["ticker"] else None)
     return tape.tape_table(
         price, bench, price_unit=fact["unit"],
-        freshness_rule_days=_series_rule_days(price, floors["price_series"]))
+        freshness_rule_days=_series_rule_days(price, floors["price_series"]),
+        year_bars=tape.series_year_bars(capture, floors))
 
 
 def _series_rule_days(series, rules):
@@ -3064,6 +3077,7 @@ def _check_tape(capture, floors):
                 "freeze from the subject's daily closes, never written by "
                 "hand" % ", ".join([fact["id"] for fact in carried]
                                    + [gap["fact_class"] for gap in gaps])]
+    row_labels = tape.labels(tape.series_year_bars(capture, floors))
     want_facts = {fact["id"]: fact for fact in table["facts"]}
     want_gaps = {gap["fact_class"]: gap for gap in table["gaps"]}
     reasons = []
@@ -3079,14 +3093,14 @@ def _check_tape(capture, floors):
             reasons.append(
                 "tape figure '%s' (%s) cannot be computed from this price "
                 "series - %s - so it is a declared gap, not a figure"
-                % (fact_id, tape.LABELS[fact_id],
+                % (fact_id, row_labels[fact_id],
                    want_gaps[fact_id]["reason"]))
         elif fact != want:
             reasons.append(
                 "tape figure '%s' (%s) does not recompute from the price "
                 "series: the freeze computes %s %s, the capture says %s %s "
                 "(it differs in: %s)"
-                % (fact_id, tape.LABELS[fact_id], want["value"],
+                % (fact_id, row_labels[fact_id], want["value"],
                    want["unit"], fact.get("value"), fact.get("unit"),
                    ", ".join(_differences(fact, want))))
     for gap in gaps:
@@ -3095,14 +3109,14 @@ def _check_tape(capture, floors):
             reasons.append(
                 "tape figure '%s' (%s) is declared a gap, but the price "
                 "series gives it: the freeze computes %s %s"
-                % (fact_class, tape.LABELS[fact_class],
+                % (fact_class, row_labels[fact_class],
                    want_facts[fact_class]["value"],
                    want_facts[fact_class]["unit"]))
         elif gap != want_gaps[fact_class]:
             reasons.append(
                 "the declared gap for tape figure '%s' (%s) is not the one "
                 "the freeze writes from this series: %s"
-                % (fact_class, tape.LABELS[fact_class],
+                % (fact_class, row_labels[fact_class],
                    want_gaps[fact_class]["reason"]))
     return reasons
 
