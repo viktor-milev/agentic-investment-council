@@ -5,6 +5,8 @@ Run:  python council/tests/test_engine.py     (exit code authoritative)
 """
 
 import copy
+import contextlib
+import io
 import decimal
 import json
 import hashlib
@@ -14,6 +16,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
@@ -229,6 +232,553 @@ class EngineTest(unittest.TestCase):
             pack_path=pack_path, **kwargs)
 
 
+def coin_run_on_record(tmp, run_id, coin, published, scenarios, aggregated=True):
+    """M2: one invented verdict writer, registry-derived subject only."""
+    from council.lib import subjects
+    registry, _ = subjects.admitted_coin(FLOORS, coin)
+    crypto = FLOORS["asset_classes"]["crypto"]
+    kinds = crypto["monetary_coin_rule"]["coin_kinds"] if registry == "monetary" else crypto["protocol_rule"]["protocol_kinds"]
+    doc = dict(schema_version=host._verdict_schema()["properties"]["schema_version"]["const"],
+        run_id=run_id, subject=dict(asset_class="crypto", product=coin, kind=kinds[0]), rating="hold",
+        provenance=dict(timestamps=dict(published=published)),
+        scenario_rating=dict(aggregated=aggregated, horizon_months="12", scenarios=scenarios))
+    canonical.write_canonical_json(os.path.join(tmp, run_id, "verdict.json"), doc)
+    return doc
+
+
+class TreasuryDraftTest(EngineTest):
+    def setUp(self):
+        super().setUp()
+        controls = {"test_zero_still_refuses_on_every_other_ladder", "test_check_shape_and_compute_keep_their_bytes",
+            "test_a_plain_holding_ladder_stays_context", "test_every_existing_reason_keeps_its_words_and_order",
+            "test_a_protocol_pause_keeps_its_bytes", "test_a_uranium_opening_is_unchanged",
+            "test_a_plain_holding_brief_keeps_its_bytes", "test_a_coin_brief_keeps_its_bytes",
+            "test_coin_and_anchor_basis_chair_briefs_keep_their_bytes",
+            "test_the_read_and_cells_are_absent_from_every_other_verdict", "test_the_envelope_is_unchanged"}
+        if self._testMethodName in controls:
+            self.floors = FLOORS
+            try:
+                from council.engine import treasury_chair
+                self.chair = treasury_chair
+            except ImportError:
+                self.chair = None
+            return
+        from council.engine import treasury_chair
+        self.chair = treasury_chair
+        self.c = test_evidence.treasury_ladder_capture("worked", sane_prices=True)
+        self.pack = freeze.build_pack(self.c)
+        self.floors = copy.deepcopy(FLOORS)
+        self.rule = self.floors["archetype_measures"]["holding_rule"]["treasury"]
+        self.rule["sitting_open"] = True
+        self.block = test_evidence.holding_frame(self.c)["treasury"]
+        self.choice = {p["key"]: dict(as_debt=p["key"] == "p1", why="INVENTED choice") for p in self.block["preferreds"]}
+        self.opening = dict(preferred_treatment=self.choice, coin_sitting="coin-example", chosen_by="INVENTED", at="2026-10-06T00:00Z")
+        self.key = self.block["coins"][0]["coin"]
+        self.coin_scenarios = [dict(name=n, price_outcome=p, probability=q) for n, p, q in (("INVENTED low", "20000", "0.2"), ("INVENTED middle", "50000", "0.4"), ("INVENTED high", "90000", "0.4"))]
+        latest = dict(run_id="coin-example", published="2026-10-10", rating="hold", aggregated=True, horizon_months="12", scenarios=self.coin_scenarios)
+        self.force = self.chair.treasury_in_force(self.opening, None, self.rule, self.chair.layer_for(self.pack, self.floors, latest))
+        self.r = sufficiency_check.treasury_readings(self.pack, self.floors, self.choice)
+        self.d = kind_draft_skeleton(self.pack, [], ["price_last"], [dict(statement="INVENTED coin demand weakens", figure_name="demand", source="INVENTED next reading", date="2026-11-08")])
+        scenarios = []
+        for coin in self.coin_scenarios:
+            for case, premium in zip(self.rule["ladder_rules"]["premium_cases"].values(), (self.chair.falls_premium(self.r), decimal.Decimal(-20))):
+                cell = dict(coin_scenario=coin["name"], coin_price=coin["price_outcome"], premium=str(premium))
+                price = self.chair.case_price(self.r, cell["coin_price"], next(k for k,v in self.rule["ladder_rules"]["premium_cases"].items() if v is case), self.rule["ladder_rules"]["premium_cases"], cell["premium"])
+                scenarios.append(dict(name=coin["name"] + " " + case["name_words"][0], price_outcome=str(price), probability=str(decimal.Decimal(coin["probability"]) / 2), rationale="INVENTED demand changes", cell=cell))
+        self.d["scenario_rating"] = chair_ladder(scenarios)
+        self.d["treasury_read"] = dict(coin_layer=dict(source="on_record", run_id="coin-example"), preferred=[dict(key=k, **v) for k, v in self.choice.items()], objection=dict(objection="INVENTED share premium can shrink", answer="INVENTED cells measure that risk"))
+    def facts(self): return {f["id"]: f for f in self.c["tier1"]}
+    def check(self):
+        rated = self.d["scenario_rating"]
+        if hasattr(self.chair,"fill_premium_cases"): self.chair.fill_premium_cases(rated,self.pack,self.floors,self.force)
+        try: self.d["rating"] = ladder.compute(rated, self.facts(), self.floors, zero_floor=True)["rating"] if rated["aggregated"] else "monitor"
+        except ladder.LadderError: pass
+        with mock.patch.object(host, "_floors", return_value=self.floors):
+            return host.check_draft_verdict(self.d, self.pack, host._seat_schemas(), self.force)
+    def sent(self, key): self.assertTrue(any(self.rule["ladder_rules"][key] in r for r in self.check()), self.check())
+    def seat(self):
+        from types import SimpleNamespace
+        answer = fixture_answer("advisor_bear")
+        answer["scenario_ladder"] = {k: self.d["scenario_rating"][k] for k in ("horizon_months", "scenarios")}
+        with mock.patch.object(host, "_floors", return_value=self.floors), mock.patch.object(host, "_treasury_in_force", return_value=self.force):
+            return host._check_advisor(answer, SimpleNamespace(pack=self.pack, schemas=host._seat_schemas()))
+
+
+class TestTheTreasuryChairModule(TreasuryDraftTest):
+    # Twelve thousand coins times fifty thousand, plus sixty million cash,
+    # less three hundred twenty million true debt and fifty million preferred,
+    # over four million shares: seventy-two and one half before the premium.
+    def test_declared_reads_the_one_test(self): self.assertEqual(self.chair.declared(self.pack, self.floors), sufficiency_check.treasury_frame(self.floors, self.c))
+    def test_ladder_rated_only_for_a_declared_treasury(self):
+        from council.lib import subjects
+        for c in (test_evidence.holding_capture(), test_evidence.coin_capture(), evidence_fixture("exmp-pass.json")):
+            self.assertEqual(self.chair.ladder_rated(c["subject"], freeze.build_pack(c), self.floors), subjects.is_anchorless(c["subject"]))
+        self.assertTrue(self.chair.ladder_rated(self.c["subject"], self.pack, self.floors))
+    def test_the_cell_value_on_the_worked_shape(self): self.assertEqual(self.chair.cell_value(self.r, "50000", "20")[0], decimal.Decimal("87.00"))
+    def test_a_cell_at_or_below_zero_is_priced_at_zero(self):
+        for p in ("20000", "10000"):
+            price, words = self.chair.cell_value(self.r, p, "20")
+            self.assertEqual(price, 0); self.assertIn(self.rule["ladder_rules"]["cell_zero_words"], words)
+        at_zero = copy.deepcopy(self.r); at_zero["cash"] = decimal.Decimal(70000000)
+        self.assertEqual(self.chair.cell_value(at_zero, "25000", "20")[0], 0)
+    def test_the_preferred_in_force_moves_the_cell(self):
+        force = self.chair.treasury_in_force(self.opening, dict(preferred_changes=[dict(preferred="p1", **{"from":True,"to":False,"why":"INVENTED"})]), self.rule)
+        r = sufficiency_check.treasury_readings(self.pack, self.floors, force["preferred_treatment"])
+        self.assertEqual(self.chair.cell_value(r, "50000", "20")[0], decimal.Decimal("102.00"))
+    def test_the_falls_premium_is_the_lowest_year_end(self):
+        pack = freeze.build_pack(test_evidence.treasury_preferred_history_capture())
+        r = sufficiency_check.treasury_readings(pack, self.floors, self.choice)
+        self.assertEqual(self.chair.falls_premium(r), decimal.Decimal("31.0"))
+        self.assertEqual(self.chair.cell_value(r, "50000", str(self.chair.falls_premium(r)))[0], decimal.Decimal("94.98"))
+    def test_today_lower_than_every_year_end_is_used(self):
+        r = copy.deepcopy(self.r); r["comparable_premium"]["percent"] = decimal.Decimal("20")
+        self.assertEqual(self.chair.falls_premium(r), -20)
+    def test_today_and_the_cell_use_the_same_preferred_basis(self):
+        self.assertEqual(self.r["comparable_premium"], self.r["premiums"]["issued_preferred"])
+        ratio = self.r["comparable_premium"]
+        with decimal.localcontext() as exact:
+            exact.prec = 100
+            premium = -ratio["numerator"] * 100 / ratio["denominator"]
+            price, _ = self.chair.cell_value(self.r, str(self.r["coins"][0]["price"]), str(premium))
+        self.assertEqual(price, decimal.Decimal(self.facts()["price_last"]["value"]))
+        self.assertEqual(self.r["comparable_premium"]["percent"], decimal.Decimal("-37.9"))
+        self.assertEqual(self.r["history"], [])
+        self.assertEqual(len(self.r["history_gaps"]), 2)
+    def test_a_zero_yardstick_has_no_reachable_chair_crash(self):
+        for cash in ("60000000", "80000000"):
+            pack = freeze.build_pack(test_evidence.zero_yardstick_capture(cash))
+            r = sufficiency_check.treasury_readings(pack, self.floors, self.choice)
+            self.assertIsNone(self.chair.falls_premium(r))
+            for source in ("on_record", "this_sitting"):
+                force = copy.deepcopy(self.force); force["coin_layer"]["source"] = source
+                words = self.rule["zero_yardstick"]["words"]
+                self.assertEqual(self.chair.casefile_lines(r, force, self.rule["casefile_words"]), [words])
+                self.assertIn(words, self.chair.ladder_reasons(self.d["scenario_rating"], pack, self.floors, force))
+    def test_case_odds_add_each_cases_cells(self):
+        self.assertEqual(list(self.chair.case_odds(self.d["scenario_rating"], self.rule["ladder_rules"]["premium_cases"]).values()), [decimal.Decimal("0.5")]*2)
+        self.d["scenario_rating"]["scenarios"][0]["probability"] = "0.099999999999999999999999999999"
+        self.assertEqual(next(iter(self.chair.case_odds(self.d["scenario_rating"], self.rule["ladder_rules"]["premium_cases"]).values())), decimal.Decimal("0.499999999999999999999999999999"))
+    def test_the_reader_finds_the_latest_coin_verdict(self):
+        for rid, day in (("later", "2026-10-10T12:00Z"), ("earlier", "2026-10-01T12:00Z")): coin_run_on_record(self.base, rid, self.key, day, self.coin_scenarios)
+        self.assertEqual(self.chair.coin_on_record(self.base, self.key, self.floors)["run_id"], "later")
+    def test_a_verdict_without_an_added_ladder_builds(self):
+        coin_run_on_record(self.base, "latest", self.key, "2026-10-10T12:00Z", self.coin_scenarios, False)
+        latest = self.chair.coin_on_record(self.base, self.key, self.floors)
+        self.assertEqual(self.chair.layer_for(self.pack, self.floors, latest)["source"], "this_sitting")
+    def test_thirty_four_days_cites_and_thirty_five_builds(self):
+        for day, expected in (("2026-09-08", "on_record"), ("2026-09-07", "this_sitting")):
+            coin_run_on_record(self.base, "latest", self.key, day, self.coin_scenarios)
+            self.assertEqual(self.chair.layer_for(self.pack, self.floors, self.chair.coin_on_record(self.base, self.key, self.floors))["source"], expected)
+    def test_a_protocol_coin_is_read_by_its_token(self):
+        key = next(iter(self.floors["asset_classes"]["crypto"]["protocols"]))
+        coin_run_on_record(self.base, "token", key, "2026-10-10", self.coin_scenarios)
+        self.assertEqual(self.chair.coin_on_record(self.base, key, self.floors)["run_id"], "token")
+
+
+class TestTheTreasuryLadder(TreasuryDraftTest):
+    def duplicate_case(self, index):
+        rated = self.d["scenario_rating"]
+        original = rated["scenarios"][2 + index]
+        extra = copy.deepcopy(original); extra["name"] += " again"
+        original["probability"] = extra["probability"] = str(decimal.Decimal(original["probability"]) / 2)
+        extra["cell"]["premium"] = "50" if index == 0 else "0"
+        extra["price_outcome"] = str(self.chair.cell_value(self.r, extra["cell"]["coin_price"], extra["cell"]["premium"])[0])
+        rated["scenarios"].append(extra)
+        return extra
+    def test_every_cell_named_for_a_case_is_checked(self):
+        saved = copy.deepcopy(self.d)
+        for index, case in enumerate(self.rule["ladder_rules"]["premium_cases"].values()):
+            self.d = copy.deepcopy(saved); extra = self.duplicate_case(index)
+            reasons = self.check(); self.assertTrue(reasons, reasons)
+            self.assertTrue(any(self.rule["ladder_rules"]["duplicate_case_refusal"] in r and extra["name"] in r for r in reasons), reasons)
+    def test_case_odds_include_every_cell_named_for_a_case(self):
+        saved = copy.deepcopy(self.d)
+        for index, key in enumerate(self.rule["ladder_rules"]["premium_cases"]):
+            self.d = copy.deepcopy(saved); self.duplicate_case(index)
+            self.assertEqual(self.chair.case_odds(self.d["scenario_rating"], self.rule["ladder_rules"]["premium_cases"])[key], decimal.Decimal("0.5"))
+    def test_a_twelve_month_ladder_of_cells_passes(self):
+        self.assertEqual(self.check(), []); self.assertEqual(self.seat(), [])
+        self.force["coin_layer"]["source"] = "this_sitting"; self.force["coin_sitting"] = None
+        self.d["treasury_read"]["coin_layer"] = dict(source="this_sitting", run_id=None)
+        self.assertEqual(self.check(), [])
+    def test_a_zero_cell_passes_the_shape_check(self): self.assertEqual(self.check(), []); self.assertEqual(self.d["scenario_rating"]["scenarios"][0]["price_outcome"], "0.00")
+    def test_zero_still_refuses_on_every_other_ladder(self):
+        rated = chair_ladder(rungs("0", "100", "200", "0.2", "0.4", "0.4"))
+        for c in (test_evidence.coin_capture(), evidence_fixture("copper-pass.json")):
+            self.assertTrue(any("above zero" in r for r in ladder.check_shape(rated, {f["id"]: f for f in c["tier1"]})))
+    def test_a_horizon_other_than_twelve_is_sent_back(self): self.d["scenario_rating"]["horizon_months"] = "36"; self.sent("horizon_refusal")
+    def test_a_scenario_without_a_cell_is_sent_back(self):
+        original = copy.deepcopy(self.d)
+        del self.d["scenario_rating"]["scenarios"][0]["cell"]; self.sent("cell_missing_refusal")
+        for key, value in (("coin_price", "50,000"),):
+            self.d = copy.deepcopy(original); self.d["scenario_rating"]["scenarios"][0]["cell"][key] = value; self.sent("cell_missing_refusal")
+    def test_a_cell_on_another_subject_is_refused(self):
+        self.c = test_evidence.holding_capture(); self.pack = freeze.build_pack(self.c); self.sent("cell_on_other_refusal")
+    def test_each_missing_case_is_named_per_coin_scenario(self):
+        original = copy.deepcopy(self.d)
+        for case in self.rule["ladder_rules"]["premium_cases"].values():
+            self.d = copy.deepcopy(original); self.d["scenario_rating"]["scenarios"] = [s for s in self.d["scenario_rating"]["scenarios"] if case["name_words"][0] not in s["name"]]
+            reasons = self.check()
+            for coin in self.coin_scenarios: self.assertIn(coin["name"] + ": " + case["missing_refusal"], reasons)
+    def test_a_case_at_zero_chance_is_sent_back(self):
+        self.d["scenario_rating"]["scenarios"][0]["probability"] = "0"
+        self.assertTrue(any(next(iter(self.rule["ladder_rules"]["premium_cases"].values()))["zero_refusal"] in r for r in self.check()))
+    def test_one_cell_for_both_cases_is_sent_back(self):
+        self.d["scenario_rating"]["scenarios"][0]["name"] += " " + list(self.rule["ladder_rules"]["premium_cases"].values())[1]["name_words"][0]; self.sent("shared_refusal")
+    def machine_reasons(self):
+        return self.chair.ladder_reasons(self.d["scenario_rating"],self.pack,self.floors,self.force)
+    def test_a_wrong_falls_premium_is_found_by_the_arithmetic_check(self):
+        self.d["scenario_rating"]["scenarios"][0]["cell"]["premium"] = "20"
+        self.assertTrue(any(self.rule["ladder_rules"]["falls_premium_refusal"] in r for r in self.machine_reasons()))
+    def test_a_nonzero_discount_case_is_found_by_the_arithmetic_check(self):
+        for premium in ("-20", "20"):
+            self.d["scenario_rating"]["scenarios"][1]["cell"]["premium"] = premium
+            self.assertTrue(any(self.rule["ladder_rules"]["discount_refusal"] in r for r in self.machine_reasons()))
+    def test_a_wrong_cell_price_names_the_calculated_figure(self):
+        self.d["scenario_rating"]["scenarios"][0]["price_outcome"] = "10"
+        self.assertTrue(any("10 != 0" in r for r in self.machine_reasons()))
+    def test_a_coin_scenario_not_on_record_is_sent_back(self): self.d["scenario_rating"]["scenarios"][0]["cell"]["coin_scenario"] = "INVENTED alien"; self.sent("coin_scenario_refusal")
+    def test_a_coin_price_not_the_recorded_one_is_sent_back(self): self.d["scenario_rating"]["scenarios"][0]["cell"]["coin_price"] = "25000"; self.sent("coin_scenario_refusal")
+    def test_odds_not_the_recorded_ones_are_sent_back(self):
+        original = copy.deepcopy(self.d)
+        for s, q in zip(self.d["scenario_rating"]["scenarios"], ("0.15", "0.15", "0.15", "0.15", "0.2", "0.2")): s["probability"] = q
+        self.sent("coin_odds_refusal")
+        self.d = original; self.d["scenario_rating"]["scenarios"][0]["probability"] = "0.099999999999999999999999999999"; self.sent("coin_odds_refusal")
+    def test_a_built_layer_needs_three_coin_scenarios(self):
+        self.force["coin_layer"]["source"] = "this_sitting"
+        self.d["scenario_rating"]["scenarios"] = self.d["scenario_rating"]["scenarios"][2:]; self.sent("coin_layer_refusal")
+    def test_a_built_privacy_coin_layer_needs_its_delisting_case(self):
+        key = next(k for k, r in self.floors["asset_classes"]["crypto"]["products"].items() if r["privacy_coin"])
+        self.c = test_evidence.treasury_ladder_capture("worked", sane_prices=True); test_evidence.holding_frame(self.c)["treasury"]["coins"][0]["coin"] = key
+        old = self.key
+        for f in self.c["tier1"]: f["id"] = f["id"].replace(old, key)
+        self.pack = freeze.build_pack(self.c); self.force["coin_layer"]["source"] = "this_sitting"
+        reasons = self.check(); self.assertIn(self.floors["asset_classes"]["crypto"]["monetary_coin_rule"]["delisting_refusal"], reasons)
+    def test_every_seat_ladder_carries_the_cells(self):
+        self.assertEqual(self.seat(), [])
+        del self.d["scenario_rating"]["scenarios"][0]["cell"]
+        self.assertTrue(any(self.rule["ladder_rules"]["cell_missing_refusal"] in r for r in self.seat()))
+    def test_a_ladder_not_added_up_skips_the_cells(self):
+        self.d["scenario_rating"].update(aggregated=False, not_aggregated_reason="INVENTED uncertainty", scenarios=[]); self.assertEqual(self.check(), [])
+    def test_the_rating_is_computed_on_the_share(self):
+        self.assertEqual(self.check(), []); self.d["scenario_rating"]["reference_price_fact_id"] = "coin_price_" + self.key
+        self.assertTrue(any("ruled anchors" in r for r in self.check()))
+    def test_check_shape_and_compute_keep_their_bytes(self):
+        # Control: default keyword and explicit false are identical.
+        import inspect
+        kwargs = dict(zero_floor=False) if "zero_floor" in inspect.signature(ladder.compute).parameters else {}
+        rated = chair_ladder(rungs("50", "100", "200", "0.2", "0.4", "0.4")); facts = anchorless_facts("100")
+        self.assertEqual(ladder.check_shape(rated, facts), ladder.check_shape(rated, facts, **kwargs))
+        self.assertEqual(ladder.compute(rated, facts, self.floors), ladder.compute(rated, facts, self.floors, **kwargs))
+    def test_a_plain_holding_ladder_stays_context(self):
+        # Control: the added-up equity ladder remains supporting context.
+        rated = chair_ladder(rungs("50", "100", "200", "0.2", "0.4", "0.4"))
+        self.assertEqual(host.check_scenario_rating(dict(scenario_rating=rated), test_evidence.holding_capture()["subject"], anchorless_facts("100")), [])
+
+
+class TestTheChairmansTreasuryRead(TreasuryDraftTest):
+    def test_a_treasury_draft_without_its_read_is_sent_back(self): del self.d["treasury_read"]; self.sent("read_missing_refusal")
+    def test_a_read_on_another_kind_is_refused(self): self.c = test_evidence.holding_capture(); self.pack = freeze.build_pack(self.c); self.sent("read_on_other_kind_refusal")
+    def test_the_layer_must_be_the_one_in_force(self):
+        for source in ("on_record", "this_sitting"):
+            self.force["coin_layer"]["source"] = source; self.d["treasury_read"]["coin_layer"] = dict(source=source, run_id="INVENTED wrong"); self.sent("layer_read_refusal")
+    def test_the_preferred_must_be_the_choice_in_force(self): self.d["treasury_read"]["preferred"][0]["as_debt"] = False; self.sent("preferred_read_refusal")
+    def test_a_missing_preferred_is_sent_back(self): self.d["treasury_read"]["preferred"].pop(); self.sent("preferred_read_refusal")
+    def test_a_line_with_a_break_is_sent_back(self): self.d["treasury_read"]["objection"]["answer"] += "\n"; self.sent("line_refusal")
+    def test_a_line_over_the_cap_is_sent_back(self): self.d["treasury_read"]["preferred"][0]["why"] = "INVENTED " * (self.rule["ladder_rules"]["line_max_words"] + 1); self.sent("line_refusal")
+    def test_the_objection_and_answer_are_required(self):
+        for key in ("objection", "answer"):
+            doc = copy.deepcopy(self.d); del doc["treasury_read"]["objection"][key]
+            self.assertTrue(host.check_draft_verdict(doc, self.pack, host._seat_schemas(), self.force))
+    def test_every_existing_reason_keeps_its_words_and_order(self):
+        # Control: on a plain holding the treasury check adds nothing.
+        c = test_evidence.holding_capture(); p = freeze.build_pack(c); d = fixture_answer("chair_draft")["draft_verdict"]
+        with mock.patch.object(self.chair, "problems", return_value=[]) if self.chair else contextlib.nullcontext(): before = host.check_draft_verdict(d, p, host._seat_schemas())
+        self.assertEqual(host.check_draft_verdict(d, p, host._seat_schemas()), before)
+
+
+class TestTheTreasuryOpeningAndPause(TreasuryDraftTest):
+    def test_a_yardstick_the_preferred_takes_to_zero_refuses_before_any_seat(self):
+        import io
+        self.c = test_evidence.zero_yardstick_capture(price="23000"); self.pack = freeze.build_pack(self.c)
+        r = sufficiency_check.treasury_readings(self.pack, self.floors, self.choice)
+        self.assertEqual((r["true_debt_value"], r["preferred_value"]), (16000000, -34000000))
+        self.assertEqual(test_evidence.sufficiency_of(self.pack, self.floors)["result"], "pass")
+        self.recorded(); folder, pack, question = self.stage()
+        original = canonical.read_json; output = io.StringIO()
+        args = ["init", "--runs-root", self.base, "--run-id", "treasury-example", "--pack", pack,
+            "--pack-sha256", canonical.sha256_file(pack), "--sufficiency", SUFFICIENCY,
+            "--question-file", question, "--subject-json", json.dumps(self.c["subject"]), "--evidence-dir", folder]
+        with mock.patch.object(host, "_floors", return_value=self.floors), mock.patch.object(canonical, "read_json", side_effect=lambda p: self.floors if p == host.FLOORS_PATH else original(p)), contextlib.redirect_stdout(output):
+            code = host.main(args)
+        self.assertIn("REFUSED:", output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertIn(self.rule["preferred_zero_yardstick"]["words"], output.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(self.base, "treasury-example")))
+    def test_a_preferred_zero_yardstick_has_its_own_words(self):
+        pack = freeze.build_pack(test_evidence.zero_yardstick_capture(price="23000"))
+        r = sufficiency_check.treasury_readings(pack, self.floors, self.choice)
+        words = self.chair.casefile_lines(r, self.force, self.rule["casefile_words"])
+        self.assertNotIn(self.rule["zero_yardstick"]["words"], words)
+        self.assertEqual(words, [self.rule["preferred_zero_yardstick"]["words"]])
+        reasons = self.chair.ladder_reasons(self.d["scenario_rating"], pack, self.floors, self.force)
+        self.assertIn(self.rule["preferred_zero_yardstick"]["words"], reasons)
+        self.assertNotIn(self.rule["zero_yardstick"]["words"], reasons)
+
+    def test_a_zero_yardstick_refuses_before_any_seat(self):
+        self.c = test_evidence.zero_yardstick_capture(); self.pack = freeze.build_pack(self.c)
+        test_evidence.sufficiency_of(self.pack, self.floors)
+        self.recorded(); state, folder = self.start()
+        self.assertEqual(state, "REFUSED")
+        events = runrecord.read_events(folder)
+        self.assertTrue(any(self.rule["zero_yardstick"]["words"] in str(e) for e in events))
+        self.assertFalse(any(e["event"] == "request_written" for e in events))
+    def stage(self, changes=None):
+        pack = os.path.join(self.base, "treasury-pack.json"); write_pack(pack, self.pack)
+        question = os.path.join(self.base, "question.txt"); canonical.write_bytes_atomic(question, self.c["question_verbatim"].encode())
+        folder = os.path.join(self.base, "evidence"); os.makedirs(folder, exist_ok=True)
+        canonical.write_canonical_json(os.path.join(folder, host.OPENING_NAME), self.opening)
+        approval = dict(by="INVENTED", at="2026-10-12T13:00Z", note="INVENTED approval", preferred_changes=changes) if changes is not None else None
+        test_evidence.write_evidence_stage(folder, pack_path=pack, mode="reviewed" if changes is not None else "unattended", approval=approval)
+        return folder, pack, question
+    def start(self, changes=None):
+        folder, pack, question = self.stage(changes)
+        original = canonical.read_json
+        with mock.patch.object(host, "_floors", return_value=self.floors), mock.patch.object(canonical, "read_json", side_effect=lambda p: self.floors if p == host.FLOORS_PATH else original(p)):
+            return host.init(self.base, "treasury-example", pack, canonical.sha256_file(pack), SUFFICIENCY, question, json.dumps(self.c["subject"]), evidence_dir=folder)
+    def recorded(self, day="2026-10-10", aggregated=True): coin_run_on_record(self.base, "coin-example", self.key, day, self.coin_scenarios, aggregated)
+    def change(self, **overrides): return dict(dict(preferred="p1", **{"from":True,"to":False,"why":"INVENTED redirect"}), **overrides)
+    def test_the_opening_carries_the_coin_sitting(self):
+        folder, _, _ = self.stage(); self.assertEqual(host._read_opening(folder, self.c["captured_at"], self.c["subject"], self.floors, self.c), self.opening)
+    def test_an_opening_without_the_coin_sitting_refuses(self):
+        del self.opening["coin_sitting"]
+        with self.assertRaisesRegex(host.HostError, "exactly the choice"): self.start()
+    def test_a_fresh_sitting_must_be_named(self):
+        self.recorded(); self.opening["coin_sitting"] = None
+        with self.assertRaisesRegex(host.HostError, "opening names the coin sitting"): self.start()
+    def test_a_stale_sitting_must_not_be_named(self):
+        self.recorded("2026-09-07")
+        with self.assertRaisesRegex(host.HostError, "opening names the coin sitting"): self.start()
+    def test_a_cited_layer_without_its_gap_refuses(self):
+        self.recorded(); self.c["gaps"] = [g for g in self.c["gaps"] if g["fact_class"] != self.rule["coin_layer"]["prefix_form"].format(c=self.key)]
+        with self.assertRaisesRegex(host.HostError, "evidence and the opening disagree"): self.start()
+    def test_a_built_layer_with_the_gap_refuses(self):
+        self.opening["coin_sitting"] = None
+        with self.assertRaisesRegex(host.HostError, "evidence and the opening disagree"): self.start()
+    def test_init_writes_the_coin_layer_file(self):
+        self.recorded(); state, folder = self.start(); self.assertEqual(state, "INIT")
+        self.assertEqual(self.chair.read_layer(os.path.join(folder, "pack"))["scenarios"], self.coin_scenarios)
+        self.assertIn("coin_layer_read", str(runrecord.read_events(folder)))
+    def test_a_change_at_the_pause_is_applied(self):
+        self.recorded(); _, folder = self.start([self.change()])
+        force = host.pause_in_force(os.path.join(folder, "pack"), self.c["captured_at"], self.c["subject"], self.floors, capture=self.c)
+        self.assertFalse(force["preferred_treatment"]["p1"]["as_debt"]); self.assertIn("opening_changed", str(runrecord.read_events(folder)))
+    def test_a_change_from_the_wrong_value_refuses(self):
+        with self.assertRaisesRegex(host.HostError, "starts from the treatment"): self.start([self.change(**{"from":False})])
+    def test_a_change_without_its_why_refuses(self):
+        with self.assertRaisesRegex(host.HostError, "each change at the pause"): self.start([self.change(why=" ")])
+    def test_preferred_changes_on_another_subject_refuse(self):
+        folder, _, _ = self.stage([self.change()])
+        with self.assertRaisesRegex(host.HostError, "preferred_changes belongs"): host._read_approval(folder, "reviewed", self.c["captured_at"], test_evidence.holding_capture()["subject"], self.floors, self.opening)
+    def test_the_in_force_choice_feeds_the_cell_and_the_draft_check(self):
+        self.force = self.chair.treasury_in_force(self.opening, dict(preferred_changes=[self.change()]), self.rule, self.force["coin_layer"])
+        self.sent("preferred_read_refusal")
+        r=self.chair.sufficiency.treasury_readings(self.pack,self.floors,self.force["preferred_treatment"])
+        cases=self.rule["ladder_rules"]["premium_cases"]
+        for row in self.d["scenario_rating"]["scenarios"]:
+            self.assertEqual(decimal.Decimal(row["price_outcome"]),self.chair.case_price(r,row["cell"]["coin_price"],self.chair.case_key(row,cases),cases))
+    def test_unattended_keeps_the_opening_choice(self):
+        self.recorded(); _, folder = self.start()
+        self.assertEqual(host.pause_in_force(os.path.join(folder, "pack"), self.c["captured_at"], self.c["subject"], self.floors, capture=self.c)["preferred_treatment"], self.choice)
+    def test_a_protocol_pause_keeps_its_bytes(self):
+        # Control: existing protocol tests drive the unchanged pause.
+        suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(cls) for cls in ProtocolStageTest.__subclasses__())
+        result = unittest.TestResult(); suite.run(result); self.assertEqual(result.errors + result.failures, [])
+    def test_a_uranium_opening_is_unchanged(self):
+        # Control: the existing physical-holder opening checks still pass.
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(TestThePastFallOpening)
+        result = unittest.TestResult(); suite.run(result); self.assertEqual(result.errors + result.failures, [])
+
+
+class TestTheTreasurySeatInstructions(TreasuryDraftTest):
+    def test_every_seat_premium_falls_basis_uses_the_no_yearend_fold(self):
+        basis=self.rule["falls_basis_words"]
+        case=self.rule["ladder_rules"]["premium_cases"]["premium_falls"]
+        self.assertEqual(case["label"],basis)
+        texts=[self.rule["seat_emphasis"]["advisor_bear"],self.rule["ladder_rules"]["falls_premium_refusal"],
+            self.rule["ladder_rules"]["premium_cases"]["premium_falls"]["missing_refusal"],self.rule["casefile_words"]["falls_premium_words"]]
+        for text in texts: self.assertIn(basis,text)
+        for seat in briefs.ADVISOR_SEATS:
+            text=briefs._advisor_brief("treasury-example",seat,self.casefile(),self.c["subject"],treasury=self.rule)
+            if seat=="advisor_bear": self.assertIn(basis,text[0])
+    def test_missing_preferred_year_ends_print_gaps_and_the_count(self):
+        self.assertEqual(self.chair.falls_premium(self.r), decimal.Decimal("37.9"))
+        for source in ("on_record", "this_sitting"):
+            self.force["coin_layer"]["source"] = source
+            text = self.casefile(); words = self.rule["casefile_words"]
+            self.assertEqual(text.count(words["basis_with_preferred"]), 1)
+            self.assertIn(words["yearend_count_words"] % (2,0), text)
+            for gap in self.r["history_gaps"]: self.assertIn(gap, text)
+    def test_partial_preferred_history_prints_the_reduced_count(self):
+        self.c = test_evidence.treasury_preferred_history_capture({"fy2025": {"p1": "50000000"}})
+        self.pack = freeze.build_pack(self.c)
+        self.r = sufficiency_check.treasury_readings(self.pack, self.floors, self.choice)
+        self.assertEqual(self.chair.falls_premium(self.r), decimal.Decimal("31.0"))
+        text = self.casefile()
+        self.assertIn(self.rule["casefile_words"]["yearend_count_words"] % (2,1), text)
+        self.assertIn(self.rule["preferred_history"]["gap_words"].format(date="2024-12-31"), text)
+
+    def casefile(self): return briefs.render_casefile(self.pack, {}, self.c["question_verbatim"], self.c["subject"], in_force=self.force)
+    def test_the_chair_sees_the_five_seats_ladders(self):
+        ladders = {seat: {k: self.d["scenario_rating"][k] for k in ("horizon_months", "scenarios")} for seat in briefs.ADVISOR_SEATS}
+        with mock.patch.object(self.chair, "ladder_rated", wraps=self.chair.ladder_rated) as predicate:
+            text = briefs.build_brief("chair_draft", "INVENTED", "answer.json", casefile=self.casefile(), subject=self.c["subject"],
+                advisor_answers={s: "INVENTED" for s in briefs.ADVISOR_SEATS}, reviewer_answer=fixture_answer("reviewer"),
+                advisor_ladders=ladders, treasury=dict(self.rule, pack=self.pack))
+        self.assertIn("THE FIVE SEATS' OWN LADDERS, side by side", text)
+        predicate.assert_called_once_with(self.c["subject"], self.pack, briefs.floors_data())
+        for seat in briefs.ADVISOR_SEATS:
+            self.assertIn("**%s** (horizon %s months):\n%s" % (briefs.LENS_TITLES[seat], ladders[seat]["horizon_months"], briefs._ladder_lines(ladders[seat], self.rule)), text)
+    def test_coin_and_anchor_basis_chair_briefs_keep_their_bytes(self):
+        # F1 controls: compare the full brief with the previous predicate.
+        from council.lib import subjects
+        for c in (test_evidence.coin_capture(), test_evidence.holding_capture()):
+            pack = freeze.build_pack(c); subject = c["subject"]
+            case = briefs.render_casefile(pack, {}, c["question_verbatim"], subject)
+            args = dict(casefile=case, subject=subject, advisor_answers={s: "INVENTED" for s in briefs.ADVISOR_SEATS},
+                reviewer_answer=fixture_answer("reviewer"), advisor_ladders={s: chair_ladder(rungs("50", "100", "200", "0.2", "0.4", "0.4")) for s in briefs.ADVISOR_SEATS})
+            with mock.patch.object(self.chair, "ladder_rated", side_effect=lambda s, p, f: subjects.is_anchorless(s)):
+                before = briefs.build_brief("chair_draft", "INVENTED", "answer.json", **args)
+            self.assertEqual(briefs.build_brief("chair_draft", "INVENTED", "answer.json", **args), before)
+    def test_a_built_case_file_prints_the_falls_premium(self):
+        self.force["coin_layer"]["source"] = "this_sitting"
+        expected = self.rule["casefile_words"]["falls_premium_today_words"] % (str(self.chair.falls_premium(self.r)) + "%",self.rule["casefile_words"]["yearend_count_words"] % (sum(p["annual"] for p in self.r["periods"]),len(self.r["history"])))
+        text = self.casefile(); self.assertIn(expected, text)
+        self.assertNotIn(self.rule["casefile_words"]["coin_layer_lead"], text)
+    def test_every_advisor_is_told_the_cells_and_the_cases(self):
+        for seat in briefs.ADVISOR_SEATS:
+            text = briefs.build_brief(seat, "INVENTED", "answer.json", casefile=self.casefile(), subject=self.c["subject"], treasury=self.rule)
+            self.assertIn(self.rule["ladder_rules"]["ladder_instruction"], text)
+    def test_the_chair_is_told_the_read(self): self.assertIn(self.rule["ladder_rules"]["chair_contract_lines"], briefs.draft_contract(self.c["subject"], treasury=self.rule))
+    def test_each_seat_gets_its_treasury_emphasis(self):
+        for seat in briefs.ADVISOR_SEATS: self.assertEqual(briefs.seat_emphasis(self.c["subject"], seat, treasury=self.rule), self.rule["seat_emphasis"][seat])
+    def test_the_lens_not_the_methods(self):
+        for seat in briefs.ADVISOR_SEATS: self.assertEqual(briefs.advisor_remit(seat, self.c["subject"], True, treasury=self.rule), briefs.LENS_DEFINITIONS[seat])
+    def test_the_case_file_carries_the_coin_layer_and_the_formula(self):
+        for line in self.chair.casefile_lines(self.r, self.force, self.rule["casefile_words"]): self.assertIn(line, self.casefile())
+    def test_the_case_file_no_longer_enters_the_holding_path(self):
+        with mock.patch.object(briefs, "_holding_frame_lines", side_effect=AssertionError("alien reader")): self.casefile()
+        self.assertIsNone(brief.holding_subject_frame(self.c))
+    def test_a_plain_holding_brief_keeps_its_bytes(self):
+        # Control: omitted and null treasury keyword render identically.
+        import inspect
+        kwargs = dict(treasury=None) if "treasury" in inspect.signature(briefs.draft_contract).parameters else {}
+        s = test_evidence.holding_capture()["subject"]; self.assertEqual(briefs.draft_contract(s), briefs.draft_contract(s, **kwargs))
+    def test_a_coin_brief_keeps_its_bytes(self):
+        # Control: the coin's own contract stays unchanged.
+        import inspect
+        kwargs = dict(treasury=None) if "treasury" in inspect.signature(briefs.draft_contract).parameters else {}
+        s = test_evidence.coin_capture()["subject"]; self.assertEqual(briefs.draft_contract(s), briefs.draft_contract(s, **kwargs))
+
+
+class TestTheVerdictContractCarriesTheTreasuryRead(TreasuryDraftTest):
+    stage = TestTheTreasuryOpeningAndPause.stage
+    recorded = TestTheTreasuryOpeningAndPause.recorded
+    def test_the_contract_versions_and_the_new_fields(self):
+        self.assertEqual(host._verdict_schema()["properties"]["schema_version"]["const"], "1.11.0")
+        self.assertIn("treasury_read", host._seat_schemas()["draft_verdict"]["properties"])
+        self.assertEqual(host._seat_schemas()["draft_verdict"]["properties"]["treasury_read"], {})
+    def test_the_read_and_cells_are_absent_from_every_other_verdict(self):
+        for path in (os.path.join(ROOT, "council", "tests", "fixtures", "report", name, "verdict.json") for name in ("run-invented-1", "run-invented-basket", "run-invented-theme")):
+            doc = canonical.read_json(path); self.assertNotIn("treasury_read", doc)
+            self.assertTrue(all("cell" not in s for s in (doc.get("scenario_rating") or {}).get("scenarios") or []))
+    def test_the_envelope_is_unchanged(self):
+        # Control: neither read nor cell enters the envelope contract.
+        shape = host._verdict_schema()["properties"]["atlas_envelope"]
+        self.assertNotIn("treasury_read", str(shape)); self.assertNotIn('"cell"', json.dumps(shape))
+    def test_a_change_to_the_read_after_the_challenge_is_in_the_appendix(self):
+        final = copy.deepcopy(self.d); final["treasury_read"]["objection"]["answer"] = "INVENTED revised answer"
+        self.assertTrue(any(r["field"] == "treasury_read" for r in publisher.build_change_appendix(self.d, final, None)[0]))
+    def test_a_treasury_sitting_publishes(self):
+        self.recorded(); folder, pack, question = self.stage()
+        original = canonical.read_json
+        with mock.patch.object(host, "_floors", return_value=self.floors), mock.patch.object(canonical, "read_json", side_effect=lambda p: self.floors if p == host.FLOORS_PATH else original(p)):
+            self.assertEqual(self.check(), [])
+            run = Harness(self.base, run_id="treasury-example", pack=pack, question=question, subject=json.dumps(self.c["subject"]), evidence_dir=folder)
+            frame = fixture_answer("frame"); frame.update(question_for_council=self.c["question_verbatim"], for_atlas=None)
+            run.queue("frame", frame)
+            for seat in briefs.ADVISOR_SEATS:
+                answer = fixture_answer(seat); answer["scenario_ladder"] = {k:self.d["scenario_rating"][k] for k in ("horizon_months", "scenarios")}; run.queue(seat, answer)
+            run.queue("chair_draft", dict(draft_verdict=self.d, synthesis_markdown="INVENTED synthesis"))
+            resolve = fixture_answer("chair_resolve"); resolve["final_verdict"] = self.d; run.queue("chair_resolve", resolve)
+            result = run.drive(); self.assertEqual(result["state"], "DONE", result)
+            doc = run.verdict(); self.assertEqual(doc["treasury_read"], self.d["treasury_read"]); self.assertEqual(doc["scenario_rating"]["basis"], "rating")
+            self.assertEqual(doc["scenario_rating"]["scenarios"], self.d["scenario_rating"]["scenarios"])
+            self.assertTrue(all(s["cell"] for l in doc["scenario_rating"]["seat_ladders"] for s in l["scenarios"]))
+            self.assertEqual(quiet_readback(run.run_dir), 0)
+
+
+class TestTheTreasuryOpening(EngineTest):
+    def setUp(self):
+        super().setUp(); self.c=test_evidence.treasury_capture(); self.block=test_evidence.holding_frame(self.c)["treasury"]
+    def opening(self,write=True):
+        doc=dict(preferred_treatment={p["key"]:dict(as_debt=False,why="INVENTED choice") for p in self.block["preferreds"]},coin_sitting=None,chosen_by="INVENTED owner",at="2026-10-06T00:00Z")
+        if write: canonical.write_canonical_json(os.path.join(self.base,host.OPENING_NAME),doc)
+        return doc
+    def read(self): return host._read_opening(self.base,self.c["captured_at"],self.c["subject"],FLOORS,self.c)
+    def broken(self,doc,word):
+        canonical.write_canonical_json(os.path.join(self.base,host.OPENING_NAME),doc)
+        with self.assertRaisesRegex(host.HostError,word): self.read()
+    def test_no_opening_refuses(self):
+        with self.assertRaisesRegex(host.HostError,"never recorded its opening"): self.read()
+    def test_a_missing_preferred_choice_refuses(self):
+        doc=self.opening(False); doc["preferred_treatment"].pop("p1"); self.broken(doc,"one choice")
+    def test_a_choice_for_no_preferred_refuses(self):
+        doc=self.opening(False); doc["preferred_treatment"]["invented"]=dict(as_debt=False,why="INVENTED"); self.broken(doc,"one choice")
+    def test_a_choice_without_its_why_refuses(self):
+        doc=self.opening(False); doc["preferred_treatment"]["p1"]["why"]=" "; self.broken(doc,"exactly the choice")
+    def test_an_opening_after_the_capture_refuses(self):
+        doc=self.opening(False); doc["at"]="2026-10-13T00:00Z"; self.broken(doc,"after the evidence existed")
+    def test_an_empty_map_without_preferreds_passes(self):
+        self.c=test_evidence.treasury_capture("c"); self.block=test_evidence.holding_frame(self.c)["treasury"]; self.assertEqual(self.opening(),self.read())
+    def test_protocol_changes_remain_protocol_only(self):
+        # Control: the protocol sidecar still belongs to its own kind.
+        with self.assertRaisesRegex(host.HostError,"opening_changes belongs to a protocol approval only"): host._read_opening_changes({"opening_changes":[]},self.opening(False),self.c["subject"],FLOORS)
+    def test_a_plain_holding_keeps_todays_refusal(self):
+        # Control: the alien-sidecar sentence stays byte-identical.
+        self.opening(); c=test_evidence.holding_capture()
+        with self.assertRaisesRegex(host.HostError,"^opening.json belongs to the protocol kind only$"): host._read_opening(self.base,c["captured_at"],c["subject"],FLOORS)
+    def test_a_protocol_opening_is_unchanged(self):
+        # Control: every existing protocol opening test, including refusals.
+        suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(cls) for cls in ProtocolStageTest.__subclasses__())
+        result=unittest.TestResult(); suite.run(result); self.assertGreater(result.testsRun,0); self.assertEqual(result.errors+result.failures,[])
+
+
+class TestTheTreasuryDoorIsOpen(EngineTest):
+    # The architect's merge-time edit after (b2), 2026-10-13: the flag is true on the floors as merged, so
+    # the door no longer refuses; shut it in a floors copy and the same sentence refuses again.
+    def test_the_door_is_the_flag_and_nothing_else(self):
+        from unittest import mock
+        c=test_evidence.treasury_capture(); pack=os.path.join(self.base,"treasury-pack.json"); write_pack(pack,freeze.build_pack(c))
+        self.assertTrue(test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["sitting_open"])
+        shut=copy.deepcopy(test_evidence.FLOORS); shut["archetype_measures"]["holding_rule"]["treasury"]["sitting_open"]=False
+        shut_path=os.path.join(self.base,"floors-shut.json"); canonical.write_canonical_json(shut_path,shut)
+        with mock.patch.object(host,"FLOORS_PATH",shut_path):
+            with self.assertRaisesRegex(host.HostError,"treasury companies are fully ruled"):
+                host.init(self.base,"treasury-closed",pack,canonical.sha256_file(pack),SUFFICIENCY,QUESTION,json.dumps(c["subject"]))
+        self.assertFalse(os.path.exists(os.path.join(self.base,"treasury-closed")))
+        try:
+            host.init(self.base,"treasury-open",pack,canonical.sha256_file(pack),SUFFICIENCY,QUESTION,json.dumps(c["subject"]))
+        except host.HostError as caught:
+            self.assertNotIn("treasury companies are fully ruled",str(caught))  # past the door: whatever refuses next is not the door
+    def test_init_of_a_plain_holding_is_unchanged(self):
+        # Control: compare the existing subject mismatch refusal before any creation.
+        subject=test_evidence.holding_capture()["subject"]
+        with self.assertRaisesRegex(host.HostError,"does not match the pack's own subject"):
+            host.init(self.base,"plain-unchanged",PACK,PACK_SHA,SUFFICIENCY,QUESTION,json.dumps(subject))
+        self.assertFalse(os.path.exists(os.path.join(self.base,"plain-unchanged")))
+
+
 class TestInit(EngineTest):
     def test_pack_hash_mismatch_refuses_and_creates_nothing(self):
         with self.assertRaises(host.HostError):
@@ -266,6 +816,63 @@ class TestInit(EngineTest):
             self.assertIn(key, pack)
         errors = validate.validate(pack["capture"], schema)
         self.assertEqual(errors, [])
+
+
+class TestTheUraniumDoorIsOpen(EngineTest):
+    # The architect's merge-time edit after (d2) (owner ruling AC88): the uranium product's
+    # sitting_open is true on the floors as merged, so init admits a uranium subject; with the
+    # flag shut in a floors copy the host still refuses, so the door is the flag and nothing else.
+    def test_init_admits_a_uranium_subject_since_the_pages_merged(self):
+        from unittest import mock
+        capture = test_evidence.uranium_capture()
+        pack_path = os.path.join(self.base, "pack.json")
+        write_pack(pack_path, test_evidence.freeze.build_pack(capture))
+        question = os.path.join(self.base, "question.txt")
+        with open(question, "w", encoding="utf-8") as handle:
+            handle.write(capture["question_verbatim"])
+        outcome = os.path.join(self.base, "sufficiency.json")
+        canonical.write_canonical_json(outcome, test_evidence.sufficiency_of(
+            test_evidence.freeze.build_pack(capture)))
+        row = test_evidence.FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+        self.assertTrue(row["sitting_open"])
+        shut = copy.deepcopy(test_evidence.FLOORS)
+        shut["asset_classes"]["commodity"]["products"]["uranium"]["sitting_open"] = False
+        shut_path = os.path.join(self.base, "floors-shut.json")
+        canonical.write_canonical_json(shut_path, shut)
+        stage = self.evidence_stage("closed-run", pack_path=pack_path)
+        before = sorted(os.listdir(self.base))
+        with mock.patch.object(host, "FLOORS_PATH", shut_path):
+            with self.assertRaises(host.HostError) as caught:
+                host.init(self.base, "closed-run", pack_path, canonical.sha256_file(pack_path),
+                          outcome, question, json.dumps(capture["subject"]), evidence_dir=stage)
+        self.assertEqual(str(caught.exception), row["sitting_closed"])
+        self.assertEqual(sorted(os.listdir(self.base)), before)
+        stage = self.evidence_stage("open-run", pack_path=pack_path)
+        opening = row["rule"]["opening"]
+        canonical.write_canonical_json(os.path.join(stage, opening["file"]), {
+            "past_fall": next(iter(opening["past_falls"])), "chosen_by": "the owner",
+            "at": "2026-10-11T05:00Z"})
+        state, run_dir = host.init(self.base, "open-run", pack_path, canonical.sha256_file(pack_path),
+                                   outcome, question, json.dumps(capture["subject"]), evidence_dir=stage)
+        self.assertEqual(state, "INIT")
+        self.assertTrue(os.path.isdir(run_dir))
+
+    def test_init_of_copper_is_unchanged(self):
+        # Control: the existing commodity fixture still creates a run.
+        capture = test_evidence.load_fixture("copper-pass.json")
+        pack_path = os.path.join(self.base, "pack.json")
+        write_pack(pack_path, test_evidence.freeze.build_pack(capture))
+        question = os.path.join(self.base, "question.txt")
+        with open(question, "w", encoding="utf-8") as handle:
+            handle.write(capture["question_verbatim"])
+        outcome = os.path.join(self.base, "sufficiency.json")
+        canonical.write_canonical_json(outcome, test_evidence.sufficiency_of(
+            test_evidence.freeze.build_pack(capture)))
+        state, run_dir = host.init(self.base, "copper-run", pack_path,
+            canonical.sha256_file(pack_path), outcome, question, json.dumps(capture["subject"]),
+            evidence_dir=self.evidence_stage("copper-run", pack_path=pack_path))
+        self.assertEqual(state, "INIT")
+        self.assertTrue(os.path.isdir(run_dir))
 
 
 class TestInitHashGuard(EngineTest):
@@ -5229,6 +5836,30 @@ class TestEnvelopeAuditState(EngineTest):
         self.assertEqual(quiet_readback(run.run_dir), 0)
 
 
+class TestTheAtlasHandoffGate(EngineTest):
+    """Owner ruling AC78(6): only a subject Atlas has confirmed it reads
+    is handed over; the confirmed set is the floors' data."""
+
+    def test_only_an_unconfirmed_product_is_withheld(self):
+        floors = canonical.read_json(host.FLOORS_PATH)
+        for product in (None, "bitcoin", "copper"):
+            self.assertIsNone(publisher.handoff_withheld(
+                {"product": product}, floors), product)
+        withheld = publisher.handoff_withheld({"product": "zcash"}, floors)
+        self.assertEqual(withheld["product"], "zcash")
+        self.assertIs(withheld["withheld"], True)
+
+    def test_an_equity_verdict_still_writes_its_envelope(self):
+        # Control: the equity hand-off is written as before.
+        run = self.harness(run_id="equity-handoff-run")
+        run.drive()
+        self.assertTrue(os.path.exists(
+            os.path.join(run.run_dir, "atlas-envelope.json")))
+        self.assertFalse(os.path.exists(
+            os.path.join(run.run_dir, "atlas-handoff-withheld.json")))
+        self.assertEqual(quiet_readback(run.run_dir), 0)
+
+
 class TestEnvelopeRequiredFields(EngineTest):
     """AB23(3), closing P-ANCHORLESS-2 extended: three fields the
     publisher has always emitted were declared but not required, so a
@@ -5347,12 +5978,12 @@ class TestTheSchemaVersionIsBumpedLoudly(EngineTest):
     def test_a_run_published_now_states_1_7_0(self):
         run = self.harness(run_id="version-run")
         run.drive()
-        self.assertEqual(run.verdict()["schema_version"], "1.7.0")
+        self.assertEqual(run.verdict()["schema_version"], "1.11.0")
 
     def test_the_schema_declares_that_version_and_nothing_else(self):
         schema = host._verdict_schema()
         self.assertEqual(schema["properties"]["schema_version"]["const"],
-                         "1.7.0")
+                         "1.11.0")
 
 
 def published_run_dirs():
@@ -5384,12 +6015,12 @@ class TestEveryPublishedRunStillReadsBack(unittest.TestCase):
         keep the older version each was written under; not one is
         rewritten to the version in force today. A sitting written under
         the current contract states today's verdict version, and its own
-        pack was captured under today's capture contract - so an older
-        run relabelled to today's version still fails here."""
+        pack keeps a capture contract current during that verdict version.
+        An older run relabelled to today's verdict version still fails
+        because its capture version predates 1.13.0."""
         today = host._verdict_schema()["properties"]["schema_version"][
             "const"]
-        capture_today = test_evidence.SCHEMA["properties"][
-            "capture_version"]["const"]
+        CAPTURE_CONTRACTS_UNDER_VERDICT = {"1.7.0": ("1.13.0", "1.15.0"), "1.8.0": ("1.15.0",), "1.9.0": ("1.15.0", "1.16.0"), "1.10.0": ("1.16.0", "1.17.0"), "1.11.0": ("1.17.0",)}
         older = 0
         for run_dir in published_run_dirs():
             name = os.path.basename(run_dir)
@@ -5398,13 +6029,13 @@ class TestEveryPublishedRunStillReadsBack(unittest.TestCase):
             if verdict["schema_version"] == today:
                 pack = canonical.read_json(
                     os.path.join(run_dir, "pack", "pack.json"))
-                self.assertEqual(pack["capture"]["capture_version"],
-                                 capture_today, name)
+                self.assertIn(pack["capture"]["capture_version"],
+                              CAPTURE_CONTRACTS_UNDER_VERDICT[verdict["schema_version"]], name)
                 continue
             # The JPMorgan sitting was written under 1.5.0, before READ-C1
             # moved the contract to 1.6.0; it keeps the version it has.
             self.assertIn(verdict["schema_version"],
-                          ("1.0.0", "1.1.0", "1.2.0", "1.3.1", "1.5.0"), name)
+                          ("1.0.0", "1.1.0", "1.2.0", "1.3.1", "1.5.0", "1.7.0", "1.8.0"), name)
             older += 1
         self.assertGreaterEqual(len(published_run_dirs()), 9)
         self.assertGreaterEqual(older, 8)
@@ -8178,7 +8809,7 @@ class TestSeatMethodsInTheBriefs(unittest.TestCase):
         with open(path, "rb") as handle:
             doc = json.loads(handle.read().decode("utf-8"))
         self.assertEqual(doc["required_headings"], self.HEADINGS)
-        self.assertEqual(doc["title"], "Seat answer contracts 1.4.0")
+        self.assertEqual(doc["title"], "Seat answer contracts 1.8.0")
         # The briefs read the headings from the data file, never a copy.
         self.assertEqual(briefs.required_headings(), self.HEADINGS)
         # A list, not a member: the host's schema loader skips it.
@@ -9239,7 +9870,7 @@ class TestChairFields(EngineTest):
             self.assertNotIn("figures_changed", checks[0])
             self.assertEqual(self.requests(run, seat + "_fields"), [])
         verdict = run.verdict()
-        self.assertEqual(verdict["schema_version"], "1.7.0")
+        self.assertEqual(verdict["schema_version"], "1.11.0")
         self.assertEqual(verdict["decisive_argument"], self.DECISIVE)
         self.assertEqual(verdict["business_read"], self.BUSINESS)
         self.assertEqual(verdict["decisive_metrics_read"], self.METRICS)
@@ -10879,7 +11510,7 @@ class TestAnswerLine(EngineTest):
         self.assertEqual(chair_fields.ANSWER_LINE_WORDS, 30)
         schema = host._verdict_schema()
         self.assertEqual(schema["properties"]["schema_version"]["const"],
-                         "1.7.0")
+                         "1.11.0")
         self.assertIn("answer_line", schema["required"])
         self.assertEqual(validate.validate(
             None, schema["properties"]["answer_line"]), [])
@@ -10944,7 +11575,7 @@ class TestAnswerLine(EngineTest):
         run = self.run_with("answer-line-published")
         self.assertEqual(run.drive()["state"], "DONE")
         verdict = run.verdict()
-        self.assertEqual(verdict["schema_version"], "1.7.0")
+        self.assertEqual(verdict["schema_version"], "1.11.0")
         written = fixture_answer("chair_resolve")["final_verdict"]
         self.assertEqual(verdict["answer_line"], written["answer_line"])
         self.assertNotIn("answer_line", verdict["atlas_envelope"])
@@ -11864,7 +12495,7 @@ class TestTheRunwayCap(EngineTest):
                                   "unendorsed_raise", "degradation_cap",
                                   "runway_cap"])
         self.assertEqual(schema["properties"]["schema_version"]["const"],
-                         "1.7.0")
+                         "1.11.0")
 
 
 @unittest.skipUnless(published_run_dirs(),
@@ -11873,20 +12504,29 @@ class TestTheRunwayCap(EngineTest):
 class TestEveryVerdictOnRecordAfterTheRunwayCap(unittest.TestCase):
     """Records are records: the verdict bump to 1.7.0 only widens the
     appendix's labels, so every verdict on record still reads back, keeps
-    its own version, carries only labels the contract still names, and
-    renders."""
+    its own version (none later than the contract's; one written before
+    1.7.0 never carries the label 1.7.0 added), carries only labels the
+    contract still names, and renders."""
 
     def test_every_verdict_on_record_still_validates_and_renders(self):
-        labels = host._verdict_schema()["properties"]["challenge"][
+        schema = host._verdict_schema()
+        labels = schema["properties"]["challenge"][
             "properties"]["change_appendix"]["items"]["properties"][
                 "label"]["enum"]
+        current = schema["properties"]["schema_version"]["const"]
+
+        def version(text):
+            return tuple(int(part) for part in text.split("."))
         for run_dir in published_run_dirs():
             name = os.path.basename(run_dir)
             verdict = canonical.read_json(
                 os.path.join(run_dir, "verdict.json"))
-            self.assertNotEqual(verdict["schema_version"], "1.7.0", name)
+            self.assertLessEqual(version(verdict["schema_version"]),
+                                 version(current), name)
             for row in verdict["challenge"]["change_appendix"]:
                 self.assertIn(row["label"], labels, name)
+                if version(verdict["schema_version"]) < version("1.7.0"):
+                    self.assertNotEqual(row["label"], "runway_cap", name)
             self.assertEqual(quiet_readback(run_dir), 0, name)
             self.assertTrue(render_report.render(run_dir), name)
 
@@ -12358,6 +12998,73 @@ class TestProducerInTheCaseFile(unittest.TestCase):
 
 
 
+class TestCompounderInTheCaseFile(unittest.TestCase):
+    def test_the_seats_are_told_what_a_float_compounder_is(self):
+        c = test_evidence.compounder_capture()
+        for text in fi_case_texts(c):
+            self.assertIn(test_evidence.FC_RULE["page_words"]["kind_sentence"], text)
+
+    def test_the_case_file_carries_the_yardstick_and_the_tables(self):
+        c = test_evidence.compounder_page_capture()
+        for text in fi_case_texts(c):
+            for key in ("yardstick_lead", "ten_year_lead", "segments_lead", "peers_lead", "tests_lead"):
+                self.assertIn(test_evidence.FC_RULE["page_words"][key], text)
+            for year in range(2016, 2026):
+                fid = test_evidence.FC_RULE["history"]["book_value_per_share"] + "fy" + str(year)
+                self.assertIn("`" + fid + "` = 100 USD_per_share", text)
+
+    def test_an_unvouched_compounder_id_travels_fenced(self):
+        from unittest import mock
+        from council.evidence import brief
+        c = test_evidence.compounder_capture(); p = freeze.build_pack(c)
+        readings = brief.float_compounder_readings(p)
+        readings["years"][0]["bvps"] = "INVENTED <command>"
+        with mock.patch.object(brief, "float_compounder_readings", return_value=readings):
+            for text in fi_case_texts(c):
+                self.assertIn("a fact id this pack does not carry (quoted below)", text)
+                self.assertEqual(fi_outside_the_fence(text, "INVENTED <command>"), [])
+
+    def test_a_capture_label_travels_inside_the_fence(self):
+        c = test_evidence.compounder_page_capture()
+        fid = list(test_evidence.FC_RULE["adjusted_book"]["members"])[1]
+        next(f for f in c["tier1"] if f["id"] == fid)["label"] = "<b>INVENTED & label</b>"
+        for text in fi_case_texts(c):
+            self.assertIn("<b>INVENTED & label</b>", text)
+            self.assertEqual(fi_outside_the_fence(text, "<b>INVENTED & label</b>"), [])
+
+    def test_the_delta_brief_carries_the_frame_when_a_year_end_is_corrected(self):
+        c = test_evidence.compounder_capture()
+        fid = test_evidence.FC_RULE["history"]["book_value_per_share"] + "fy2021"
+        text = fi_delta(c, fid)
+        self.assertIn(test_evidence.FC_RULE["page_words"]["ten_year_lead"], text)
+        self.assertIn("`" + fid + "` = 100 USD_per_share", text)
+
+    def test_the_auditor_brief_shows_the_compounder_floors_and_the_lift(self):
+        # Control: the rule and lift already stand on the base.
+        c = test_evidence.compounder_capture(); text = fi_case_texts(c)[1]
+        self.assertIn("The capital-spending floor (`capital_expenditure_q`) is lifted for", text)
+        for entry in FLOORS["archetype_floors"][test_evidence.FC_RULE["fi_archetype"]][test_evidence.FC_RULE["compounder_subtype"]]:
+            self.assertIn(entry, fi_floor_entries(text))
+
+    def test_the_chairs_contract_is_unchanged(self):
+        # Control: the subject kind, rather than its sub-type, binds the contract.
+        a = test_evidence.compounder_capture(); b = test_evidence.fi_capture("insurer")
+        self.assertEqual(briefs.draft_contract(a["subject"]), briefs.draft_contract(b["subject"]))
+
+    def test_the_hand_off_is_not_withheld(self):
+        # Control: an equity has no product.
+        from council.engine import publisher
+        envelope = {"subject_kind": "single_stock", "asset_class": "equity"}
+        self.assertIsNone(publisher.handoff_withheld(envelope, FLOORS))
+
+    def test_a_non_compounder_case_file_carries_no_compounder_line(self):
+        # Control: existing readers carry no compounder sentence.
+        for c in (test_evidence.fi_capture("bank"), test_evidence.fi_capture("insurer"),
+                  test_evidence.holding_capture(), test_evidence.load_fixture("exmp-pass.json")):
+            for text in fi_case_texts(c):
+                self.assertNotIn("A float compounder is an insurer that invests", text)
+
+
 class TestHoldingInTheCaseFile(unittest.TestCase):
     def test_the_case_file_carries_the_holding_frame(self):
         c = test_evidence.holding_page_capture()
@@ -12564,6 +13271,44 @@ class TestCoinBriefs(unittest.TestCase):
                 self.assertIn(words, text)
 
 
+class TestTheCaseScenarioLifted(unittest.TestCase):
+    # Invented one quarter plus three quarters is exactly one.
+    def test_the_first_scenario_whose_name_carries_a_word(self):
+        first = dict(name="INVENTED CASE", probability="0.25")
+        second = dict(name="invented case again", probability="0.75")
+        self.assertIs(ladder.case_scenario(dict(scenarios=[first, second]), ["case"]), first)
+        self.assertIsNone(ladder.case_scenario(dict(scenarios=[first]), ["absent"]))
+        self.assertIsNone(ladder.case_scenario({}, ["case"]))
+
+    def test_delisting_reason_reads_the_one_function(self):
+        from unittest import mock
+        with mock.patch.object(ladder, "case_scenario", return_value=dict(probability="0.25")) as read:
+            self.assertIsNone(ladder.delisting_reason({}, ["case"], "missing", "zero"))
+            read.assert_called_once_with({}, ["case"])
+
+    def test_a_coin_delisting_result_is_unchanged(self):
+        # Control: re-run the existing coin guard, including both seat readers.
+        result = unittest.TestResult()
+        unittest.defaultTestLoader.loadTestsFromTestCase(TestTheDelistingScenario).run(result)
+        self.assertTrue(result.wasSuccessful(), result.failures + result.errors)
+
+    def test_the_named_case_check_reads_the_one_function(self):
+        from unittest import mock
+        cases = dict(a=dict(name_words=["case"], label="A", missing_refusal="missing", zero_refusal="zero"))
+        with mock.patch.object(ladder, "case_scenario", return_value=dict(probability="0.25", price_outcome="150")):
+            self.assertEqual(ladder.named_case_reasons({}, cases, "shared", "100", "below"),
+                             ["below: A; 150 >= 100"])
+
+    def test_the_named_case_messages_keep_their_bytes(self):
+        # Control: the lift changes no missing, zero, shared or price message.
+        cases = dict(a=dict(name_words=["alpha"], label="A", missing_refusal="missing A", zero_refusal="zero A"),
+                     b=dict(name_words=["beta"], label="B", missing_refusal="missing B", zero_refusal="zero B"))
+        self.assertEqual(ladder.named_case_reasons({}, cases, "shared"), ["missing A", "missing B"])
+        block = dict(scenarios=[dict(name="ALPHA beta", probability="0", price_outcome="150")])
+        self.assertEqual(ladder.named_case_reasons(block, cases, "shared", "100", "below"),
+                         ["zero A", "zero B", "shared: ALPHA beta", "below: A; 150 >= 100", "below: B; 150 >= 100"])
+
+
 class TestTheDelistingScenario(unittest.TestCase):
     def setUp(self):
         self.capture = test_evidence.coin_capture()
@@ -12597,7 +13342,54 @@ class TestTheDelistingScenario(unittest.TestCase):
         self.assertEqual(self.advisor_reasons(), [])
         self.assertEqual(self.chair_reasons(), [])
         self.assertIsNone(ladder.delisting_reason({"scenarios": self.rungs},
-                          self.rule["delisting_scenario_words"], "refusal"))
+                          self.rule["delisting_scenario_words"], "refusal", "zero refusal"))
+
+    def test_a_delisting_scenario_at_zero_probability_is_reasked(self):
+        for probability in ("0", "0.0"):
+            with self.subTest(probability=probability):
+                self.rungs[0].update(name="INVENTED DELISTING case", probability=probability)
+                self.rungs[1]["probability"] = "0.75"
+                text = self.rule.get("delisting_zero_refusal", "INVENTED missing zero refusal")
+                self.assertTrue(any(text in reason for reason in self.advisor_reasons()))
+                self.assertIn(text, host.check_scenario_rating(
+                    dict(rating="hold", scenario_rating=chair_ladder(self.rungs)),
+                    self.subject, {f["id"]: f for f in self.capture["tier1"]}))
+
+    def test_a_delisting_scenario_without_a_probability_is_reasked(self):
+        self.rungs[0]["name"] = "INVENTED DELISTING case"
+        del self.rungs[0]["probability"]
+        self.assertEqual(host._coin_delisting_reason({"scenarios": self.rungs}, self.subject),
+                         self.rule.get("delisting_zero_refusal", "INVENTED missing zero refusal"))
+
+    def test_a_delisting_scenario_above_zero_passes(self):
+        # CONTROL: the base accepts a positive delisting probability.
+        self.rungs[0]["name"] = "INVENTED DELISTING case"
+        self.assertEqual(self.advisor_reasons(), [])
+        self.assertEqual(self.chair_reasons(), [])
+
+    def test_the_zero_words_are_read_from_the_floors(self):
+        from unittest import mock
+        floors = copy.deepcopy(test_evidence.FLOORS)
+        text = "INVENTED zero refusal from data"
+        floors["asset_classes"]["crypto"]["monetary_coin_rule"]["delisting_zero_refusal"] = text
+        self.rungs[0].update(name="INVENTED DELISTING case", probability="0")
+        self.rungs[1]["probability"] = "0.75"
+        with mock.patch.object(host, "_floors", return_value=floors):
+            self.assertTrue(any(text in reason for reason in self.advisor_reasons()))
+            self.assertIn(text, host.check_scenario_rating(
+                    dict(rating="hold", scenario_rating=chair_ladder(self.rungs)),
+                    self.subject, {f["id"]: f for f in self.capture["tier1"]}))
+
+    def test_the_first_named_scenario_decides_and_requires_a_number(self):
+        self.rungs[0]["name"] = self.rungs[1]["name"] = "INVENTED DELISTING case"
+        for probability in ("INVENTED unknown", "NaN", "Infinity", "-1", "0"):
+            with self.subTest(probability=probability):
+                self.rungs[0]["probability"] = probability
+                self.assertEqual(host._coin_delisting_reason({"scenarios": self.rungs}, self.subject),
+                                 self.rule.get("delisting_zero_refusal", "INVENTED missing zero refusal"))
+        self.rungs[0]["probability"] = "0.25"
+        self.rungs[1]["probability"] = "0"
+        self.assertIsNone(host._coin_delisting_reason({"scenarios": self.rungs}, self.subject))
 
     def test_the_word_is_read_from_the_floors(self):
         from unittest import mock
@@ -12671,6 +13463,1398 @@ class TestTheCoinTapeMethod(unittest.TestCase):
             if seat == "advisor_market_structure":
                 expected += briefs.TAPE_INSIDER_STEP
             self.assertEqual(briefs.advisor_remit(seat, subject, taped=True), expected + briefs.TAPE_CITE)
+
+
+class ProtocolStageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.folder = self.tmp.name
+        self.rule = test_evidence.FLOORS["asset_classes"]["crypto"].get("protocol_rule")
+        self.capture = test_evidence.with_comparables(test_evidence.protocol_capture(), ["invented_a", "invented_b", "invented_c"]) if self.rule else test_evidence.coin_capture("bitcoin")
+        controls = {"test_a_coin_stage_is_unchanged", "test_a_coin_keeps_the_unattended_choice", "test_an_equity_keeps_the_unattended_choice"}
+        if not self.rule and self._testMethodName not in controls:
+            self.capture["subject"]["kind"] = "protocol_token"
+        self.pack = freeze.build_pack(self.capture)
+        self.hash = canonical.sha256_bytes(canonical.canonical_bytes(self.pack))
+        self.row = test_evidence.FLOORS["asset_classes"]["crypto"].get("protocols", {}).get(self.capture["subject"]["product"])
+        self.opening = dict(derate_case=self.row["default_derate_case"], derate_case_basis="default", claim=self.rule["opening"]["no_claim"], chosen_by="invented owner", at="2026-10-08T00:00Z", range_method=self.rule["opening"].get("range_methods", list(sufficiency_check.protocol_value_readings(self.pack, test_evidence.FLOORS)["methods"]))[0]) if self.rule else {}
+        self.approval = dict(by="invented owner", at="2026-10-08T06:00Z", note="INVENTED review")
+
+    def stage(self, mode="reviewed", opening=True, changes=None, capture=None):
+        from unittest import mock
+        c = capture or self.capture
+        pack = freeze.build_pack(c)
+        approval = dict(self.approval, at=c["captured_at"], **({"opening_changes": changes} if changes is not None else {})) if mode == "reviewed" else None
+        test_evidence.write_evidence_stage(self.folder, capture=c, mode=mode, approval=approval)
+        path = os.path.join(self.folder, "opening.json")
+        if opening:
+            canonical.write_canonical_json(path, self.opening)
+        elif os.path.exists(path):
+            os.remove(path)
+        # Pages belong to (d); only the existing full-document check is isolated.
+        with mock.patch.object(host, "_require_full_document"):
+            return host._read_evidence_stage(self.folder, c["captured_at"], self.hash, pack)
+
+    def refuses(self, words, **kwargs):
+        with self.assertRaises(host.HostError) as caught:
+            self.stage(**kwargs)
+        self.assertIn(words, str(caught.exception))
+
+    def claim(self):
+        return dict(words="INVENTED target reaches the named level by the horizon", measure=self.rule["opening"]["claim_measures"][0], level="1000", unit=self.rule["opening"]["claim_unit"])
+
+    def other_case(self):
+        return next(k for k in self.rule["derate_cases"] if k != self.opening["derate_case"])
+
+    def change(self, variable="derate_case", to=None):
+        return dict(variable=variable, **{"from": self.opening[variable], "to": to or self.other_case(), "why": "INVENTED owner redirect"})
+
+
+class TestTheOpeningVariables(ProtocolStageTest):
+    def test_a_protocol_stage_without_an_opening_refuses(self):
+        self.refuses(self.rule["opening_missing_refusal"], opening=False)
+
+    def test_an_opening_after_the_capture_refuses(self):
+        self.opening["at"] = "2026-10-08T07:00Z"
+        self.refuses("the opening was chosen after the evidence existed")
+
+    def test_an_unruled_derate_case_refuses(self):
+        self.opening["derate_case"] = "INVENTED"
+        self.refuses("not a ruled case")
+
+    def test_a_default_that_is_not_the_tokens_default_refuses(self):
+        self.opening["derate_case"] = self.other_case()
+        self.refuses("token's default")
+
+    def test_the_owners_own_case_passes(self):
+        self.opening.update(derate_case=self.other_case(), derate_case_basis="owner")
+        self.assertEqual(self.stage()["opening"], self.opening)
+
+    def test_no_claim_passes(self):
+        self.assertEqual(self.stage()["opening"]["claim"], self.rule["opening"]["no_claim"])
+
+    def test_a_claim_in_the_ruled_form_passes(self):
+        self.opening["claim"] = self.claim()
+        self.assertEqual(self.stage()["opening"]["claim"], self.claim())
+
+    def test_a_claim_with_an_unknown_measure_refuses(self):
+        self.opening["claim"] = dict(self.claim(), measure="invented_measure")
+        self.refuses("ruled measure")
+
+    def test_an_opening_beside_a_coin_capture_refuses(self):
+        self.refuses("protocol kind only", capture=test_evidence.coin_capture("bitcoin"))
+
+    def test_a_coin_stage_is_unchanged(self):
+        # CONTROL: only existing keys return for a monetary capture.
+        self.assertEqual(set(self.stage(opening=False, capture=test_evidence.coin_capture("bitcoin"))), {"mode", "approval", "usage"})
+
+
+class TestTheForcedReview(ProtocolStageTest):
+    def test_unattended_refuses_for_a_protocol(self):
+        self.refuses(self.rule["forced_review_refusal"], mode="unattended")
+
+    def test_reviewed_passes_for_a_protocol(self):
+        # CONTROL: reviewed acceptance exists on base; unattended refusal is new.
+        self.assertEqual(self.stage()["mode"]["mode"], "reviewed")
+
+    def test_a_coin_keeps_the_unattended_choice(self):
+        # CONTROL: the coin keeps its existing mode.
+        self.assertEqual(self.stage(mode="unattended", opening=False, capture=test_evidence.coin_capture("bitcoin"))["mode"]["mode"], "unattended")
+
+    def test_an_equity_keeps_the_unattended_choice(self):
+        # CONTROL: an equity keeps its existing mode.
+        self.assertEqual(self.stage(mode="unattended", opening=False, capture=test_evidence.load_fixture("exmp-pass.json"))["mode"]["mode"], "unattended")
+
+
+class TestTheChangeAtThePause(ProtocolStageTest):
+    def test_a_derate_change_is_recorded_and_in_force(self):
+        change = self.change(); stage = self.stage(changes=[change])
+        self.assertEqual(stage["approval"]["opening_changes"], [change])
+        self.assertEqual(host.opening_in_force(stage["opening"], stage["approval"]), dict(derate_case=change["to"], derate_case_basis="owner", claim=self.opening["claim"], fee_growth_percent="none", discount_rate_percent="none", range_method=self.opening["range_method"], changed=["derate_case"]))
+
+    def test_a_claim_change_is_in_force(self):
+        stage = self.stage(changes=[self.change("claim", self.claim())])
+        self.assertEqual(host.opening_in_force(stage["opening"], stage["approval"])["claim"], self.claim())
+
+    def test_a_change_from_the_wrong_value_refuses(self):
+        change = self.change(); change["from"] = "INVENTED"
+        self.refuses("value in force", changes=[change])
+
+    def test_a_change_to_an_unruled_case_refuses(self):
+        self.refuses("not a ruled case", changes=[self.change(to="INVENTED")])
+
+    def test_a_change_on_a_coin_approval_refuses(self):
+        self.refuses("protocol approval only", opening=False, capture=test_evidence.coin_capture("bitcoin"), changes=[self.change()])
+
+    def test_the_pack_bytes_do_not_move(self):
+        before = canonical.canonical_bytes(self.pack)
+        stage = self.stage(changes=[self.change()])
+        self.assertEqual(canonical.canonical_bytes(self.pack), before)
+        self.assertEqual(canonical.read_json(os.path.join(self.folder, "opening.json")), self.opening)
+        self.assertTrue(host.opening_in_force(stage["opening"], stage["approval"])["changed"])
+
+class TestTheDeclaredRates(ProtocolStageTest):
+    def rates(self, growth="10", discount="20"):
+        return dict(zip(self.rule["opening"]["rate_variables"], (growth, discount)))
+
+    def in_force(self, **kwargs):
+        stage = self.stage(**kwargs)
+        return host.opening_in_force(stage["opening"], stage["approval"])
+
+    def test_rates_absent_read_none(self):
+        out = self.in_force()
+        for variable in self.rule["opening"]["rate_variables"]:
+            self.assertEqual(out[variable], self.rule["opening"]["no_rate"])
+
+    def test_rates_declared_at_the_opening_are_in_force(self):
+        self.opening.update(self.rates())
+        out = self.in_force()
+        for variable, value in self.rates().items():
+            self.assertEqual(out[variable], value)
+
+    def test_rates_changed_at_the_pause_are_in_force(self):
+        changes = [dict(variable=k, **{"from": "none", "to": v, "why": "INVENTED rates declared"}) for k, v in self.rates().items()]
+        out = self.in_force(changes=changes)
+        self.assertEqual([out[k] for k in self.rates()], ["10", "20"])
+
+    def test_one_rate_without_the_other_refuses(self):
+        for variable in ("fee_growth_percent", "discount_rate_percent"):
+            self.opening[variable] = "10"
+            self.refuses(self.rule["rate_pair_refusal"])
+            self.opening.pop(variable)
+            changes = [dict(variable=variable, **{"from": "none", "to": "10", "why": "INVENTED incomplete declaration"})]
+            self.refuses(self.rule["rate_pair_refusal"], changes=changes)
+
+    def test_a_rate_not_a_number_refuses(self):
+        for variable in ("fee_growth_percent", "discount_rate_percent"):
+            for value in ("bad", 10, "-100" if variable == "fee_growth_percent" else "0"):
+                self.opening.update(self.rates()); self.opening[variable] = value
+                self.refuses(variable)
+
+    def test_a_rate_change_from_the_wrong_value_refuses(self):
+        self.opening.update(self.rates())
+        change = dict(variable="fee_growth_percent", **{"from": "11", "to": "12", "why": "INVENTED wrong prior value"})
+        self.refuses("from does not equal", changes=[change])
+
+    def test_rates_on_a_coin_approval_refuse(self):
+        # CONTROL: a coin has no protocol opening changes.
+        c = test_evidence.coin_capture()
+        change = dict(variable="fee_growth_percent", **{"from": "none", "to": "10", "why": "INVENTED wrong kind"})
+        self.refuses("protocol approval only", opening=False, changes=[change], capture=c)
+
+    def test_the_derate_and_claim_checks_are_unchanged(self):
+        # CONTROL: the ruled cases and claim shape already refuse malformed choices.
+        self.opening["derate_case"] = "INVENTED"
+        self.refuses("not a ruled case")
+        self.opening["derate_case"] = self.row["default_derate_case"]
+        self.opening["claim"] = "INVENTED"
+        self.refuses("claim must be")
+
+
+
+def protocol_scenarios_only(c):
+    rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    ids = {rule["roles"][r]["id"] for r in ("holders_30d", "holders_90d")}
+    prefixes = [s["prefix"] for s in rule["route_roles"].values()]
+    for fact in c["tier1"]:
+        if fact["id"] in ids or any(fact["id"].startswith(p) for p in prefixes):
+            fact["value"] = "0"
+    return c
+
+
+class TestTheDerateCaseAtTheStage(ProtocolStageTest):
+    def setUp(self):
+        super().setUp()
+        protocol_scenarios_only(self.capture)
+        self.opening["range_method"] = self.rule["opening"]["no_rate"]
+
+    def test_a_case_without_its_pace_refuses_naming_it(self):
+        for case, entry in self.rule["derate_cases"].items():
+            if not entry["record"]["release_pace"]["established"]:
+                self.opening.update(derate_case=case, derate_case_basis="owner")
+                with self.assertRaises(host.HostError) as caught: self.stage()
+                self.assertIn(case, str(caught.exception))
+                for gap in entry["record"]["gaps"]: self.assertIn(gap, str(caught.exception))
+
+    def test_aave_cannot_name_uni_as_its_default(self):
+        # AC83: the existing opening check reads Aave's ruled default.
+        self.capture = test_evidence.protocol_capture("aave")
+        protocol_scenarios_only(self.capture)
+        self.hash = canonical.sha256_bytes(canonical.canonical_bytes(freeze.build_pack(self.capture)))
+        self.opening.update(derate_case="UNI", derate_case_basis="default")
+        self.refuses("token's default")
+
+    def test_a_usable_case_passes(self):
+        case = next(k for k,v in self.rule["derate_cases"].items() if v["record"]["status"] == "usable")
+        self.opening.update(derate_case=case, derate_case_basis="owner"); self.assertIn("opening", self.stage())
+
+    def test_a_case_with_gaps_passes(self):
+        case = next(k for k,v in self.rule["derate_cases"].items() if v["record"]["status"] == "usable_with_gaps")
+        self.opening.update(derate_case=case, derate_case_basis="owner"); self.assertIn("opening", self.stage())
+
+    def test_a_change_at_the_pause_to_such_a_case_refuses(self):
+        case = next(k for k,v in self.rule["derate_cases"].items() if not v["record"]["release_pace"]["established"])
+        self.refuses(self.rule["derate_not_usable_refusal"], changes=[self.change(to=case)])
+
+    def test_a_change_at_the_pause_away_from_it_passes(self):
+        good = self.opening["derate_case"]
+        self.opening.update(derate_case=next(k for k,v in self.rule["derate_cases"].items() if not v["record"]["release_pace"]["established"]), derate_case_basis="owner")
+        self.assertIn("approval", self.stage(changes=[self.change(to=good)]))
+
+    def test_the_tokens_own_pace_missing_refuses_through_the_readings(self):
+        # CONTROL: the existing supply reading refuses a missing denominator.
+        self.capture["tier1"] = [f for f in self.capture["tier1"] if f["id"] != self.rule["roles"]["turnover"]["id"]]
+        out = test_evidence.sufficiency_of(freeze.build_pack(self.capture), test_evidence.FLOORS)
+        self.assertEqual(out["result"], "refuse"); self.assertIsNone(sufficiency_check.protocol_supply_readings(freeze.build_pack(self.capture), test_evidence.FLOORS))
+
+
+class TestTheRangeMethod(ProtocolStageTest):
+    # Invented: three peers with the same fees give an exact common multiple.
+    def test_no_method_named_refuses(self):
+        self.opening.pop("range_method"); self.refuses(self.rule["range_method_missing_refusal"])
+
+    def test_a_method_named_at_the_pause_is_in_force(self):
+        method = self.opening["range_method"]; self.opening["range_method"] = self.rule["opening"]["no_method"]
+        stage = self.stage(changes=[self.change("range_method", method)])
+        self.assertEqual(host.opening_in_force(stage["opening"], stage["approval"])["range_method"], method)
+
+    def test_a_method_not_standing_refuses_with_its_why(self):
+        self.capture["tier1"] = [f for f in self.capture["tier1"] if not f["id"].startswith(self.rule["comparable_prefix"])]
+        self.refuses(self.rule["comparables_dropped_words"])
+
+    def test_discounted_fees_cannot_be_the_range(self):
+        methods = sufficiency_check.protocol_value_readings(self.pack, test_evidence.FLOORS)["methods"]
+        self.opening["range_method"] = next(m for m in methods if m not in self.rule["opening"]["range_methods"]); self.refuses(self.rule["range_method_value_refusal"])
+
+    def test_a_method_on_the_scenarios_only_path_refuses(self):
+        protocol_scenarios_only(self.capture); self.refuses(self.rule["range_method_scenarios_only_refusal"])
+
+    def test_the_scenarios_only_path_needs_no_method(self):
+        protocol_scenarios_only(self.capture); self.opening.pop("range_method")
+        self.assertIn("opening", self.stage())
+
+    def test_a_method_on_a_coin_approval_refuses(self):
+        # CONTROL: changes on other kinds are already refused.
+        self.refuses("protocol approval only", capture=test_evidence.coin_capture(), opening=False, changes=[self.change("range_method", self.rule["opening"].get("no_method", self.rule["opening"]["no_rate"]))])
+
+    def test_the_earlier_variables_are_unchanged(self):
+        # CONTROL: the earlier values retain the single reader.
+        out = host.opening_in_force(self.opening, None)
+        for key in [v for v in self.rule["opening"]["variables"] if v != "range_method"]: self.assertEqual(out[key], self.opening.get(key, self.rule["opening"]["no_rate"]))
+
+
+class ProtocolDraftTest(EngineTest):
+    # Invented: equal fee bases make peer values the target range exactly.
+    def setUp(self):
+        super().setUp()
+        self.floors = copy.deepcopy(test_evidence.FLOORS)
+        self.rule = self.floors["asset_classes"]["crypto"]["protocol_rule"]
+        self.c = test_evidence.with_comparison_volume(test_evidence.with_schedule(test_evidence.protocol_capture()))
+        for slug, value in zip(("invented_a", "invented_b", "invented_c"), ("100000000", "200000000", "300000000")):
+            test_evidence.with_comparables(self.c, [slug], market_value=value, holders_fees_90d="300")
+        self.pack = freeze.build_pack(self.c)
+        self.case = next(iter(self.rule["derate_cases"]))
+        self.floors = test_evidence.with_derate_record(self.floors, self.case)
+        self.rule = self.floors["asset_classes"]["crypto"]["protocol_rule"]
+        self.force = dict(derate_case=self.case, claim=self.rule["opening"]["no_claim"], range_method=self.rule["opening"]["range_methods"][0])
+        self.d = kind_draft_skeleton(self.pack, [], [self.rule["roles"]["price"]["id"]], [dict(statement="INVENTED fees cease", figure_name="users fees", source="INVENTED next protocol reading", date="2026-11-08")])
+        self.d["conviction_rationale"] = "INVENTED the fee record supports the ladder; the release calendar is its strongest risk."
+        self.d["tripwires"]["reopening_triggers"][0]["unit"] = self.floors["asset_classes"]["crypto"]["protocols"][self.c["subject"]["product"]]["price_unit"]
+        self.d["scenario_rating"] = chair_ladder(rungs("50", "150", "350", "0.25", "0.50", "0.25"))
+        self.d["scenario_rating"]["scenarios"][-1]["catalyst"] = "INVENTED new fee route"
+        self.d["protocol_read"] = dict(comparison=dict(word=next(iter(self.rule["comparison_words"])), deciding_measure="release_pace", why="INVENTED measured pace"), supply=dict(word=next(iter(self.rule["supply_words"])), why="INVENTED calendar"),
+            near_term=[dict(horizon=h, side=s, price_low="50", price_high="100", probability="0.80", catalyst="INVENTED event") for h in self.rule["near_term"]["horizons"] for s in self.rule["near_term"]["sides"]], claim=None, objection=dict(objection="INVENTED fees fade", answer="INVENTED already in the lower rung"))
+
+    def check(self):
+        from unittest import mock
+        self.pack = freeze.build_pack(self.c)
+        if self.d["scenario_rating"]["aggregated"]:
+            self.d["rating"] = ladder.compute(self.d["scenario_rating"], {f["id"]: f for f in self.c["tier1"]}, self.floors)["rating"]
+        with mock.patch.object(host, "_floors", return_value=self.floors):
+            # The regression probe also calls the earlier three-argument contract.
+            import inspect
+            kwargs = {"in_force": self.force} if "in_force" in inspect.signature(host.check_draft_verdict).parameters else {}
+            return host.check_draft_verdict(self.d, self.pack, host._seat_schemas(), **kwargs)
+
+    def sent(self, key):
+        self.assertTrue(any(self.rule[key] in r for r in self.check()), self.check())
+
+    def stands(self): self.assertEqual(self.check(), [])
+
+    def claim(self, measure=None, level="150", probability="0.75"):
+        self.force["claim"] = dict(words="INVENTED target", measure=measure or self.rule["opening"]["claim_measures"][-1], level=level, unit=self.rule["opening"]["claim_unit"])
+        self.d["protocol_read"]["claim"] = dict(probability=probability, reasoning="INVENTED cross product")
+
+
+class TestTheProtocolLadderChecks(ProtocolDraftTest):
+    def test_the_base_rung_is_where_the_chances_reach_one_half(self):
+        block = self.d["scenario_rating"]; block["scenarios"][0]["probability"] = "0.50"; block["scenarios"][1]["probability"] = "0.25"
+        self.assertEqual(ladder.base_rung(block), block["scenarios"][0]); self.sent("base_rung_refusal")
+
+    def test_a_base_rung_inside_the_range_stands(self): self.stands()
+    def test_a_base_rung_below_the_range_is_sent_back(self):
+        self.d["scenario_rating"]["scenarios"][1]["price_outcome"] = "75"; self.sent("base_rung_refusal")
+    def test_a_base_rung_above_the_range_is_sent_back(self):
+        self.d["scenario_rating"]["scenarios"][1]["price_outcome"] = "325"; self.sent("base_rung_refusal")
+    def test_both_ends_of_the_range_are_inside(self):
+        for price in ("100", "300"):
+            self.d["scenario_rating"]["scenarios"][1]["price_outcome"] = price; self.stands()
+    def test_a_rung_above_the_top_without_a_catalyst_is_sent_back(self):
+        self.d["scenario_rating"]["scenarios"][-1].pop("catalyst"); self.sent("bull_catalyst_refusal")
+    def test_a_rung_above_the_top_with_a_catalyst_stands(self): self.stands()
+    def test_the_range_is_struck_on_the_twelve_month_supply(self):
+        self.c["supply_schedule"]["emissions"] = [dict(amount="2000000", unit=self.floors["asset_classes"]["crypto"]["protocols"][self.c["subject"]["product"]]["unit"], period_start="2026-10-09", period_end="2027-10-08", receiving_group="invented stakers", source="INVENTED", as_of="2026-10-08")]
+        self.sent("base_rung_refusal")
+    def test_the_scenarios_only_path_skips_the_range(self):
+        protocol_scenarios_only(self.c); self.force["range_method"] = self.rule["opening"]["no_method"]
+        self.d["scenario_rating"]["scenarios"][-1].pop("catalyst"); self.stands()
+    def test_a_ladder_not_aggregated_skips_the_range_and_the_floor(self):
+        self.claim(probability="0"); self.d["scenario_rating"].update(aggregated=False, not_aggregated_reason="INVENTED disagreement", scenarios=[]); self.d["rating"] = "monitor"; self.stands()
+    def test_the_ladder_is_twelve_months(self):
+        self.d["scenario_rating"]["horizon_months"] = "6"; self.sent("horizon_refusal")
+    def test_a_catalyst_on_another_kinds_ladder_is_refused(self):
+        self.c = test_evidence.coin_capture(); self.d.pop("protocol_read"); self.sent("catalyst_on_other_kind_refusal")
+    def test_check_shape_and_compute_keep_their_bytes(self):
+        # CONTROL: pinned base arithmetic, including every message and result.
+        block = chair_ladder(rungs("45000", "95000", "160000", "0.25", "0.45", "0.30")); facts = anchorless_facts()
+        self.assertEqual(ladder.check_shape(block, facts), [])
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes(ladder.compute(block, facts, self.floors))).hexdigest(), '2948eba7bf7e525043d2b8080028b7d878262c1d0768edce47dd1327b44d8c2b')
+        self.stands()
+
+
+class TestTheChairmansProtocolRead(ProtocolDraftTest):
+    def test_a_protocol_draft_without_its_read_is_sent_back(self):
+        self.d.pop("protocol_read"); self.sent("read_missing_refusal")
+    def test_a_read_on_another_kind_is_refused(self):
+        self.c = test_evidence.coin_capture(); self.d["scenario_rating"]["scenarios"][-1].pop("catalyst"); self.sent("read_on_other_kind_refusal")
+    def test_each_word_is_a_ruled_word(self):
+        for key, words in (("comparison", self.rule["comparison_words"]), ("supply", self.rule["supply_words"])):
+            for word in words: self.d["protocol_read"][key]["word"] = word; self.stands()
+            self.d["protocol_read"][key]["word"] = "INVENTED"; self.assertTrue(self.check()); self.d["protocol_read"][key]["word"] = next(iter(words))
+    def test_the_deciding_measure_stands_on_both_sides(self):
+        self.d["protocol_read"]["comparison"]["deciding_measure"] = "offsets"; self.sent("deciding_measure_refusal")
+    def test_four_near_term_cells_each_once(self):
+        cells = self.d["protocol_read"]["near_term"]; cells[0] = copy.deepcopy(cells[1]); self.sent("near_term_refusal")
+    def test_a_near_term_probability_at_zero_or_one_is_sent_back(self):
+        for chance in ("0", "1", "NaN"):
+            self.d["protocol_read"]["near_term"][0]["probability"] = chance; self.sent("near_term_refusal")
+    def test_no_sum_rule_on_the_near_term_table(self): self.stands()
+    def test_a_price_range_upside_down_is_sent_back(self):
+        self.d["protocol_read"]["near_term"][0]["price_low"] = "200"; self.sent("near_term_refusal")
+    def test_the_objection_and_its_answer_are_required(self):
+        for key in ("objection", "answer"):
+            saved = self.d["protocol_read"]["objection"].pop(key); self.assertTrue(self.check()); self.d["protocol_read"]["objection"][key] = saved
+    def test_every_existing_reason_keeps_its_words_and_order(self):
+        # CONTROL: old semantic reasons precede new protocol reasons.
+        self.d["mispricing"].update(read="no_view", magnitude="INVENTED")
+        old = "the mispricing read is no_view but magnitude or arithmetic carries a value: a no-view read carries null for both, as the contract states"
+        self.assertEqual(self.check(), [old])
+
+
+class TestTheClaimFloor(ProtocolDraftTest):
+    def test_no_claim_in_force_takes_no_claim(self): self.stands()
+    def test_a_claim_written_with_none_in_force_is_refused(self):
+        self.d["protocol_read"]["claim"] = dict(probability="0", reasoning="INVENTED"); self.sent("claim_without_opening_refusal")
+    def test_a_claim_in_force_needs_its_probability(self):
+        self.claim(); self.d["protocol_read"]["claim"] = None; self.sent("claim_missing_refusal")
+    def test_a_probability_below_the_ladders_chance_is_sent_back(self):
+        self.claim(probability="0.74"); self.sent("claim_floor_refusal")
+    def test_a_probability_equal_to_it_stands(self): self.claim(); self.stands()
+    def test_a_market_value_claim_is_struck_on_the_twelve_month_supply(self):
+        self.claim(self.rule["opening"]["claim_measures"][0], "150000000", "0.25")
+        self.c["supply_schedule"]["emissions"] = [dict(amount="1000000", unit=self.floors["asset_classes"]["crypto"]["protocols"][self.c["subject"]["product"]]["unit"], period_start="2026-10-09", period_end="2027-10-08", receiving_group="invented stakers", source="INVENTED", as_of="2026-10-08")]
+        self.sent("claim_floor_refusal")
+    def test_a_fully_diluted_claim_is_struck_on_the_total_supply(self):
+        self.claim(self.rule["opening"]["claim_measures"][1], "250000000", "0.25"); self.sent("claim_floor_refusal")
+    def test_a_price_claim_reads_as_it_is(self): self.claim(level="350", probability="0.25"); self.stands()
+    def test_no_scenario_reaching_the_claim_is_a_chance_of_zero(self):
+        self.claim(level="1000", probability="0"); self.stands(); self.assertEqual(ladder.mass_at_or_above(self.d["scenario_rating"], "1000", 1), 0)
+    def test_the_claim_changed_at_the_pause_is_the_one_checked(self):
+        self.claim(probability="0.25"); old = dict(self.force, derate_case_basis="owner", claim=self.rule["opening"]["no_claim"])
+        self.force = host.opening_in_force(old, dict(opening_changes=[dict(variable="claim", to=self.force["claim"])]), self.floors); self.sent("claim_floor_refusal")
+
+
+class TestTheProtocolSeatInstructions(unittest.TestCase):
+    def setUp(self):
+        self.rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]; self.subject = test_evidence.protocol_capture()["subject"]
+    def test_each_seat_leads_with_its_protocol_emphasis(self):
+        for seat, words in self.rule["seat_emphasis"].items(): self.assertEqual(briefs.seat_emphasis(self.subject, seat), words)
+    def test_the_rally_line_is_the_coins_line_word_for_word(self):
+        self.assertEqual(self.rule["advisor_lines"][0], test_evidence.FLOORS["asset_classes"]["crypto"]["monetary_coin_rule"]["rally_line"])
+    def test_every_advisor_gets_the_lines_in_order(self):
+        for seat in self.rule["seat_emphasis"]:
+            text = briefs._advisor_brief("INVENTED", seat, "case", self.subject)[0]; self.assertIn("\n".join(self.rule["advisor_lines"]), text)
+    def test_the_chair_is_told_the_protocol_read(self):
+        text = briefs.draft_contract(self.subject); self.assertIn(briefs._PROTOCOL_CHAIR_CONTRACT, text); self.assertNotIn(briefs.COIN_SUPPLY_NOTE, text)
+    def test_a_coin_brief_keeps_its_bytes(self):
+        # CONTROL: pinned from the base, every advisor and chair contract.
+        self.assertEqual(instruction_hash(test_evidence.coin_capture()["subject"]), '5e44485f6f500268197ea17e5f8de395f638562404c31fe314e7099349ac8108')
+    def test_an_equity_brief_keeps_its_bytes(self):
+        # CONTROL: pinned from the base.
+        self.assertEqual(instruction_hash(test_evidence.load_fixture("exmp-pass.json")["subject"]), '6b4f0fb3873c65fd81e9c27ed3f59137e5f2960c99d53a575e8e030c3bb03c87')
+
+
+def instruction_hash(subject):
+    return hashlib.sha256(canonical.canonical_bytes([briefs._advisor_brief("INVENTED", seat, "case", subject)[0] for seat in briefs.ADVISOR_SEATS] + [briefs.draft_contract(subject)])).hexdigest()
+
+
+class TestTheVerdictContractAdmitsTheProtocol(ProtocolDraftTest):
+    def test_the_contract_is_1_8_0_and_admits_the_kind(self):
+        schema = host._verdict_schema(); self.assertEqual(schema["properties"]["schema_version"]["const"], "1.11.0")
+        for field in (schema["properties"]["subject"]["properties"]["kind"], schema["properties"]["atlas_envelope"]["properties"]["subject_kind"]): self.assertIn(self.c["subject"]["kind"], field["enum"])
+    def test_init_admits_a_protocol_subject(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "pack.json"); canonical.write_canonical_json(path, self.pack)
+            question = os.path.join(folder, "question.txt"); canonical.write_bytes_atomic(question, self.c["question_verbatim"].encode())
+            stage = dict(mode=dict(mode="reviewed", chosen_by="INVENTED", at=self.c["captured_at"]), approval=dict(by="INVENTED", at=self.c["captured_at"], note="INVENTED"), usage=dict(tokens=0, tool_calls=0, minutes=0), opening=dict(self.force, derate_case_basis="owner"))
+            with mock.patch.object(host, "_read_evidence_stage", return_value=stage):
+                state, run_dir = host.init(folder, "invented-protocol", path, canonical.sha256_file(path), SUFFICIENCY, question, json.dumps(self.c["subject"]), evidence_dir=folder); self.assertTrue(os.path.isdir(run_dir))
+    def test_the_read_is_absent_from_every_other_verdict(self):
+        with tempfile.TemporaryDirectory() as folder:
+            run = Harness(folder); run.drive(); self.assertNotIn("protocol_read", run.verdict())
+    def test_the_envelope_carries_no_read(self):
+        self.assertNotIn("protocol_read", host._verdict_schema()["properties"]["atlas_envelope"]["properties"])
+    def test_the_draft_and_verdict_scenario_items_are_equal(self):
+        self.assertEqual(host._seat_schemas()["draft_verdict"]["properties"]["scenario_rating"]["properties"]["scenarios"]["items"], host._verdict_schema()["properties"]["scenario_rating"]["properties"]["scenarios"]["items"])
+    def test_a_change_to_the_read_after_the_challenge_is_in_the_appendix(self):
+        old = copy.deepcopy(self.d); self.d["protocol_read"]["supply"]["why"] = "INVENTED changed calendar"
+        rows, _ = publisher.build_change_appendix(old, self.d, None); self.assertEqual([r["field"] for r in rows], ["protocol_read"])
+    def test_a_protocol_sitting_publishes_and_withholds_the_hand_off(self):
+        self.stands()
+        with tempfile.TemporaryDirectory() as folder:
+            pack, paths = kind_run_material(folder, self.c, "invented-protocol")
+            opening = dict(self.force, range_method=self.rule["opening"]["no_method"], derate_case_basis="owner", chosen_by="INVENTED owner", at="2026-10-08T00:00Z")
+            approval = dict(by="INVENTED owner", at=self.c["captured_at"], note="INVENTED approval", opening_changes=[dict(variable="range_method", **{"from": opening["range_method"], "to": self.force["range_method"], "why": "INVENTED supported method"})])
+            evidence = test_evidence.write_evidence_stage(os.path.join(folder, "evidence"), pack_path=paths["pack"], mode="reviewed", approval=approval)
+            canonical.write_canonical_json(os.path.join(evidence, host.OPENING_NAME), opening)
+            # AC81(3): this go follows the document remade with the redirect.
+            brief.main([paths["pack"], "--out", os.path.join(evidence, host.FULL_DOCUMENT_NAME), "--full"])
+            approval["document_sha256"] = canonical.sha256_file(os.path.join(evidence, host.FULL_DOCUMENT_NAME))
+            canonical.write_canonical_json(os.path.join(evidence, host.APPROVAL_NAME), approval)
+            run = Harness(folder, run_id="invented-protocol", sufficiency=paths["sufficiency"], pack=paths["pack"], question=paths["question"], subject=paths["subject"], evidence_dir=evidence)
+            self.assertEqual(run.state, "INIT")
+            run.queue("frame", kind_frame(self.c, "INVENTED fresh decision on a token"))
+            for seat in briefs.ADVISOR_SEATS:
+                answer = fixture_answer(seat)
+                answer["scenario_ladder"] = dict(horizon_months="12", scenarios=rungs("50", "150", "350", "0.25", "0.50", "0.25"))
+                run.queue(seat, answer)
+            draft = copy.deepcopy(self.d)
+            draft["conviction_rationale"] = (
+                "The fee record supports the rated ladder against cash. The named range uses peers with the same fee measure, "
+                "and the middle rung sits inside it on the supply expected at the horizon. The strongest objection is that "
+                "fees fade while more tokens become free to trade; the lower rung carries that risk. The upper rung depends "
+                "on a new fee route. The owner can reopen the question at the next dated fee reading, rather than infer "
+                "support for the thesis from the market's recent rally.")
+            run.queue("chair_draft", dict(draft_verdict=draft, synthesis_markdown="INVENTED protocol synthesis"))
+            run.queue("chair_resolve", dict(dispositions=fixture_answer("chair_resolve")["dispositions"], final_verdict=draft, final_markdown="INVENTED protocol final synthesis"))
+            for seat in ("chair_draft_prose", "chair_resolve_prose"):
+                run.queue(seat, dict(conviction_rationale=draft["conviction_rationale"]))
+            result = run.drive(); self.assertEqual(result["state"], "DONE", result)
+            self.assertEqual(run.verdict()["protocol_read"], draft["protocol_read"])
+            event = canonical.read_json(os.path.join(run.run_dir, "atlas-handoff-withheld.json"))
+            self.assertIn(run.verdict()["subject"]["product"], str(event))
+            self.assertEqual(event, publisher.handoff_withheld(run.verdict()["atlas_envelope"], test_evidence.FLOORS))
+            self.assertTrue(any(e["event"] == "ledger_row_appended" for e in run.events()))
+            self.assertFalse(os.path.exists(os.path.join(run.run_dir, "atlas-envelope.json")))
+
+
+
+class TestTheProtocolPause(ProtocolStageTest):
+    # Three invented peers with annual fees of three hundred sixty-five give exact multiples.
+    def prepare(self, changes=None):
+        test_evidence.write_evidence_stage(self.folder, capture=self.capture,
+                                           mode="reviewed", approval=self.approval)
+        canonical.write_canonical_json(os.path.join(self.folder, "pack.json"), self.pack)
+        canonical.write_canonical_json(os.path.join(self.folder, host.OPENING_NAME), self.opening)
+        if changes is not None:
+            canonical.write_canonical_json(os.path.join(self.folder, host.APPROVAL_NAME),
+                                            {"opening_changes": changes})
+
+    def force(self):
+        return host.pause_in_force(self.folder, self.capture["captured_at"],
+                                   self.capture["subject"], test_evidence.FLOORS)
+
+    def render_command(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return brief.main([os.path.join(self.folder, "pack.json"), "--out",
+                               os.path.join(self.folder, host.FULL_DOCUMENT_NAME), "--full"])
+
+    def approve(self):
+        path = os.path.join(self.folder, host.APPROVAL_NAME)
+        doc = canonical.read_json(path)
+        doc.update(self.approval, document_sha256=canonical.sha256_file(
+            os.path.join(self.folder, host.FULL_DOCUMENT_NAME)), pack_sha256=self.hash)
+        canonical.write_canonical_json(path, doc)
+
+    def test_the_brief_command_reads_the_opening_and_the_redirect(self):
+        change = self.change()
+        self.prepare([change])
+        self.assertEqual(self.render_command(), 0)
+        with open(os.path.join(self.folder, host.FULL_DOCUMENT_NAME), encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn(change["to"] + ":", text)
+        self.assertIn(change["why"], text)
+        self.assertIn(self.rule["derate_basis_words"]["owner_at_pause"] % change["from"], text)
+
+    def test_a_redirect_alone_in_the_approval_is_read(self):
+        self.prepare([self.change()])
+        force = self.force()
+        self.assertEqual(force["derate_case"], self.other_case())
+        self.assertEqual(force["opening_changes"], [self.change()])
+
+    def test_a_bad_redirect_refuses_with_the_hosts_words(self):
+        change = self.change(); change["from"] = "INVENTED wrong previous case"
+        self.prepare([change])
+        with self.assertRaises(host.HostError) as caught: self.force()
+        self.assertEqual(str(caught.exception), "opening change from does not equal the value in force")
+
+    def test_init_rerenders_with_the_variables_in_force(self):
+        self.prepare([self.change()])
+        self.assertEqual(self.render_command(), 0)
+        with open(os.path.join(self.folder, host.FULL_DOCUMENT_NAME), encoding="utf-8") as f:
+            self.assertIn(self.change()["why"], f.read())
+        self.approve()
+        out = host._require_full_document(self.folder, "reviewed", self.capture["captured_at"], self.hash, self.pack)
+        self.assertEqual(out, canonical.sha256_file(os.path.join(self.folder, host.FULL_DOCUMENT_NAME)))
+
+    def test_a_go_on_the_document_before_the_redirect_is_refused(self):
+        self.prepare()
+        self.assertEqual(self.render_command(), 0)
+        self.approve()
+        path = os.path.join(self.folder, host.APPROVAL_NAME)
+        doc = canonical.read_json(path); doc["opening_changes"] = [self.change()]
+        canonical.write_canonical_json(path, doc)
+        with self.assertRaises(host.HostError) as caught:
+            host._require_full_document(self.folder, "reviewed", self.capture["captured_at"], self.hash, self.pack)
+        self.assertIn("not the rendering of this evidence pack", str(caught.exception))
+
+    def test_the_approval_messages_keep_their_bytes(self):
+        # CONTROL: these are the original host messages, unchanged on base.
+        failures = [(None, "opening_changes must be a list"),
+                    ([{}], "each opening change names variable, from, to and why"),
+                    ([dict(self.change(), why="")], "each opening change requires a non-empty why")]
+        for changes, words in failures:
+            self.prepare()
+            canonical.write_canonical_json(os.path.join(self.folder, host.APPROVAL_NAME),
+                dict(self.approval, opening_changes=changes))
+            with self.assertRaises(host.HostError) as caught:
+                host._read_approval(self.folder, "reviewed", self.capture["captured_at"],
+                                    self.capture["subject"], test_evidence.FLOORS, self.opening)
+            self.assertEqual(str(caught.exception), words)
+
+    def test_a_coin_brief_reads_no_opening(self):
+        # CONTROL: an alien sidecar never creates a coin-brief refusal.
+        c = test_evidence.coin_capture()
+        self.capture = c; self.pack = freeze.build_pack(c)
+        self.prepare()
+        self.assertEqual(self.render_command(), 0)
+        with open(os.path.join(self.folder, host.FULL_DOCUMENT_NAME), encoding="utf-8") as f:
+            actual = f.read()
+        usage = canonical.read_json(os.path.join(self.folder, host.CAPTURE_USAGE_NAME))
+        self.assertEqual(actual, brief.render_full(self.pack, canonical.sha256_file(
+            os.path.join(self.folder, "pack.json")), usage))
+
+
+class TestTheProtocolCaseFile(unittest.TestCase):
+    # Invented annual fees of three hundred sixty-five make a peer multiple of two exact.
+    def setUp(self):
+        self.c = test_evidence.with_comparables(test_evidence.protocol_capture(),
+            ["invented_a", "invented_b", "invented_c"])
+        self.pack = freeze.build_pack(self.c)
+        self.rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        row = test_evidence.FLOORS["asset_classes"]["crypto"]["protocols"][self.c["subject"]["product"]]
+        self.force = dict(derate_case=row["default_derate_case"], derate_case_basis="default",
+            claim=self.rule["opening"]["no_claim"], range_method=self.rule["opening"]["range_methods"][0],
+            fee_growth_percent="none", discount_rate_percent="none", changed=[], opening_changes=[])
+
+    def casefile(self, seat=None):
+        return briefs.render_casefile(self.pack, {}, "INVENTED question", self.c["subject"],
+                                      seat_kind=seat, in_force=self.force)
+
+    def test_every_reader_gets_the_token_block(self):
+        for seat in (*briefs.ADVISOR_SEATS, "reviewer", "chair_draft"):
+            text = self.casefile(seat if seat in briefs.ADVISOR_SEATS else None)
+            self.assertIn("## The token", text)
+            self.assertIn(self.rule["kind_line_words"], text)
+            self.assertIn(self.rule["absent_sentence"], text)
+            self.assertIn("The release schedule", text)
+
+    def test_each_line_cites_recorded_ids_only(self):
+        text = self.casefile().split("## The token", 1)[1].split("## The question", 1)[0]
+        facts = {f["id"]: f for f in self.c["tier1"]}
+        citations = re.findall(r"`([^`]+)` = ([^;\n]+)", text)
+        self.assertTrue(citations)
+        for fid, value in citations:
+            self.assertIn(fid, facts)
+            self.assertEqual(value, facts[fid]["value"] + " " + facts[fid]["unit"])
+        for line in text.splitlines():
+            if "Recorded inputs:" in line:
+                self.assertTrue(line.startswith("| "), line)
+
+    def test_a_protocol_case_file_cites_each_line_by_its_own_facts(self):
+        # Five invented peers and eight history points expose repeated citations.
+        self.c = test_evidence.with_history(test_evidence.with_comparables(
+            test_evidence.protocol_capture(), ["invented_" + str(i) for i in range(5)]),
+            {"invented_" + str(i): "2" for i in range(8)})
+        self.pack = freeze.build_pack(self.c)
+        text = self.casefile()
+        block = text.split("## The token", 1)[1].split("## The question", 1)[0]
+        kind = next(line for line in block.splitlines() if self.rule["front_lead"] in line)
+        self.assertNotIn("Recorded inputs:", kind)
+        price_line = next(line for line in block.splitlines() if self.rule["price_lead"] in line)
+        self.assertNotIn("`" + self.rule["roles"]["supply_total"]["id"] + "` = ", price_line)
+        prefix = self.rule["comparable_prefix"]
+        for fact in self.c["tier1"]:
+            if fact["id"].startswith(prefix):
+                cited = "`" + fact["id"] + "` = "
+                self.assertEqual(block.count(cited), 1, fact["id"])
+                line = next(line for line in block.splitlines() if cited in line)
+                self.assertIn("| invented_" + fact["id"].rsplit("invented_", 1)[1] + " |", line)
+        self.assertLess(len(text.encode("utf-8")), 80000)
+
+    def test_the_reading_rule_is_the_protocols(self):
+        self.assertEqual(briefs.class_reading_rule(self.c["subject"]), self.rule["reading_rule"])
+        self.assertIn("Daily active addresses are background only", self.casefile())
+        self.assertIn("colour at most", self.casefile())
+
+    def test_the_case_file_names_the_case_in_force(self):
+        case = next(k for k in self.rule["derate_cases"] if k != self.force["derate_case"])
+        self.force.update(derate_case=case, derate_case_basis="owner")
+        self.assertIn(case + ":", self.casefile())
+        self.assertIn(self.rule["derate_basis_words"]["owner_at_opening"], self.casefile())
+
+    def test_the_rally_line_is_once_in_each_advisor_brief_and_in_no_case_file(self):
+        # CONTROL: the advisor discipline already exists on base; the new block must not repeat it.
+        rally = self.rule["advisor_lines"][0]
+        casefile = briefs.render_casefile(self.pack, {}, "INVENTED question", self.c["subject"])
+        self.assertEqual(casefile.count(rally), 0)
+        for seat in briefs.ADVISOR_SEATS:
+            text = briefs.build_brief(seat, "INVENTED", "answer.json", casefile=casefile, subject=self.c["subject"])
+            self.assertEqual(text.count(rally), 1)
+
+    def test_a_coin_case_file_keeps_its_bytes(self):
+        # CONTROL: expected bytes recorded on base before edits.
+        c = test_evidence.coin_capture()
+        text = briefs.render_casefile(freeze.build_pack(c), {}, "INVENTED question", c["subject"])
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), "40c1cc6d1dd6d10bf6e95bb933b906a24b81a343113800c26901c87a9248a589")
+
+    def test_an_equity_case_file_keeps_its_bytes(self):
+        # CONTROL: expected bytes recorded on base before edits.
+        c = test_evidence.load_fixture("exmp-pass.json")
+        text = briefs.render_casefile(freeze.build_pack(c), {}, "INVENTED question", c["subject"])
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), "8429aad1b9f3ff69e29c781aef95b09112d6ceadb11ba3543123bc8ac4ef26a0")
+
+
+
+
+
+class TestTheClaimFloorLifted(ProtocolDraftTest):
+    # Invented: a quarter plus a half is exactly three quarters.
+    def test_the_floor_is_one_function(self):
+        from unittest import mock
+        from council.engine import protocol_chair
+        self.claim(probability="0.75")
+        with mock.patch.object(protocol_chair, "claim_floor", return_value=decimal.Decimal(1)) as reader:
+            self.sent("claim_floor_refusal")
+        self.assertTrue(reader.called)
+
+    def test_the_floor_reads_each_claim_measure(self):
+        from council.engine import protocol_chair
+        supply = sufficiency_check.protocol_supply_readings(self.pack, self.floors)
+        total = decimal.Decimal(next(f["value"] for f in self.c["tier1"] if f["id"] == self.rule["roles"]["supply_total"]["id"]))
+        for measure, per in zip(self.rule["opening"]["claim_measures"], (supply["twelve_month_supply"], total, 1)):
+            self.claim(measure=measure, level=str(decimal.Decimal(150) * per))
+            self.assertEqual(protocol_chair.claim_floor(self.d["scenario_rating"], self.force["claim"], self.pack, self.floors), decimal.Decimal("0.75"))
+
+    def test_the_floor_messages_keep_their_bytes(self):
+        # CONTROL: the earlier claim-floor tests run unchanged in the engine suite.
+        from council.engine import protocol_chair
+        self.claim(probability="0.74")
+        messages = protocol_chair.problems(self.d, self.pack, self.floors, self.force)
+        self.assertIn(self.rule["claim_floor_refusal"] + ": 0.74 < 0.75", messages)
+
+
+class TestProfitFixMetricRows(EngineTest):
+    """PAGES-PROFIT-FIX: arithmetic reads exact facts of this metric alone."""
+
+    def row(self, value, captured_at="2026-10-11T12:00:00Z"):
+        from council.engine import chair_fields
+        capture = fixture("pack.json")["capture"]
+        capture["captured_at"] = captured_at
+        for fact in capture["tier1"]:
+            if fact["id"] == "segment_revenue_support_q":
+                fact["value"] = "1084490000"
+            elif fact["id"] == "segment_revenue_support_prior_year_q":
+                fact["value"] = "1000000000"
+        row = dict(TestChairFields.METRICS[0], value=value)
+        return chair_fields.mark_rows([row], capture, brief._marks_config())[1]
+
+    def test_change_traces_from_written_operands_using_exact_recorded_values(self):
+        self.assertEqual(self.row("8.4% (reported: $1.08B against $1.00B a year earlier)"), [])
+        self.assertEqual(self.row("8.4% (reported: $1.08B against $1.00B a year earlier)",
+                                  "2026-10-10T12:00:00Z"),
+                         [TestChairFields.METRICS[0]["metric"]])
+
+    def test_change_off_in_its_last_digit_stays_marked(self):
+        # Control: an incorrect calculation stays marked on base and head.
+        self.assertEqual(self.row("8.5% (reported: $1.08B against $1.00B a year earlier)"),
+                         [TestChairFields.METRICS[0]["metric"]])
+
+    def test_unwritten_operands_stay_marked(self):
+        # Control: the facts alone never license the chairman's arithmetic.
+        self.assertEqual(self.row("8.4% growth"), [TestChairFields.METRICS[0]["metric"]])
+
+    def test_metric_yield_fraction_traces_as_percent(self):
+        from council.engine import chair_fields
+        capture = fixture("pack.json")["capture"]
+        metric = capture["business_frame"]["FIXT"]["decisive_metrics"][0]
+        metric["answered_by"] = ["earnings_yield_ratio"]
+        capture["tier1"].append(dict(capture["tier1"][0],
+            id="earnings_yield_ratio", value="0.04", unit="ratio"))
+        row = dict(TestChairFields.METRICS[0], value="4.0%")
+        self.assertEqual(chair_fields.mark_rows([row], capture, brief._marks_config())[1],
+                         [row["metric"]])
+        capture["captured_at"] = "2026-10-11T12:00:00Z"
+        self.assertEqual(chair_fields.mark_rows([row], capture, brief._marks_config())[1], [])
+
+    def test_quotient_percent_multiple_and_difference_use_two_written_operands(self):
+        for result in ("108.4%", "1.084x", "$84.4M"):
+            with self.subTest(result=result):
+                self.assertEqual(self.row(result + " ($1.08B against $1.00B)"), [])
+
+
+BRIEF_BASE_HASHES = {'btc-pass.json': {'advisor': '7fb850f5189317fc41abb7f7027a75638f8e89fd34f03848d8397377d5305aec', 'chair': '1e91db6977a08c56de7418806e93c5d3ebd93aac37313b01eca17d534870271e'}, 'copper-pass.json': {'advisor': '7fb850f5189317fc41abb7f7027a75638f8e89fd34f03848d8397377d5305aec', 'chair': '1e91db6977a08c56de7418806e93c5d3ebd93aac37313b01eca17d534870271e'}, 'aapl-pass.json': {'advisor': '1a70914572e99d30b6b5fb27b3350d85327a2563b5ed10d39064960a8d9f31ae', 'chair': 'adb2c3fa56b0068357e32edb96d0a58baef178d2e957c2449211f8f17cd1ab6e'}}
+LADDER_BASE_HASH = 'beafb2918b4ae0765966a8b05f49a86c2e90b78946103489e2d1e3372d52cea4'
+
+
+class UraniumDraftTest(EngineTest):
+    # Invented prices are forty, sixty, eighty and two hundred, all dated facts.
+    def setUp(self):
+        super().setUp()
+        self.c = test_evidence.uranium_capture()
+        self.pack = freeze.build_pack(self.c)
+        self.row = FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+        self.rule = self.row["rule"].get("ladder", {})
+        self.force = {"past_fall": next(iter(self.row["rule"].get("opening", {}).get("past_falls", {"": {}})))}
+        scenarios = [dict(name=case["name_words"][0], price_outcome=str(price), probability="0.10", rationale="INVENTED downside")
+                     for case, price in zip(self.rule.get("downside_cases", {}).values(), (40, 60, 80))]
+        scenarios += [dict(name="INVENTED growth", price_outcome="200", probability="0.70", rationale="INVENTED upside")]
+        if len(scenarios) == 1:
+            scenarios = rungs("40", "100", "130", "0.25", "0.25", "0.50")
+        self.d = kind_draft_skeleton(self.pack, [], ["price_last"], [dict(statement="INVENTED demand weakens", figure_name="demand", source="INVENTED next reading", date="2026-11-08")])
+        self.d["tripwires"]["reopening_triggers"][0]["unit"] = self.row["price_unit"]
+        self.d["scenario_rating"] = chair_ladder(scenarios, months="36")
+        self.d["uranium_read"] = dict(past_fall=dict(case=self.force["past_fall"], comparison="INVENTED today's supply differs from the named fall."), longer_cycle="INVENTED long contracts spread the response across years.")
+
+    def check(self):
+        facts = {f["id"]: f for f in self.c["tier1"]}
+        try:
+            self.d["rating"] = ladder.compute(self.d["scenario_rating"], facts, FLOORS)["rating"] if self.d["scenario_rating"]["aggregated"] else "monitor"
+        except ladder.LadderError:
+            pass
+        return host.check_draft_verdict(self.d, self.pack, host._seat_schemas(), self.force)
+
+    def sent(self, key):
+        self.assertTrue(any(self.rule[key] in r for r in self.check()), self.check())
+
+    def seat(self):
+        from types import SimpleNamespace
+        answer = fixture_answer("advisor_bear")
+        answer["scenario_ladder"] = {k: self.d["scenario_rating"][k] for k in ("horizon_months", "scenarios")}
+        return host._check_advisor(answer, SimpleNamespace(pack=self.pack, schemas=host._seat_schemas()))
+
+
+class TestTheThreeYearLadder(UraniumDraftTest):
+    def test_the_per_year_rate_is_the_cube_root(self):
+        rated = chair_ladder(rungs("40", "100", "130", "0.25", "0.25", "0.50"), months="36")
+        r = ladder.compute(rated, anchorless_facts("80"), FLOORS)
+        self.assertEqual(r["expected_annualised_pct"], "7.72")
+        self.assertEqual(r["arithmetic"][1], "Against 80 on the record that is 25.00% over 36 month(s), or 7.72% a year.")
+        self.assertEqual(self.check(), [])  # Arithmetic control; new draft checks driven too.
+
+    def test_a_twelve_month_ladder_is_sent_back(self):
+        self.d["scenario_rating"]["horizon_months"] = "12"
+        self.sent("horizon_refusal")
+
+    def test_a_seat_ladder_of_twelve_months_is_sent_back(self):
+        self.d["scenario_rating"]["horizon_months"] = "12"
+        self.assertTrue(any(self.rule["horizon_refusal"] in r for r in self.seat()))
+
+    def test_each_missing_downside_case_is_named(self):
+        for index, case in enumerate(self.rule["downside_cases"].values()):
+            old = self.d["scenario_rating"]["scenarios"][index]["name"]
+            self.d["scenario_rating"]["scenarios"][index]["name"] = "INVENTED other risk"
+            self.assertIn(case["missing_refusal"], self.check())
+            self.d["scenario_rating"]["scenarios"][index]["name"] = old
+
+    def test_a_case_at_zero_chance_is_sent_back(self):
+        scenarios = self.d["scenario_rating"]["scenarios"]
+        scenarios[0]["probability"], scenarios[-1]["probability"] = "0", "0.80"
+        self.assertIn(next(iter(self.rule["downside_cases"].values()))["zero_refusal"], self.check())
+
+    def test_one_rung_for_two_cases_is_sent_back(self):
+        scenarios = self.d["scenario_rating"]["scenarios"]
+        scenarios[0]["name"] += " and " + scenarios[1]["name"]
+        self.sent("shared_refusal")
+
+    def test_a_downside_case_above_today_is_sent_back(self):
+        for price in ("120", "121"):
+            self.d["scenario_rating"]["scenarios"][0]["price_outcome"] = price
+            self.sent("below_refusal")
+
+    def test_a_seat_ladder_needs_the_three_cases(self):
+        self.d["scenario_rating"]["scenarios"][0]["name"] = "INVENTED other risk"
+        self.assertTrue(any(next(iter(self.rule["downside_cases"].values()))["missing_refusal"] in r for r in self.seat()))
+
+    def test_a_ladder_not_aggregated_skips_the_cases(self):
+        self.d["scenario_rating"] = chair_ladder([], months="12", aggregated=False, reason="INVENTED cannot aggregate")
+        self.assertEqual(self.check(), [])
+
+    def test_check_shape_and_compute_keep_their_bytes(self):
+        # Control: the base hash covers every key and arithmetic line.
+        rated = chair_ladder(rungs("40", "100", "130", "0.25", "0.25", "0.50"), months="36")
+        data = dict(shape=ladder.check_shape(rated, anchorless_facts("80")), computed=ladder.compute(rated, anchorless_facts("80"), FLOORS))
+        self.assertEqual(hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest(), LADDER_BASE_HASH)
+
+    def test_a_coin_seat_keeps_its_reasons_and_order(self):
+        # Control: a missing privacy case still follows the shape reasons.
+        self.pack = freeze.build_pack(test_evidence.coin_capture())
+        self.d["scenario_rating"] = chair_ladder(rungs("40", "100", "130", "0.25", "0.25", "0.50"))
+        reason = host._coin_delisting_reason(self.d["scenario_rating"], self.pack["capture"]["subject"])
+        self.assertEqual(self.seat(), ["your scenario ladder: " + reason])
+
+
+class TestThePastFallOpening(UraniumDraftTest):
+    def opening(self, write=True):
+        doc = dict(self.force, chosen_by="INVENTED owner", at="2026-10-10T00:00Z")
+        if write:
+            canonical.write_canonical_json(os.path.join(self.base, host.OPENING_NAME), doc)
+        return doc
+
+    def read(self, subject=None):
+        return host._read_opening(self.base, self.c["captured_at"], subject or self.c["subject"], FLOORS)
+
+    def test_no_opening_refuses(self):
+        with self.assertRaises(host.HostError) as caught:
+            self.read()
+        self.assertIn(self.row["rule"]["opening"]["opening_missing_refusal"], str(caught.exception))
+
+    def test_an_unruled_fall_refuses(self):
+        doc = self.opening(False)
+        doc["past_fall"] = "INVENTED unruled fall"
+        canonical.write_canonical_json(os.path.join(self.base, host.OPENING_NAME), doc)
+        with self.assertRaises(host.HostError) as caught:
+            self.read()
+        self.assertEqual(str(caught.exception), self.row["rule"]["opening"]["past_fall_refusal"])
+
+    def test_each_ruled_fall_passes(self):
+        for key in self.row["rule"]["opening"]["past_falls"]:
+            self.force["past_fall"] = key
+            doc = self.opening()
+            self.assertEqual(self.read(), doc)
+
+    def test_an_opening_after_the_capture_refuses(self):
+        doc = self.opening(False)
+        doc["at"] = "2026-10-11T07:00Z"
+        canonical.write_canonical_json(os.path.join(self.base, host.OPENING_NAME), doc)
+        with self.assertRaises(host.HostError) as caught:
+            self.read()
+        self.assertIn("after the evidence existed", str(caught.exception))
+
+    def test_a_change_at_the_pause_is_refused(self):
+        # Control: uranium remains outside protocol-only changes.
+        with self.assertRaisesRegex(host.HostError, "opening_changes belongs to a protocol approval only"):
+            host._read_opening_changes({"opening_changes": []}, self.opening(False), self.c["subject"], FLOORS)
+
+    def test_unattended_is_allowed(self):
+        evidence = test_evidence.write_evidence_stage(self.base, capture=self.c)
+        self.opening()
+        with mock.patch.object(host, "_require_full_document"):
+            stage = host._read_evidence_stage(evidence, self.c["captured_at"], "invented", self.pack)
+        self.assertEqual(stage["mode"]["mode"], "unattended")
+        self.assertEqual(stage["opening"], self.opening(False))
+
+    def test_a_protocol_opening_is_unchanged(self):
+        # Control: run every existing protocol opening test, including refusals.
+        suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromTestCase(cls)
+                                   for cls in ProtocolStageTest.__subclasses__())
+        result = unittest.TestResult()
+        suite.run(result)
+        self.assertGreater(result.testsRun, 0)
+        self.assertEqual(result.errors + result.failures, [])
+
+    def test_an_opening_beside_copper_keeps_todays_refusal(self):
+        self.opening()
+        with self.assertRaisesRegex(host.HostError, "^opening.json belongs to the protocol kind only$"):
+            self.read(evidence_fixture("copper-pass.json")["subject"])
+
+
+class TestTheChairmansUraniumRead(UraniumDraftTest):
+    def test_a_uranium_draft_without_its_read_is_sent_back(self):
+        del self.d["uranium_read"]
+        self.sent("read_missing_refusal")
+
+    def test_a_read_on_another_kind_is_refused(self):
+        self.c = evidence_fixture("copper-pass.json")
+        self.pack = freeze.build_pack(self.c)
+        self.sent("read_on_other_kind_refusal")
+
+    def test_the_case_must_be_the_openings(self):
+        self.d["uranium_read"]["past_fall"]["case"] = next(k for k in self.row["rule"]["opening"]["past_falls"] if k != self.force["past_fall"])
+        self.sent("case_refusal")
+
+    def test_a_line_with_a_break_is_sent_back(self):
+        self.d["uranium_read"]["longer_cycle"] += "\n"
+        self.sent("line_refusal")
+
+    def test_a_line_over_the_cap_is_sent_back(self):
+        self.d["uranium_read"]["longer_cycle"] = "word " * (self.rule["line_max_words"] + 1)
+        self.sent("line_refusal")
+
+    def test_the_longer_cycle_line_is_required(self):
+        del self.d["uranium_read"]["longer_cycle"]
+        self.assertTrue(any("longer_cycle" in r for r in self.check()))
+
+    def test_every_existing_reason_keeps_its_words_and_order(self):
+        # Control: schema failure precedes any new hard checks.
+        self.d = {}
+        expected = validate.validate(self.d, host._seat_schemas()["draft_verdict"])
+        self.assertEqual(host.check_draft_verdict(self.d, self.pack, host._seat_schemas(), self.force), expected)
+
+
+class TestTheUraniumSeatInstructions(UraniumDraftTest):
+    def test_every_advisor_is_told_the_horizon_and_the_cases(self):
+        for seat in briefs.ADVISOR_SEATS:
+            text = briefs.build_brief(seat, "invented", "answer.json", subject=self.c["subject"], casefile="INVENTED evidence")
+            self.assertIn(self.rule["ladder_instruction"], text)
+
+    def test_the_chair_is_told_the_read(self):
+        text = briefs.draft_contract(self.c["subject"])
+        self.assertIn(self.rule["ladder_instruction"], text)
+        self.assertIn(self.rule["chair_contract_lines"], text)
+
+    def unchanged(self, name):
+        subject = evidence_fixture(name)["subject"]
+        for key, text in (("chair", briefs.draft_contract(subject)), ("advisor", briefs._advisor_answer_contract(subject))):
+            self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), BRIEF_BASE_HASHES[name][key])
+
+    def test_a_coin_brief_keeps_its_bytes(self):
+        self.unchanged("btc-pass.json")  # Control.
+
+    def test_a_copper_brief_keeps_its_bytes(self):
+        self.unchanged("copper-pass.json")  # Control.
+
+    def test_an_equity_brief_keeps_its_bytes(self):
+        self.unchanged("aapl-pass.json")  # Control.
+
+
+class TestTheVerdictContractCarriesTheUraniumRead(UraniumDraftTest):
+    def test_the_contract_version_and_the_new_fields(self):
+        schema = host._verdict_schema()
+        self.assertEqual(schema["properties"]["schema_version"]["const"], "1.11.0")
+        self.assertTrue(schema["title"].startswith("Council verdict 1.11.0 "))
+        self.assertIn("uranium_read", schema["properties"])
+        self.assertIn("horizon_line", schema["properties"]["scenario_rating"]["properties"])
+        self.assertEqual(host._seat_schemas()["draft_verdict"]["properties"]["uranium_read"], {})
+
+    def published(self, subject=None):
+        return publisher._scenario_rating(self.d, subject or self.c["subject"], self.pack, self.base, [])
+
+    def test_the_line_is_written_by_the_publisher(self):
+        self.d["scenario_rating"]["horizon_line"] = "INVENTED wrong line"
+        self.assertEqual(self.published()["horizon_line"], self.row["horizon_line"])
+
+    def test_the_read_and_the_line_are_absent_from_every_other_verdict(self):
+        # Control: full non-holder publishing is also covered by the seven suites.
+        for name in test_evidence.PASS_FIXTURES:
+            self.assertNotIn("horizon_line", self.published(evidence_fixture(name)["subject"]))
+
+    def test_the_envelope_carries_neither(self):
+        # Control: the envelope's field set is unchanged.
+        schema = host._verdict_schema()["properties"]["atlas_envelope"]
+        self.assertNotIn("uranium_read", schema["properties"])
+        self.assertNotIn("horizon_line", schema["properties"])
+
+    def test_a_change_to_the_read_after_the_challenge_is_in_the_appendix(self):
+        old = copy.deepcopy(self.d)
+        self.d["uranium_read"]["longer_cycle"] = "INVENTED changed judgment"
+        rows, _ = publisher.build_change_appendix(old, self.d, None)
+        self.assertEqual([r["field"] for r in rows], ["uranium_read"])
+
+    def test_a_uranium_sitting_publishes_and_keeps_the_hand_off_back(self):
+        self.assertEqual(self.check(), [])
+        floors = copy.deepcopy(FLOORS)
+        floors["asset_classes"]["commodity"]["products"]["uranium"]["sitting_open"] = True
+        with mock.patch.object(host, "_floors", return_value=floors), mock.patch.object(host.canonical, "read_json", wraps=canonical.read_json) as read:
+            original = read._mock_wraps
+            read.side_effect = lambda path: floors if os.fspath(path) == host.FLOORS_PATH else original(path)
+            pack, paths = kind_run_material(self.base, self.c, "invented-uranium")
+            evidence = test_evidence.write_evidence_stage(os.path.join(self.base, "evidence"), pack_path=paths["pack"])
+            canonical.write_canonical_json(os.path.join(evidence, host.OPENING_NAME), dict(self.force, chosen_by="INVENTED owner", at="2026-10-10T00:00Z"))
+            run = Harness(self.base, run_id="invented-uranium", sufficiency=paths["sufficiency"], pack=paths["pack"], question=paths["question"], subject=paths["subject"], evidence_dir=evidence)
+            run.queue("frame", kind_frame(self.c, "INVENTED commodity decision"))
+            for seat in briefs.ADVISOR_SEATS:
+                answer = fixture_answer(seat)
+                answer["scenario_ladder"] = {k: self.d["scenario_rating"][k] for k in ("horizon_months", "scenarios")}
+                run.queue(seat, answer)
+            draft = copy.deepcopy(self.d)
+            draft["conviction_rationale"] = "The recorded ladder supports the rating against cash. The three downside cases carry their own odds. Long contracts spread the response across years. The strongest objection is supply arriving before demand. The next dated reading can reopen the question as the record changes."
+            run.queue("chair_draft", dict(draft_verdict=draft, synthesis_markdown="INVENTED synthesis"))
+            run.queue("chair_resolve", dict(dispositions=fixture_answer("chair_resolve")["dispositions"], final_verdict=draft, final_markdown="INVENTED final synthesis"))
+            for seat in ("chair_draft_prose", "chair_resolve_prose"):
+                run.queue(seat, dict(conviction_rationale=draft["conviction_rationale"]))
+            result = run.drive()
+            self.assertEqual(result["state"], "DONE", result)
+            verdict = run.verdict()
+            self.assertEqual(verdict["uranium_read"], draft["uranium_read"])
+            self.assertEqual(verdict["scenario_rating"]["horizon_line"], self.row["horizon_line"])
+            reason = canonical.read_json(os.path.join(run.run_dir, "atlas-handoff-withheld.json"))
+            self.assertEqual(reason, publisher.handoff_withheld(verdict["atlas_envelope"], FLOORS))
+            self.assertFalse(os.path.exists(os.path.join(run.run_dir, "atlas-envelope.json")))
+
+
+class TestTheUraniumCaseFile(test_evidence.UraniumPageTest):
+    # Invented ten over ten is one; this block adds no evidence arithmetic.
+    def casefile(self, key=None, seat=None, in_force=None):
+        p = self.packs[key or self.keys[0]]
+        return briefs.render_casefile(p, {}, "INVENTED question", p["capture"]["subject"], seat, in_force)
+
+    def test_every_reader_gets_the_uranium_block(self):
+        for seat in [*briefs.ADVISOR_SEATS, None, "reviewer", "chairman"]:
+            self.assertIn(self.words["casefile_heading"], self.casefile(seat=seat))
+
+    def test_the_lifted_names_and_reason_print_once(self):
+        for h in self.keys:
+            block = self.casefile(h).split(self.words["casefile_heading"] + "\n", 1)[1].split("\n## ", 1)[0]
+            line = next(line for line in block.splitlines() if line.startswith(
+                "| - " + self.words["one_page_leads"]["lifted"] + ": "))
+            for name in self.words["lifted_names"].values():
+                self.assertEqual(line.count(name), 1)
+            expected = self.words["lifted_line_words"] % ", ".join(
+                self.words["lifted_names"][i] for i in self.row["class_anchors_lifted"])
+            self.assertIn(brief._safe(expected, plain_amp=True), line)
+            self.assertIn(line[2:], brief.uranium_lines(self.read(h)))
+
+    def test_each_line_cites_recorded_ids_only(self):
+        text = self.casefile()
+        block = text.split(self.words["casefile_heading"] + "\n", 1)[1].split("\n## ", 1)[0]
+        ids = set(re.findall(r"`([^`]+)` =", block))
+        facts = {f["id"] for f in self.packs[self.keys[0]]["capture"]["tier1"]}
+        self.assertTrue(ids)
+        self.assertTrue(ids <= facts)
+        self.assertIn("Recorded inputs:", block)
+
+    def test_each_summary_line_cites_only_its_own_inputs(self):
+        for key, pack in self.packs.items():
+            with self.subTest(way=key):
+                summary = self.read(key)
+                facts = {f["id"] for f in pack["capture"]["tier1"]}
+                year = int(pack["capture"]["captured_at"][:4])
+                expected = dict(kind=[], lifted=[], prices=[self.fid(role) for role in
+                    ("spot_proxy", "spot_check", "spot_month_end", "term_month_end")],
+                    buying=[self.fid("pounds_now", h=h) for h in self.keys] +
+                        [self.fid("pounds_start", h=h, point=self.rule["pound_windows"][-1]["point"]) for h in self.keys] +
+                        [self.fid("guidance", p=p, yyyy=year, end=end) for p in self.rule["largest_producers"]
+                         for end in self.rule["roles"]["guidance"]["ends"]])
+                if key in self.keys:
+                    expected["holder"] = ([self.fid(role, h=key) for role in ("nav", "holder_price")] +
+                        [f["id"] for f in pack["capture"]["tier1"] if any(f["id"].startswith(self.rule["roles"][role]["prefix"])
+                         for role in ("history_nav", "history_price"))])
+                else:
+                    book = sufficiency_check.uranium_readings(pack, self.floors)["producer"]["contract_book"]
+                    expected["contract"] = (book["fact_ids"] + ([book["share_fact_id"]] if book["share_fact_id"] else []) +
+                        [f["id"] for f in pack["capture"]["tier1"] if f["id"].startswith(self.pr["mine_country_prefix"])])
+                casefile = self.casefile(key)
+                for line, ids in zip(summary["lines"], summary["line_facts"]):
+                    lead = next(k for k, text in self.words["one_page_leads"].items() if line.startswith("- " + text + ": "))
+                    wanted = sorted(set(expected[lead]) & facts)
+                    self.assertEqual(ids, wanted)
+                    quoted = next(text for text in casefile.splitlines() if text.startswith("| " + brief._safe(line, plain_amp=True)))
+                    self.assertEqual(sorted(re.findall(r"`([^`]+)` =", quoted)), wanted)
+                    if not wanted: self.assertNotIn("Recorded inputs:", quoted)
+                self.assertFalse(any(i.startswith(self.rule["roles"]["pounds_now"]["id_pattern"].split("{")[0]) for i in expected["prices"]))
+        # The fixture bound catches the repeated citation bulk without removing tables.
+        self.assertLess(len(self.casefile()), 43000)
+
+    def test_the_kind_line_names_the_holder(self):
+        for h in self.keys:
+            self.assertIn(self.words["casefile_kind_words"] % self.row["physical_holders"][h]["names"][0], self.casefile(h))
+
+    def test_the_case_file_names_the_past_fall(self):
+        from types import SimpleNamespace
+        for key, case in self.rule["opening"]["past_falls"].items():
+            self.assertIn(self.words["past_fall_named_words"] % case["words"], self.casefile(in_force={"past_fall": key}))
+            ctx = SimpleNamespace(pack=self.packs[self.keys[0]], sufficiency={}, run_dir="INVENTED",
+                invocation={"subject": self.captures[self.keys[0]]["subject"]},
+                frame=lambda: {"question_for_council": "INVENTED question"})
+            with mock.patch.object(host, "pause_in_force", return_value=None), \
+                 mock.patch.object(host, "_holder_in_force", return_value={"past_fall": key}) as opening:
+                text = host._Ctx.casefile(ctx)
+            opening.assert_called_once_with(ctx)
+            self.assertIn(self.words["past_fall_named_words"] % case["words"], text)
+
+    def test_the_reading_rule_is_uraniums(self):
+        for h in self.keys:
+            self.assertEqual(briefs.class_reading_rule(self.captures[h]["subject"], self.floors), self.row["reading_rule"])
+
+    def test_each_seat_reads_uraniums_emphasis(self):
+        for seat in briefs.ADVISOR_SEATS:
+            for h in self.keys:
+                self.assertEqual(briefs.seat_emphasis(self.captures[h]["subject"], seat, self.floors), self.row["seat_emphasis"][seat])
+
+    def test_a_producer_case_file_carries_the_block(self):
+        text = self.casefile("producer")
+        self.assertIn(self.words["casefile_heading"], text)
+        for lead, _ in self.read("producer")["tables"]:
+            self.assertIn(lead, text)
+
+    def test_a_copper_case_file_keeps_its_bytes(self):
+        # Control: the pinned base digest covers the complete case file.
+        c = test_evidence.load_fixture("copper-pass.json")
+        text = briefs.render_casefile(freeze.build_pack(c), {}, "INVENTED question", c["subject"])
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), test_evidence.URANIUM_PAGE_CONTROLS["commodity"]["case"])
+
+    def test_a_producer_case_file_of_another_product_keeps_its_bytes(self):
+        # Control: all listed products apart from the new one.
+        for product in self.floors["archetype_measures"]["resource_products"]:
+            if product == self.pr["product"]: continue
+            c = test_evidence.other_producer_capture(product)
+            text = briefs.render_casefile(freeze.build_pack(c), {}, "INVENTED question", c["subject"])
+            self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), test_evidence.URANIUM_PAGE_CONTROLS[product]["case"])
+
+
+class TestTreasuryRoundFiveCells(unittest.TestCase):
+    def inputs(self, shape):
+        from council.engine import treasury_chair as T
+        floors=copy.deepcopy(test_evidence.FLOORS)
+        rule=floors["archetype_measures"]["holding_rule"]["treasury"]; rule["sitting_open"]=True
+        c=test_evidence.treasury_page_capture(shape); pack=freeze.build_pack(c)
+        choice={p["key"]:dict(as_debt=False,why="INVENTED choice") for p in test_evidence.holding_frame(c)["treasury"]["preferreds"]}
+        force=dict(preferred_treatment=choice,coin_layer=dict(source="this_sitting"))
+        r=sufficiency_check.treasury_readings(pack,floors,choice); today=-r["comparable_premium"]["percent"]
+        cells=[]
+        # Two tenths plus two lots of four tenths; each coin group divides in half.
+        for name,price,odds in (("INVENTED low","40000","0.2"),("INVENTED middle","50000","0.4"),("INVENTED high","90000","0.4")):
+            for case,premium in zip(rule["ladder_rules"]["premium_cases"].values(),(T.falls_premium(r),today if today<0 else decimal.Decimal(-20))):
+                cell=dict(coin_scenario=name,coin_price=price,premium=str(premium))
+                cells.append(dict(name=name+" "+case["name_words"][0],cell=cell,price_outcome=str(T.case_price(r,price,next(k for k,v in rule["ladder_rules"]["premium_cases"].items() if v is case),rule["ladder_rules"]["premium_cases"],premium)),probability=str(decimal.Decimal(odds)/2)))
+        rated=chair_ladder(cells)
+        if hasattr(T,"fill_premium_cases"): T.fill_premium_cases(rated,pack,floors,force)
+        return floors,pack,force,r,rated
+
+    def test_every_already_discounted_cell_is_checked_on_todays_basis(self):
+        from council.engine import treasury_chair as T
+        for shape in ("a","b"):
+            floors,pack,force,r,rated=self.inputs(shape)
+            rule=floors["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]
+            self.assertGreater(r["comparable_premium"]["percent"],0)
+            self.assertEqual(T.ladder_reasons(rated,pack,floors,force),[])
+            for original in T._case_cells(rated["scenarios"],rule["premium_cases"]["turns_to_discount"]):
+                bad=copy.deepcopy(rated); cell=next(s for s in bad["scenarios"] if s["name"]==original["name"])
+                cell["cell"]["premium"]="-20"
+                cell["price_outcome"]=str(T.cell_value(r,cell["cell"]["coin_price"],"-20")[0])
+                self.assertTrue(any("today's premium on the shares in issue" in reason for reason in T.ladder_reasons(bad,pack,floors,force)))
+
+    def test_a_premium_today_uses_the_first_point_of_discount(self):
+        # The invented premium company is priced at treasury value in this case.
+        from council.engine import treasury_chair as T
+        floors,pack,force,r,rated=self.inputs("c")
+        self.assertEqual(T.ladder_reasons(rated,pack,floors,force),[])
+        cases=floors["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["premium_cases"]
+        for row in T._case_cells(rated["scenarios"],list(cases.values())[1]):
+            self.assertEqual(decimal.Decimal(row["cell"]["premium"]),0)
+            self.assertEqual(decimal.Decimal(row["price_outcome"]),T.cell_value(r,row["cell"]["coin_price"],"0")[0])
+
+
+
+
+class TestTreasuryRoundSixCells(unittest.TestCase):
+    inputs = TestTreasuryRoundFiveCells.inputs
+    def test_an_exact_half_cent_is_rounded_once(self):
+        from council.engine import treasury_chair as T
+        D=decimal.Decimal
+        r=dict(coins=[dict(count=D(1),value=D(50000))],other_coins=D(0),cash=D(0),true_debt=D(99),true_debt_value=D(49901),preferred_value=D(49901),shares_in_issue=D(3))
+        self.assertEqual(T.cell_value(r,"100","102.5")[0],D("0.68"))
+
+    def test_exact_case_prices_reject_the_rounded_premium_price(self):
+        from council.engine import treasury_chair as T
+        for shape in ("a","b"):
+            floors,pack,force,r,rated=self.inputs(shape)
+            self.assertEqual(T.ladder_reasons(rated,pack,floors,force),[])
+            cells=[s for s in rated["scenarios"] if s["cell"]["coin_price"]=="50000"]
+            for cell in T._case_cells(cells,floors["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["premium_cases"]["turns_to_discount"]): self.assertEqual(decimal.Decimal(cell["price_outcome"]),decimal.Decimal("100.00"))
+            for original in rated["scenarios"]:
+                bad=copy.deepcopy(rated); cell=next(s for s in bad["scenarios"] if s["name"]==original["name"])
+                rounded=T.cell_value(r,cell["cell"]["coin_price"],cell["cell"]["premium"])[0]
+                self.assertNotEqual(rounded,decimal.Decimal(cell["price_outcome"]))
+                cell["price_outcome"]=str(rounded)
+                self.assertTrue(any(floors["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["cell_price_refusal"] in reason for reason in T.ladder_reasons(bad,pack,floors,force)))
+
+    def test_exact_case_selection_survives_a_display_tie(self):
+        from council.engine import treasury_chair as T
+        floors,pack,force,r,rated=self.inputs("a")
+        cases=floors["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["premium_cases"]
+        r["history"]=[dict(discount=dict(numerator=decimal.Decimal(n),denominator=decimal.Decimal("10000"),percent=decimal.Decimal("20.0"))) for n in ("2001","2009")]
+        self.assertIs(T.case_ratio(r,next(iter(cases)),cases),r["history"][1]["discount"])
+
+
+
+class TestTreasuryMachineCases(TreasuryDraftTest):
+    def test_host_fills_built_and_cited_case_fields_at_both_checks(self):
+        from types import SimpleNamespace
+        for source in ("on_record","this_sitting"):
+            self.force["coin_layer"]["source"]=source
+            self.d["treasury_read"]["coin_layer"].update(source=source,run_id="coin-example" if source=="on_record" else None)
+            for row in self.d["scenario_rating"]["scenarios"]: row["cell"]["premium"]="101"; row["price_outcome"]="101"
+            if source=="this_sitting":
+                for row in self.d["scenario_rating"]["scenarios"]:
+                    if row["cell"]["coin_scenario"]==self.coin_scenarios[1]["name"]: row["cell"]["coin_price"]="60000"
+            answer=fixture_answer("advisor_bear"); answer["scenario_ladder"]={k:copy.deepcopy(self.d["scenario_rating"][k]) for k in ("horizon_months","scenarios")}
+            with mock.patch.object(host,"_floors",return_value=self.floors), mock.patch.object(host,"_treasury_in_force",return_value=self.force):
+                self.assertEqual(host._check_advisor(answer,SimpleNamespace(pack=self.pack,schemas=host._seat_schemas())),[])
+            for row in answer["scenario_ladder"]["scenarios"]: self.assertNotEqual(row["price_outcome"],"101")
+            if source=="this_sitting":
+                row=next(s for s in answer["scenario_ladder"]["scenarios"] if s["cell"]["coin_price"]=="60000" and self.chair.case_key(s,self.rule["ladder_rules"]["premium_cases"])==list(self.rule["ladder_rules"]["premium_cases"])[1])
+                self.assertEqual(row["price_outcome"],"102.50")
+            # Set only the expected rating from an independently filled copy.
+            expected=copy.deepcopy(self.d["scenario_rating"]); self.chair.fill_premium_cases(expected,self.pack,self.floors,self.force)
+            self.d["rating"]=ladder.compute(expected,self.facts(),self.floors,zero_floor=True)["rating"]
+            with mock.patch.object(host,"_floors",return_value=self.floors): self.assertEqual(host.check_draft_verdict(self.d,self.pack,host._seat_schemas(),self.force),[])
+            self.assertEqual(self.d["scenario_rating"]["scenarios"],expected["scenarios"])
+
+    def test_only_named_cells_change_and_machine_arithmetic_is_checked(self):
+        rated=copy.deepcopy(self.d["scenario_rating"]); other=copy.deepcopy(rated["scenarios"][0]); other.update(name="INVENTED other",price_outcome="111"); other["cell"]["premium"]="5"
+        rated["scenarios"].append(other); saved=copy.deepcopy(other)
+        rated["seat_ladders"]=[dict(scenarios=copy.deepcopy(rated["scenarios"]))]
+        self.chair.fill_premium_cases(rated,self.pack,self.floors,self.force)
+        self.assertEqual(rated["scenarios"][-1],saved); self.assertEqual(rated["seat_ladders"][0]["scenarios"][-1],saved)
+        rated["scenarios"].pop(); rated.pop("seat_ladders")
+        self.assertEqual(self.chair.ladder_reasons(rated,self.pack,self.floors,self.force),[])
+        rated["scenarios"][0]["price_outcome"]="101"
+        self.assertTrue(any(self.rule["ladder_rules"]["cell_price_refusal"] in r for r in self.chair.ladder_reasons(rated,self.pack,self.floors,self.force)))
+        plain=freeze.build_pack(test_evidence.holding_capture()); before=copy.deepcopy(rated)
+        self.chair.fill_premium_cases(rated,plain,self.floors,None); self.assertEqual(rated,before)
+
+
+
+class TestTreasuryStoredCells(TreasuryDraftTest):
+    stage = TestTheTreasuryOpeningAndPause.stage
+    start = TestTheTreasuryOpeningAndPause.start
+    recorded = TestTheTreasuryOpeningAndPause.recorded
+
+    def test_filled_answers_feed_the_briefs_draft_and_resolve(self):
+        self.recorded(); _, folder = self.start()
+        expected = copy.deepcopy(self.d)
+        self.chair.fill_premium_cases(expected["scenario_rating"],self.pack,self.floors,self.force)
+        expected["rating"] = ladder.compute(expected["scenario_rating"],self.facts(),self.floors,zero_floor=True)["rating"]
+        original = copy.deepcopy(expected)
+        for row in original["scenario_rating"]["scenarios"]:
+            row["price_outcome"] = "999.99"; row["cell"]["premium"] = "55"
+        with mock.patch.object(host,"_floors",return_value=self.floors), mock.patch.object(host,"_treasury_in_force",return_value=self.force), mock.patch.object(host,"_record_advisory_prose"), mock.patch.object(host,"_ingest_usage"), mock.patch.object(host,"_check_headings",return_value=False), mock.patch.object(host,"_challenge_findings",return_value=([],None,None)):
+            for number, seat in enumerate([*briefs.ADVISOR_SEATS,"chair_draft","chair_resolve"],10):
+                number = str(number); payload = fixture_answer(seat)
+                if seat in briefs.ADVISOR_SEATS:
+                    payload["scenario_ladder"] = {k:copy.deepcopy(original["scenario_rating"][k]) for k in ("horizon_months","scenarios")}
+                else:
+                    payload["draft_verdict" if seat=="chair_draft" else "final_verdict"] = copy.deepcopy(original)
+                    if seat=="chair_resolve": payload["dispositions"] = []
+                ctx = host._Ctx(folder); path = ctx.rpc_path(ctx.answer_name(number,seat))
+                canonical.write_canonical_json(path,payload)
+                runrecord.append_event(folder,"request_written",dict(number=number,seat=seat))
+                ctx.refresh(); host._ingest_answers(ctx)
+                stored = ctx.answer(seat)
+                rated = stored["scenario_ladder"] if seat in briefs.ADVISOR_SEATS else stored["draft_verdict" if seat=="chair_draft" else "final_verdict"]["scenario_rating"]
+                with self.subTest(seat=seat): self.assertEqual(rated["scenarios"],expected["scenario_rating"]["scenarios"])
+            text = briefs._chair_draft_brief("treasury-example","INVENTED",ctx.advisor_markdowns(),fixture_answer("reviewer"),self.c["subject"],advisor_ladders=ctx.advisor_ladders(),treasury=dict(self.rule,pack=self.pack))
+            self.assertIn(self.rule["ladder_rules"]["machine_cell_words"],"\n".join(text))
+            with self.subTest(reader="chair brief"): self.assertNotIn("999.99","\n".join(text).replace(chr(92),""))
+            with mock.patch.object(host,"_resolve_chair_fields",return_value="accepted"), mock.patch.object(host,"_resolve_chair_prose",return_value="accepted"), mock.patch.object(host,"_write_challenge"):
+                for state, name, field in (("CHAIR_DRAFT","draft-verdict.json",None),("CHAIR_RESOLVE","resolve.json","final_verdict")):
+                    with mock.patch.object(host,"_read_state",return_value=dict(state=state)): host._advance(ctx)
+                    stored = canonical.read_json(os.path.join(folder,"chair",name))
+                    with self.subTest(artifact=name): self.assertEqual((stored[field] if field else stored)["scenario_rating"],expected["scenario_rating"])
+
+
+
+
+class PreferredDraftTest(EngineTest):
+    def setUp(self):
+        super().setUp()
+        from council.engine import preferred_chair
+        self.chair=preferred_chair; self.c=test_evidence.preferred_capture(); self.pack=freeze.build_pack(self.c); self.floors=copy.deepcopy(FLOORS)
+        self.rule=self.floors["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+        rows=[dict(name="INVENTED "+k,probability=q,price_outcome=out,rationale="INVENTED dividend case",dividend_cell=dict(dividend=k,coin_price=coin,price=p)) for k,coin,p,q,out in [("paid_in_full","60000","92","0.7","100"),("deferred","30000","60","0.2","60"),("missed","12000","20","0.1","20")]]
+        self.d=dict(scenario_rating=chair_ladder(rows),cover_read=dict(cover="INVENTED the cover supports the paid case odds"))
+    def sent(self,key): self.assertIn(self.rule["ladder_words"][key],self.chair.problems(self.d,self.pack,self.floors))
+    def rows(self): return self.d["scenario_rating"]["scenarios"]
+
+
+class TestThePreferredLadder(PreferredDraftTest):
+    def test_the_machine_adds_the_dividend(self):
+        [r.pop("price_outcome") for r in self.rows()]; self.chair.fill_dividends(self.d["scenario_rating"],self.pack,self.floors); self.assertEqual([r["price_outcome"] for r in self.rows()],["100","60","20"])
+    def test_a_written_outcome_that_differs_is_sent_back(self): self.rows()[0]["price_outcome"]="92"; self.sent("cell_price_refusal"); self.assertTrue(self.chair.fill_dividends(self.d["scenario_rating"],self.pack,self.floors))
+    def test_no_unpaid_case_is_sent_back(self): [r["dividend_cell"].update(dividend="paid_in_full") for r in self.rows()]; self.sent("unpaid_case_refusal")
+    def test_a_zero_paid_case_is_sent_back(self): self.rows()[0]["probability"]="0"; self.sent("paid_case_refusal")
+    def test_deferred_on_a_non_cumulative_is_sent_back(self): next(iter(self.c["business_frame"].values()))["treasury"]["preferreds"][1]["cumulative"]=False; self.pack=freeze.build_pack(self.c); self.sent("deferred_case_refusal")
+    def test_a_cell_on_another_subject_is_sent_back(self): self.pack=freeze.build_pack(test_evidence.treasury_ladder_capture()); self.sent("cell_on_other_refusal")
+    def test_the_seat_ladders_are_filled(self):
+        self.d["scenario_rating"]["seat_ladders"]=[copy.deepcopy(self.d["scenario_rating"])]; self.d["scenario_rating"]["seat_ladders"][0]["scenarios"][0].pop("price_outcome"); self.chair.fill_dividends(self.d["scenario_rating"],self.pack,self.floors); self.assertEqual(self.d["scenario_rating"]["seat_ladders"][0]["scenarios"][0]["price_outcome"],"100")
+    def test_the_rating_is_the_ladders(self):
+        from council.engine import treasury_chair
+        self.assertTrue(treasury_chair.ladder_rated(self.c["subject"],self.pack,self.floors)); self.assertEqual(self.chair.problems(self.d,self.pack,self.floors),[]); self.assertIn(ladder.compute(self.d["scenario_rating"],{f["id"]:f for f in self.c["tier1"]},self.floors,zero_floor=True)["rating"],("strong buy","buy","hold","sell","monitor"))
+
+
+class TestTheCoverRead(PreferredDraftTest):
+    def test_a_missing_read_is_sent_back(self): self.d.pop("cover_read"); self.sent("read_missing_refusal")
+    def test_a_read_over_the_cap_is_sent_back(self): self.d["cover_read"]["cover"]="word "*61; self.sent("line_refusal")
+    def test_a_read_on_another_subject_is_sent_back(self): self.pack=freeze.build_pack(test_evidence.treasury_ladder_capture()); self.sent("read_on_other_kind_refusal")
+
+
+class TestThePreferredDoorIsOpen(EngineTest):
+    # The architect's merge-time edit after TREASURY(c), 2026-10-13 (AC92(3)): the flag is true on the floors as
+    # merged; shut it in a copy and the same sentence refuses — the door is the flag and nothing else.
+    def setUp(self):
+        super().setUp(); self.c=test_evidence.preferred_capture(); self.pack=freeze.build_pack(self.c); self.floors=copy.deepcopy(FLOORS)
+        self.rule=self.floors["archetype_measures"]["holding_rule"]["treasury"].get("listed_preferred",{})
+    def attempt(self,name):
+        path=os.path.join(self.base,"preferred-pack.json"); write_pack(path,self.pack)
+        host.init(self.base,name,path,canonical.sha256_file(path),SUFFICIENCY,QUESTION,json.dumps(self.c["subject"]))
+    def test_the_door_is_open_on_the_merged_floors(self):
+        self.assertIs(FLOORS["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["sitting_open"],True)
+        try: self.attempt("opened")
+        except host.HostError as error: self.assertNotIn(self.rule["sitting_closed"],str(error))
+    def test_a_shut_flag_refuses_with_its_sentence(self):
+        self.rule["sitting_open"]=False
+        with mock.patch.object(host,"_floors",return_value=self.floors):
+            with self.assertRaises(host.HostError) as closed: self.attempt("flag-closed")
+        self.assertEqual(str(closed.exception),self.rule["sitting_closed"])
+        self.assertFalse(os.path.exists(os.path.join(self.base,"flag-closed")))
+
+
+class TestThePreferredHandOff(EngineTest):
+    def test_a_preferred_is_withheld_with_its_words(self):
+        r=publisher.handoff_withheld(dict(product=None,subject_kind="preferred"),FLOORS); self.assertTrue(r["withheld"]); self.assertIn(FLOORS["atlas_handoff"]["confirmed"]["subject_kinds_why"],r["reason"])
+    def test_every_other_subject_is_unchanged(self):
+        # Control: passes on base by design.
+        f=copy.deepcopy(FLOORS); f["atlas_handoff"]["confirmed"].pop("subject_kinds_not_confirmed",None)
+        for kind in f["classes"]:
+            if kind!="preferred": self.assertEqual(publisher.handoff_withheld(dict(product=None,subject_kind=kind),FLOORS),publisher.handoff_withheld(dict(product=None,subject_kind=kind),f))
+
+
+class TestPreferredExactSeatFigures(PreferredDraftTest):
+    def test_the_seat_can_copy_the_exact_printed_dividend(self):
+        test_evidence.treasury_fact(self.c,"treasury_preferred_p2_dividend_rate__pxw","8.375","percent_per_year")
+        self.pack=freeze.build_pack(self.c); text=briefs.render_casefile(self.pack,test_evidence.sufficiency_of(self.pack),self.c["question_verbatim"],self.c["subject"])
+        instruction=briefs._advisor_brief("INVENTED","advisor_bear",text,self.c["subject"],True)[0]
+        self.assertIn("$8.375",str(text)); self.assertIn("$8.375",instruction)
+        self.rows()[0]["price_outcome"]="100.375"; self.assertFalse(self.chair.fill_dividends(self.d["scenario_rating"],self.pack,self.floors)); self.assertFalse(self.chair.problems(self.d,self.pack,self.floors))
+    def test_the_bear_and_base_rate_keep_their_lens_and_one_emphasis(self):
+        text=briefs.render_casefile(self.pack,test_evidence.sufficiency_of(self.pack),self.c["question_verbatim"],self.c["subject"])
+        for seat in ("advisor_bear","advisor_base_rate"):
+            head=briefs._advisor_brief("INVENTED",seat,text,self.c["subject"],True)[0]
+            self.assertIn(briefs.LENS_DEFINITIONS[seat],head); self.assertEqual(head.count(self.rule["seat_emphasis"][seat]),1)
 
 
 if __name__ == "__main__":

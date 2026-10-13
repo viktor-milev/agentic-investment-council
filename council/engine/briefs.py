@@ -36,6 +36,7 @@ import re
 import unicodedata
 
 from council.evidence import gate, sufficiency, tape, trace
+from council.evidence import brief as page_brief
 from council.evidence.brief import (
     FI_ARCHETYPE, FI_METHOD_WORDS, FI_NATURE_WORDS, FI_NEVER_REVISED,
     FI_NOT_RATED_SENTENCE, FI_RISK_KIND_WORDS, FI_STRESS_HEADING,
@@ -51,7 +52,8 @@ from council.evidence.brief import (
     MOSTLY_PRIVATE_SENTENCE, VALUATION_BASIS_WORDS, HOLDING_POSITION_WORDS,
     holding_subject_frame, holding_readings, holding_tables, holding_summary,
     holding_sentences, holding_facts_read, holding_currency_line, holding_display_facts,
-    coin_summary, coin_lines)
+    coin_summary, coin_lines, protocol_summary, protocol_lines, protocol_tables, table_lines,
+    uranium_summary, uranium_lines, treasury_summary, preferred_summary)
 from council.lib import canonical, subjects
 from council.engine import chair_fields
 
@@ -307,7 +309,7 @@ TAPE_METHODS = {
 }
 
 
-def advisor_remit(seat_kind, subject=None, framed=False, taped=False, *, capture=None):
+def advisor_remit(seat_kind, subject=None, framed=False, taped=False, *, capture=None, treasury=None):
     """The remit an advisor is briefed with: its method paragraph when the
     capture carries a business frame (the tables the method names), its
     lens sentence otherwise - an ETF, basket or theme with no frame
@@ -315,6 +317,10 @@ def advisor_remit(seat_kind, subject=None, framed=False, taped=False, *, capture
     price series (`taped`), the market-structure and risk seats get their
     tape method whatever the subject; the insider step only on a single
     stock, where it rides untaped too (unit U4(b))."""
+    if capture and preferred_summary({"capture":capture}) is not None:
+        return LENS_DEFINITIONS[seat_kind]
+    if treasury is not None:
+        return LENS_DEFINITIONS[seat_kind]
     if taped and seat_kind in TAPE_METHODS:
         method = TAPE_METHODS[seat_kind]
         year = tape.series_year_bars(capture, floors_data())
@@ -590,16 +596,25 @@ def floors_data(path=None):
     return canonical.read_json(path or FLOORS_PATH)
 
 
-def seat_emphasis(subject, seat_kind, floors=None):
+def seat_emphasis(subject, seat_kind, floors=None, *, treasury=None):
     """What THIS seat leads with on an anchorless subject
     (ANCHORLESS-SPEC section 6). Five seats over one frozen record
     produced one essay five ways at the Bitcoin cold read; the emphasis
     is the fix, and it is DATA - each class points its seats at its own
     anchors. None where the class names no emphasis for this seat."""
+    if subject.get("kind") == "preferred":
+        return (floors or floors_data())["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["seat_emphasis"].get(seat_kind)
+    if treasury is not None:
+        return treasury["seat_emphasis"].get(seat_kind)
     if not subjects.is_anchorless(subject):
         return None
     floors = floors or floors_data()
     entry = subjects.class_registry(floors, subject) or {}
+    holder = subjects.holder_product(subject, floors)
+    if holder is not None:
+        return holder["seat_emphasis"].get(seat_kind)
+    if subjects.is_protocol_kind(subject, floors):
+        return (entry["protocol_rule"]["seat_emphasis"]).get(seat_kind)
     coin = subjects.named_coin(subject, floors)
     if coin is not None:
         emphasis = (entry["products"][coin].get("seat_emphasis") or {}).get(seat_kind)
@@ -618,6 +633,11 @@ def class_reading_rule(subject, floors=None):
         return None
     floors = floors or floors_data()
     entry = subjects.class_registry(floors, subject) or {}
+    holder = subjects.holder_product(subject, floors)
+    if holder is not None:
+        return holder["reading_rule"]
+    if subjects.is_protocol_kind(subject, floors):
+        return entry["protocol_rule"]["reading_rule"]
     coin = subjects.named_coin(subject, floors)
     if coin is not None and entry["products"][coin].get("reading_rule"):
         return entry["products"][coin]["reading_rule"]
@@ -720,12 +740,16 @@ def _falsifier_lines(theme):
     return lines
 
 
-def _subject_kind_line(subject, floors=None):
+def _subject_kind_line(subject, floors=None, *, casefile=False):
     """Architect ruling M13: the named coin beside its unchanged kind."""
     floors = floors_data() if floors is None else floors
     coin = subjects.named_coin(subject, floors)
     suffix = (" (the coin: %s)" % floors["asset_classes"]["crypto"]["products"][
         coin]["report_words"] if coin is not None else "")
+    holder = subjects.holder_product(subject, floors)
+    if holder is not None and casefile:
+        vehicle = holder["physical_holders"][subjects.physical_holder(subject, floors)]
+        suffix = holder["page_words"]["casefile_kind_words"] % vehicle["names"][0]
     return "- Kind: %s%s" % (subject.get("kind"), suffix)
 
 
@@ -967,7 +991,7 @@ def _fi_quoted_lines(quoted):
         "never speak in the file's own voice:", "; ".join(quoted))
 
 
-def _fi_kind_lines(frame, measure):
+def _fi_kind_lines(frame, measure, capture=None):
     """The kind of firm and the measure in plain words, after the
     archetype line (owner rulings AC28 and AC30): the page's own wording,
     read from the one-page brief's tables."""
@@ -977,8 +1001,11 @@ def _fi_kind_lines(frame, measure):
     if measure:
         rated = " - rated on %s" % (MEASURE_WORDS.get(measure)
                                     or _fi_unruled(quoted, measure))
-    return (["", "The kind of firm, in plain words: %s%s." % (kind, rated)]
-            + _fi_quoted_lines(quoted))
+    lines = (["", "The kind of firm, in plain words: %s%s." % (kind, rated)]
+             + _fi_quoted_lines(quoted))
+    if capture is not None and page_brief.compounder_subject_frame(capture) is frame:
+        lines.append(page_brief.compounder_rule()["page_words"]["kind_sentence"])
+    return lines
 
 
 def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
@@ -1060,6 +1087,8 @@ def _fi_frame_lines(capture, ticker, frame, fact_ids, marks):
         lines.extend(_fenced("Why this line, as the capture states it:",
                              _mark_prose(risk.get("because"), marks)))
     lines.extend(_nav_bridge_lines(frame, ref, marks))
+    if page_brief.compounder_subject_frame(capture) is frame:
+        lines.extend(_float_compounder_frame_lines(capture, frame, marks))
     return lines + _fi_quoted_lines(quoted)
 
 
@@ -1094,6 +1123,42 @@ def _nav_bridge_lines(frame, ref, marks, capture=None):
                 lines.append("- %s: %s" % (label, ref(bridge[key])))
         lines += ["", FI_NOT_RATED_SENTENCE]
     return lines
+
+
+def _float_compounder_frame_lines(capture, frame, marks):
+    """AC84: the pages' one reading and tables, with authored words fenced."""
+    pack, quoted = {"capture": capture}, []
+    readings = page_brief.float_compounder_readings(pack)
+    if readings is None:
+        return []
+    words = page_brief.compounder_rule()["page_words"]
+    cfg = trace.capture_config(page_brief._marks_config(), capture)
+    marks = ((marks[0] if marks else []) + trace.facts_bases(readings["figures"], cfg), cfg)
+    ref = _producer_ref(capture, {f["id"] for f in capture["tier1"]}, quoted)
+    def said(cell):
+        if "id" in cell:
+            return ref(cell["id"])
+        if cell["kind"] == "prose":
+            quoted.append(_mark_prose(cell["text"], marks))
+            return "the capture's words (quoted below)"
+        return cell_text(cell)
+    lines = ["", words["yardstick_lead"] + ":"]
+    # Display lines containing a company's labels or sources travel fenced whole.
+    for line in page_brief.compounder_lines(pack, readings) + readings["errors"]:
+        lines.extend(_fenced(words["yardstick_lead"], _mark_prose(line, marks)))
+    lines += [ref(readings["market"]), ref(readings["book"])]
+    for lead, table in page_brief.float_compounder_tables(pack, frame, readings):
+        lines += ["", lead + ":", "| " + " | ".join(table["head"]) + " |",
+                  "| " + " | ".join("---" for _ in table["head"]) + " |"]
+        lines += ["| " + " | ".join(said(c) for c in row) + " |" for row in table["rows"]]
+        lines += ["- " + " ".join(said(c) for c in row) for row in table["below"]]
+    lines += ["", words["tests_lead"] + ":"]
+    for line in page_brief.compounder_lines(pack, readings, tests=True):
+        lines.extend(_fenced(words["tests_lead"], _mark_prose(line, marks)))
+    solvency = page_brief.compounder_solvency_line(pack, readings)
+    if solvency:
+        lines.append(solvency)
+    return lines + _fi_quoted_lines(quoted)
 
 
 def _holding_frame_lines(capture, frame, marks):
@@ -1366,7 +1431,7 @@ def _one_frame_lines(ticker, frame, headline, measure=None,
                         (" The rating measure this archetype calls for is "
                          "**%s**." % measure) if measure else ""))
         if fi:
-            lines.extend(_fi_kind_lines(frame, measure))
+            lines.extend(_fi_kind_lines(frame, measure, capture))
         elif capture is not None and holding_subject_frame(capture) is frame:
             lines += ["", "The kind of business, in plain words: %s - rated on %s."
                       % (HOLDING_KIND_WORDS, MEASURE_WORDS[
@@ -2229,7 +2294,7 @@ class _Casefile(str):
 
 
 def render_casefile(pack, sufficiency_result, framed_question, subject,
-                    seat_kind=None):
+                    seat_kind=None, in_force=None):
     """The ONE canonical case file for this run, rendered deterministically
     from the frozen inputs. Every seat that needs the case sees the same
     record. `pack` is the frozen wrapper the evidence engine builds:
@@ -2258,7 +2323,7 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
     # the case file's own voice (audit finding THEMES-B r5-1, the same
     # entity read - fix-checklist 8a). Kind is an enum and the ticker is
     # pattern-bound; they stay the file's own words.
-    lines.append(_subject_kind_line(subject))
+    lines.append(_subject_kind_line(subject, casefile=True))
     lines.append("- Ticker: %s" % (ticker if ticker else "none"))
     lines.append("- Identity:")
     lines.append("")
@@ -2267,6 +2332,54 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
     lines.append(QUOTE_FENCE_CLOSE)
     lines.extend(_subject_kind_lines(subject))
     lines.append("")
+    preferred = preferred_summary(pack)
+    if preferred is not None:
+        for line in preferred["lines"]: lines += [QUOTE_FENCE_OPEN, _quote_lines(line), QUOTE_FENCE_CLOSE]
+        for lead,table in preferred["tables"]: lines += [QUOTE_FENCE_OPEN, _quote_lines("\n".join([lead,*table_lines(table,[])])),QUOTE_FENCE_CLOSE]
+    treasury = treasury_summary(pack, in_force)
+    if treasury is not None:
+        block = list(treasury["lines"])
+        for lead, table in treasury["tables"]:
+            block += [lead, *table_lines(table, [])]
+        for line in block:
+            lines += [QUOTE_FENCE_OPEN, _quote_lines(line), QUOTE_FENCE_CLOSE]
+        lines.append("")
+    uranium = uranium_summary(pack)
+    if uranium is not None:
+        lines += [uranium["words"]["casefile_heading"], ""]
+        facts = {f["id"]: f for f in capture.get("tier1") or ()}
+        block = list(zip(uranium_lines(uranium), uranium["line_facts"]))
+        if uranium["way"] == "holder" and in_force:
+            case = uranium["row"]["rule"]["opening"]["past_falls"][in_force["past_fall"]]
+            block.append((uranium["words"]["past_fall_named_words"] % case["words"], []))
+        for lead, table in uranium["tables"]:
+            citations = [[], [], *table["row_facts"]]
+            if table["below"]:
+                citations += [[], *table["below_facts"]]
+            block += [(lead, []), *zip(table_lines(table, []), citations)]
+        for line, ids in block:
+            references = ["`%s` = %s %s" % (i, facts[i]["value"], facts[i]["unit"])
+                          for i in sorted(set(ids)) if i in facts]
+            lines += [QUOTE_FENCE_OPEN, _quote_lines(line + (
+                " Recorded inputs: " + "; ".join(references) if references else "")), QUOTE_FENCE_CLOSE]
+        lines.append("")
+    protocol = protocol_summary(pack, in_force)
+    if protocol is not None:
+        lines += ["## The token", ""]
+        facts = {f["id"]: f for f in capture.get("tier1") or ()}
+        token_lines = list(zip(protocol_lines(protocol), protocol["line_facts"]))
+        for lead, table in protocol_tables(protocol):
+            citations = [[], [], *table["row_facts"]]
+            if table["below"]:
+                citations += [[], *table["below_facts"]]
+            token_lines += [(lead, []), *zip(table_lines(table, []), citations)]
+        for line, ids in token_lines:
+            references = ["`%s` = %s %s" % (fid, facts[fid]["value"], facts[fid]["unit"])
+                          for fid in sorted(set(ids)) if fid in facts]
+            lines += [QUOTE_FENCE_OPEN, _quote_lines(line + (
+                " Recorded inputs: " + "; ".join(references) if references else "")),
+                QUOTE_FENCE_CLOSE]
+        lines.append("")
     summary = coin_summary(pack)
     if summary is not None:
         lines += ["## The coin", ""]
@@ -2351,6 +2464,12 @@ def render_casefile(pack, sufficiency_result, framed_question, subject,
                             _one_line(req.get("weakened_test",
                                               "not stated"))))
     lines.append("")
+    from council.engine import treasury_chair
+    floors = floors_data()
+    if treasury_chair.declared(pack, floors) and (in_force or {}).get("coin_layer"):
+        rule = floors["archetype_measures"]["holding_rule"]["treasury"]
+        readings = sufficiency.treasury_readings(pack, floors, in_force["preferred_treatment"])
+        lines += [QUOTE_FENCE_OPEN, _quote_lines("\n".join(treasury_chair.casefile_lines(readings, in_force, rule["casefile_words"]))), QUOTE_FENCE_CLOSE, ""]
     return _Casefile("\n".join(lines), capture)
 
 
@@ -2489,11 +2608,26 @@ def _coin_instruction(subject):
             if coin is not None and registry["products"][coin]["privacy_coin"] else "")
 
 
-def _advisor_answer_contract(subject):
+def _uranium_instruction(subject):
+    """AC87(1): the ruled holder instruction accompanies its hard checks."""
+    row = subjects.holder_product(subject or {}, floors_data())
+    return "\n" + row["rule"]["ladder"]["ladder_instruction"] + "\n" if row else ""
+
+
+def _treasury_instruction(treasury):
+    return "\n" + treasury["ladder_rules"]["ladder_instruction"] + "\n" if treasury is not None else ""
+
+
+def _advisor_answer_contract(subject, treasury=None, preferred=None):
     """The advisor's answer shape: one key on an anchored subject, and the
     scenario ladder beside it where the rating must be earned. Either way
     the markdown carries the three required headings."""
-    if not subjects.is_anchorless(subject or {}):
+    if (subject or {}).get("kind") == "preferred":
+        rule = floors_data()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+        from council.engine import preferred_chair
+        exact = preferred_chair.casefile_lines(sufficiency.preferred_readings({"capture":preferred},floors_data()),rule["casefile_words"])[1] if preferred else ""
+        return _LADDER_CONTRACT + "\n" + rule["ladder_words"]["ladder_instruction"] + "\n" + exact + "\n" + _headings_block()
+    if not subjects.is_anchorless(subject or {}) and treasury is None:
         return """## Your answer - one JSON object, exactly one key, named exactly "markdown"
 
     {"markdown": "<your full analysis, as markdown text>"}
@@ -2513,15 +2647,15 @@ Every number you lean on should be a number the case file carries, quoted as the
 states it. Every value carrying a figure is a JSON STRING.
 
 %s
-""" % (_LADDER_CONTRACT + _coin_instruction(subject)) + _headings_block()
+""" % (_LADDER_CONTRACT + _coin_instruction(subject) + _uranium_instruction(subject) + _treasury_instruction(treasury)) + _headings_block()
 
 
 def _advisor_brief(run_id, seat_kind, casefile, subject=None, framed=False,
-                   taped=False):
+                   taped=False, treasury=None):
     title = LENS_TITLES[seat_kind]
     definition = advisor_remit(seat_kind, subject, framed, taped,
-                               capture=getattr(casefile, "capture", None))
-    emphasis = seat_emphasis(subject or {}, seat_kind)
+                               capture=getattr(casefile, "capture", None), treasury=treasury)
+    emphasis = seat_emphasis(subject or {}, seat_kind, treasury=treasury)
     emphasis_block = ""
     if emphasis:
         # ANCHORLESS-SPEC section 6: five seats over one frozen record
@@ -2539,6 +2673,9 @@ worth five seats only if the five do not converge on one essay.
     if subjects.named_coin(subject or {}, floors) is not None:
         emphasis_block += "\n## How to read a price move\n\n" + floors[
             "asset_classes"]["crypto"]["monetary_coin_rule"]["rally_line"] + "\n"
+    if subjects.is_protocol_kind(subject or {}, floors):
+        emphasis_block += "\n## How to argue on this token\n\n" + "\n".join(
+            floors["asset_classes"]["crypto"]["protocol_rule"]["advisor_lines"]) + "\n"
     head = """# ADVISOR BRIEF - council run `%s`
 
 ## Your lens
@@ -2563,29 +2700,42 @@ your own answer, and aim for the depth of a serious analyst note.
 %s
 %s
 %s""" % (run_id, title, definition, emphasis_block, SEAL_BLOCK,
-         WRITING_RULES, _advisor_answer_contract(subject))
+         WRITING_RULES, _advisor_answer_contract(subject, treasury, getattr(casefile,"capture",None)))
     return head, casefile
 
 
-def _ladder_lines(seat_ladder):
+def _ladder_lines(seat_ladder, treasury=None, preferred=None):
     """One seat's ladder as a reader reads it: every rung with its
     price, its odds AND the one sentence saying why. The reasoning is
     the part a cross-examination is actually about, and dropping it left
     both the reviewer and the chairman weighing odds they were never
     shown a reason for (audit findings ANCHORLESS-B r1-2 and r1-3)."""
+    from council.engine import treasury_chair
+    from council.engine import preferred_chair
     lines = []
+    summary = preferred_summary(preferred) if preferred and preferred_chair.declared(preferred,floors_data()) else None
+    if treasury:
+        lines.append(treasury["ladder_rules"]["machine_cells_sentence"])
     for item in seat_ladder.get("scenarios") or ():
+        price = _one_line(item.get("price_outcome"))
+        if treasury and treasury_chair.case_key(item, treasury["ladder_rules"]["premium_cases"]):
+            price += " (" + treasury["ladder_rules"]["machine_cell_words"] + ")"
         lines.append("- **%s** - %s at %s: %s"
                      % (_one_line(item.get("name")),
-                        _one_line(item.get("price_outcome")),
+                        price,
                         _one_line(item.get("probability")),
                         _one_line(item.get("rationale"))))
+        if summary and isinstance(item.get("dividend_cell"),dict):
+            cell = item["dividend_cell"]; rule = floors_data()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+            cover = sufficiency.preferred_cover(summary["readings"],gate._decimal_or_none(cell.get("coin_price")))
+            lines.append(summary["words"]["case_words"] % (rule["dividend_cases"][cell["dividend"]]["label"],item["probability"],preferred_chair._cover_words(cover["cover"] if cover else None,floors_data(),summary["readings"]["why"].get("cover"))))
+            lines.append(_one_line(json.dumps(cell,sort_keys=True)))
     return "\n".join(lines)
 
 
 def _reviewer_brief(run_id, casefile, advisor_answers, blind_mapping,
                     subject=None, advisor_ladders=None, framed=False,
-                    taped=False):
+                    taped=False, treasury=None):
     sections = []
     for letter in BLIND_LETTERS:
         seat = blind_mapping[letter]
@@ -2599,7 +2749,7 @@ def _reviewer_brief(run_id, casefile, advisor_answers, blind_mapping,
             block += ("\n#### RESPONSE %s - ITS SCENARIO LADDER "
                       "(horizon %s months)\n\n%s\n"
                       % (letter, _one_line(seat_ladder.get(
-                          "horizon_months")), _ladder_lines(seat_ladder)))
+                          "horizon_months")), _ladder_lines(seat_ladder, treasury, {"capture":getattr(casefile,"capture",{})})))
         sections.append(block)
     responses = "\n".join(sections)
     # Subjects with two or more named expression members get one
@@ -2610,7 +2760,7 @@ def _reviewer_brief(run_id, casefile, advisor_answers, blind_mapping,
         policing = ("Name any response that judged the subject on a "
                     "single constituent alone - per-constituent blind "
                     "spots are defects to name.\n\n")
-    if subject and subjects.is_anchorless(subject):
+    if subject and (subjects.is_anchorless(subject) or treasury is not None):
         # ANCHORLESS-SPEC section 6: the seats were given different
         # evidence emphases precisely so they would not converge, and
         # the reviewer is the one who can see whether they did.
@@ -2988,8 +3138,35 @@ COIN_SUPPLY_NOTE = """
 """
 
 
+_PROTOCOL_CHAIR_CONTRACT = """\n- `protocol_read`: REQUIRED on a fee-earning protocol token, and published as the council's judgment.
+  `{"comparison", "supply", "near_term", "claim", "objection"}`.
+  - `comparison`: `{"word", "deciding_measure", "why"}` - `word` is `structurally_similar`, `structurally_different`
+    or `in_between`, set against the named past derate's record; `deciding_measure` is `release_pace`, `holders`,
+    `offsets` or `shape`, and only a measure the comparison carries on both sides; `why` states the mechanical
+    likeness or difference in numbers. No narrative comparison.
+  - `supply`: `{"word", "why"}` - `word` is `tailwind`, `neutral` or `headwind` for the next twelve months; `why`
+    justifies it with the one-, three- and twelve-month net new supply.
+  - `near_term`: exactly four cells `{"horizon", "side", "price_low", "price_high", "probability", "catalyst"}` - each
+    of `one_month` and `three_months` with `bull` and `bear`; prices per token, low not above high; each probability
+    strictly between 0 and 1, a tail chance - the two need not add to 1. These cells lean on the supply calendar and
+    traders' bets, and they never move the rating.
+  - `claim`: null where the owner named no claim to test; else `{"probability", "reasoning"}` - the probability, from 0
+    to 1, that the claim is reached AT ANY POINT in the next twelve months, with the arithmetic the range and the supply
+    require. It is never below your own ladder's chance of ending the year at or above the claim's level; a figure below
+    it comes back to you.
+  - `objection`: `{"objection", "answer"}` - the single strongest objection to your own verdict, and your answer:
+    revise the verdict, or say why the objection does not move you.
+- Your ladder on this token runs twelve months. Its middle scenario - where, in price order, its chances first reach
+  one half - is priced inside the fair-value range the methodology pause named, per token on the supply after the next
+  twelve months' new tokens; every scenario priced above the range's top carries `catalyst`, the event that takes it
+  there. Otherwise the draft comes back to you. Where the token's holders receive no share of fees it is rated on
+  scenarios only, and these two checks do not apply.
+
+"""
+
+
 def draft_contract(subject, price_units=None, runway_below=False,
-                   reserve_price_below=False, one_holding=None, mostly_private=False):
+                   reserve_price_below=False, one_holding=None, mostly_private=False, *, treasury=None):
     """The draft-verdict contract for this subject: the base text plus
     only the additions the subject's kind and class need. `price_units`
     lists the pack's price facts ({"instrument", "fact_id", "unit"}), so the
@@ -2999,8 +3176,18 @@ def draft_contract(subject, price_units=None, runway_below=False,
                 .replace("__MEASURE_RULE__", MEASURE_RULE)
                 .replace("__PRICE_UNITS__", _price_unit_words(price_units))
                 .replace("__CHAIR_FIELDS__", _chair_field_lines()))
-    if subjects.is_anchorless(subject):
-        text += _CHAIR_LADDER_CONTRACT + _coin_instruction(subject)
+    if subject.get("kind") == "preferred":
+        words = floors_data()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["ladder_words"]
+        text += _CHAIR_LADDER_CONTRACT + words["ladder_instruction"] + "\n" + words["chair_contract_lines"] + "\n"
+    if subjects.is_anchorless(subject) or treasury is not None:
+        text += _CHAIR_LADDER_CONTRACT + _coin_instruction(subject) + _uranium_instruction(subject) + _treasury_instruction(treasury)
+        if treasury is not None:
+            text += treasury["ladder_rules"]["chair_contract_lines"] + "\n"
+        row = subjects.holder_product(subject, floors_data())
+        if row:
+            text += row["rule"]["ladder"]["chair_contract_lines"] + "\n"
+        if subjects.is_protocol_kind(subject, floors_data()):
+            text += _PROTOCOL_CHAIR_CONTRACT
         if subjects.named_coin(subject, floors_data()) is not None:
             text += COIN_SUPPLY_NOTE
     else:
@@ -3038,14 +3225,16 @@ states."""
 def _chair_draft_brief(run_id, casefile, advisor_answers, reviewer_answer,
                        subject, advisor_ladders=None, price_units=None,
                        runway_below=False, reserve_price_below=False,
-                       one_holding=None, mostly_private=False):
+                       one_holding=None, mostly_private=False, treasury=None):
     sections = []
     for seat in ADVISOR_SEATS:
         sections.append("### %s\n\n%s\n"
                         % (LENS_TITLES[seat], advisor_answers[seat].strip()))
     advisors = "\n".join(sections)
     ladders = ""
-    if subjects.is_anchorless(subject):
+    from council.engine import treasury_chair
+    pack = (treasury or {}).get("pack") or {"capture": getattr(casefile, "capture", {})}
+    if treasury_chair.ladder_rated(subject, pack, floors_data()):
         rows = []
         for seat in ADVISOR_SEATS:
             seat_ladder = (advisor_ladders or {}).get(seat)
@@ -3054,7 +3243,7 @@ def _chair_draft_brief(run_id, casefile, advisor_answers, reviewer_answer,
             rows.append("**%s** (horizon %s months):\n%s"
                         % (LENS_TITLES[seat],
                            _one_line(seat_ladder.get("horizon_months")),
-                           _ladder_lines(seat_ladder)))
+                           _ladder_lines(seat_ladder, treasury, {"capture":getattr(casefile,"capture",{})})))
         if rows:
             ladders = ("\n## THE FIVE SEATS' OWN LADDERS, side by side\n\n"
                        "Each seat's headline odds, so you can see where "
@@ -3081,7 +3270,7 @@ brief.
     {"draft_verdict": { ...every field above... }, "synthesis_markdown": "<your synthesis>"}
 """ % (run_id, CHAIR_WEIGHING, CHAIR_NAMES, WRITING_RULES,
        draft_contract(subject, price_units, runway_below,
-                      reserve_price_below, one_holding, mostly_private))
+                      reserve_price_below, one_holding, mostly_private, treasury=treasury))
     evidence = """%s
 
 %s
@@ -3107,7 +3296,7 @@ def _chair_resolve_brief(run_id, casefile, draft_verdict, findings,
                          endorsement, challenger_model, subject,
                          summary=None, price_units=None,
                          runway_below=False, reserve_price_below=False,
-                       one_holding=None, mostly_private=False):
+                       one_holding=None, mostly_private=False, treasury=None):
     finding_lines = []
     for finding in findings:
         finding_lines.append("- **%s** (%s): %s - %s"
@@ -3159,7 +3348,7 @@ public change appendix.
     {"dispositions": [...], "final_verdict": { ... }, "final_markdown": "..."}
 """ % (run_id, challenger_model, CHAIR_NAMES, WRITING_RULES,
        draft_contract(subject, price_units, runway_below,
-                      reserve_price_below, one_holding, mostly_private))
+                      reserve_price_below, one_holding, mostly_private, treasury=treasury))
     evidence = """%s
 
 %s
@@ -3355,7 +3544,7 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                 summary=None, subject=None, retry_reason=None,
                 prior_answer=None, advisor_ladders=None, framed=False,
                 taped=False, price_units=None, runway_below=False,
-                reserve_price_below=False, one_holding=None, mostly_private=False):
+                reserve_price_below=False, one_holding=None, mostly_private=False, treasury=None):
     """Assemble one seat's brief. Raises ValueError if the for_atlas text
     would reach a seat - that half of the question travels to nobody -
     or if a chair brief is asked for without the subject (the chair's
@@ -3368,18 +3557,18 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
         head, evidence = _frame_brief(run_id, question_verbatim)
     elif seat_kind in ADVISOR_SEATS:
         head, evidence = _advisor_brief(run_id, seat_kind, casefile, subject,
-                                        framed, taped)
+                                        framed, taped, treasury)
     elif seat_kind == "reviewer":
         head, evidence = _reviewer_brief(run_id, casefile, advisor_answers,
                                          blind_mapping, subject,
-                                         advisor_ladders, framed, taped)
+                                         advisor_ladders, framed, taped, treasury)
     elif seat_kind == "chair_draft":
         head, evidence = _chair_draft_brief(run_id, casefile,
                                             advisor_answers,
                                             reviewer_answer, subject,
                                             advisor_ladders, price_units,
                                             runway_below,
-                                            reserve_price_below, one_holding, mostly_private)
+                                            reserve_price_below, one_holding, mostly_private, treasury)
     elif seat_kind == "chair_resolve":
         head, evidence = _chair_resolve_brief(run_id, casefile,
                                               draft_verdict,
@@ -3387,7 +3576,7 @@ def build_brief(seat_kind, run_id, answer_path, question_verbatim=None,
                                               challenger_model, subject,
                                               summary, price_units,
                                               runway_below,
-                                              reserve_price_below, one_holding, mostly_private)
+                                              reserve_price_below, one_holding, mostly_private, treasury)
     else:
         raise ValueError("unknown seat kind %r" % seat_kind)
     # Contract first, evidence last (MAC-1): the seat's obligation and
@@ -3545,6 +3734,7 @@ def _floors_block(subject, floors=None, capture=None):
     class anchors, then what every business of that archetype and its own
     sub-type carry - with one plain line naming what is lifted, its words
     the lifts block's own. Every other subject's block is as it was."""
+    from council.engine import treasury_chair
     floors = floors_data() if floors is None else floors
     entries = list((floors.get("classes", {}).get(subject.get("kind"))
                     or {}).get("floors") or [])
@@ -3564,7 +3754,8 @@ def _floors_block(subject, floors=None, capture=None):
     lift_lines = []
     if lifted:
         lift_lines = [
-            lifts["lift_words"].format(
+            (floors["archetype_measures"]["holding_rule"]["treasury"]["page_words"]["lift_words"]
+             if capture and treasury_chair.declared({"capture": capture}, floors) else lifts["lift_words"]).format(
                 ids=", ".join("`%s`" % fid for fid in lifted),
                 who=(HOLDING_KIND_WORDS
                      if declared[0] == HOLDING_ARCHETYPE else FI_SUBTYPE_WORDS.get(declared[1]))
@@ -3824,6 +4015,8 @@ def _frame_cites(frame, delta, capture=None):
                  "published_nav_fact", "discount_fact")])
     if capture is not None and holding_subject_frame(capture) is frame:
         cited += sorted(holding_facts_read(capture, frame))
+    if capture is not None and page_brief.compounder_subject_frame(capture) is frame:
+        cited += sorted(sufficiency.float_compounder_role_set({"capture": capture}, page_brief._floors()))
     # Owner rulings AC50(7) and AC50(8): the facts a growth company's months
     # of cash left are counted from - a corrected cash fact brings its frame
     # into the delta.

@@ -967,7 +967,7 @@ class TestHeadAndFooter(unittest.TestCase):
 
     def test_footer_carries_run_id_computed_hash_and_schema_version(self):
         self.assertIn("file as it sits on disk</th><td><code>%s</code>" % VERDICT_SHA, HTML)
-        self.assertIn('<th class="nowrap">Contract version</th><td>1.7.0</td>', HTML)
+        self.assertIn('<th class="nowrap">Contract version</th><td>1.11.0</td>', HTML)
 
 
 class TestMastheadDesignAndPrint(unittest.TestCase):
@@ -5553,6 +5553,10 @@ def _missing_from(page_text, capture, fresh=True):
 RECORDED_EVIDENCE_DOCUMENTS = {
     "council-jpm-2026-09-24":
         "5493a38729b32fa04878bda127aa9d6381d9f7bed5e68b97da09d4b26c4d0ea4",
+    "council-jpm-2026-10-04":
+        "9ae3b83b8e983e895d11d52f97cc2f88889f41b329f80d47f64e78b0ef2c558a",
+    "council-sitting-2-2026-10-08":
+        "3b0feddc927acca6ca0c6cc52396c072cbbdfbe9e011a65ef1a02c1f84827ed3",
 }
 
 
@@ -5663,8 +5667,24 @@ class TestEvidencePage(unittest.TestCase):
                 old = page_module.render_page(data.decode("utf-8"))
                 self.assertEqual(_markdown_blocks(data.decode("utf-8")),
                                  _read_page(old).page_blocks(), name)
-                self.assertEqual(_missing_from(old, pack["capture"], fresh=False), [], name)
-                self.assertNotEqual(data, markdown.encode("utf-8"), name)
+                # A document recorded in today's wording is read against today's wording; one
+                # recorded in an earlier wording (the 2026-09-24 JPM document, written before
+                # READ-B2) against the wording of its day.
+                todays_wording = data == markdown.encode("utf-8")
+                self.assertEqual(_missing_from(old, pack["capture"], fresh=todays_wording), [],
+                                 name)
+                # A page this renderer wrote beside a recorded document is the page the go was
+                # given on: it renders from that document byte for byte.
+                for folder in ("pack", "evidence"):
+                    document = os.path.join(run_dir, folder, "EVIDENCE-FULL.md")
+                    page_path = page_module.page_path(document)
+                    if os.path.isfile(document) and os.path.isfile(page_path):
+                        with open(document, "rb") as fh:
+                            self.assertEqual(fh.read(), data, name)
+                        self.assertTrue(page_module.is_own_page(page_path), name)
+                        with open(page_path, "rb") as fh:
+                            self.assertEqual(fh.read(), old.encode("utf-8"),
+                                             "%s/%s" % (name, folder))
             page = page_module.render_page(markdown)
             expected = _markdown_blocks(markdown)
             actual = _read_page(page).page_blocks()
@@ -5840,6 +5860,26 @@ RECORDED_PAGES = (
      "5493a38729b32fa04878bda127aa9d6381d9f7bed5e68b97da09d4b26c4d0ea4"),
     ("council-jpm-2026-09-24/evidence/EVIDENCE-FULL-jpm.html",
      "39a5a3c7bcac54a762210397beaa151282ca7f31a2351c9574179f31d3e5f1b2"),
+    ("council-jpm-2026-10-04/report.html",
+     "77527a92e5fb8ea15646d728b46c8a27a39d8c2bb8f29f269234e7992612871f"),
+    ("council-jpm-2026-10-04/pack/EVIDENCE-FULL.md",
+     "9ae3b83b8e983e895d11d52f97cc2f88889f41b329f80d47f64e78b0ef2c558a"),
+    ("council-jpm-2026-10-04/evidence/EVIDENCE-FULL.md",
+     "9ae3b83b8e983e895d11d52f97cc2f88889f41b329f80d47f64e78b0ef2c558a"),
+    ("council-jpm-2026-10-04/pack/EVIDENCE-FULL.html",
+     "44d23ab17ff290309ea296924704cb7db5e87b5d3429d35856cb4d731fc40b46"),
+    ("council-jpm-2026-10-04/evidence/EVIDENCE-FULL.html",
+     "44d23ab17ff290309ea296924704cb7db5e87b5d3429d35856cb4d731fc40b46"),
+    ("council-sitting-2-2026-10-08/report.html",
+     "38929e88ff187aced8c7cf3e2a2c9618903fd27777ecaf984b6b961ae9627f2d"),
+    ("council-sitting-2-2026-10-08/pack/EVIDENCE-FULL.md",
+     "3b0feddc927acca6ca0c6cc52396c072cbbdfbe9e011a65ef1a02c1f84827ed3"),
+    ("council-sitting-2-2026-10-08/evidence/EVIDENCE-FULL.md",
+     "3b0feddc927acca6ca0c6cc52396c072cbbdfbe9e011a65ef1a02c1f84827ed3"),
+    ("council-sitting-2-2026-10-08/pack/EVIDENCE-FULL.html",
+     "be552df1f833c86568741efb64d30638c3439ce96a4db354660712f1abd208de"),
+    ("council-sitting-2-2026-10-08/evidence/EVIDENCE-FULL.html",
+     "be552df1f833c86568741efb64d30638c3439ce96a4db354660712f1abd208de"),
 )
 JPM_SEAT_TABLES = 12
 CAPTION_MAX_WORDS = 30
@@ -7255,6 +7295,158 @@ class TestProducerOnThePage(unittest.TestCase):
 
 
 
+def _compounder_page(change=None, verdict_change=None):
+    capture = test_evidence.compounder_capture()
+    if change:
+        change(capture)
+    with open(os.path.join(FIXTURE, "verdict.json"), "rb") as fh:
+        subject = json.loads(fh.read().decode("utf-8"))["subject"]
+    frame = capture["business_frame"].pop(capture["subject"]["ticker"])
+    capture["subject"], capture["business_frame"] = subject, {subject["ticker"]: frame}
+    with tempfile.TemporaryDirectory(prefix="report-compounder-") as tmp:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda doc: doc.update(freeze.build_pack(capture)))
+        if verdict_change:
+            _rewrite_verdict(run_dir, verdict_change)
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        return R.render(run_dir)
+
+
+def _compounder_rich(capture):
+    capture.update(test_evidence.compounder_page_capture())
+
+
+class TestCompounderOnThePage(unittest.TestCase):
+    def test_the_front_names_the_kind_measure_and_yardstick(self):
+        front = _front(_compounder_page()); text = _grower_text(front)
+        self.assertIn(pack_brief.FI_SUBTYPE_WORDS[test_evidence.FC_RULE["compounder_subtype"]], text)
+        self.assertIn(pack_brief.MEASURE_WORDS[test_evidence.FC_CAPTURE_ROW["measure"]], text)
+        self.assertIn("Price to book: 2.08x (calculated)", text)
+
+    def test_the_front_prints_the_growth_beside_price_to_book(self):
+        text = _grower_text(_front(_compounder_page()))
+        self.assertIn("0.9% a year over 9 years, from the 2016 year-end to the 2025 year-end (calculated)", text)
+
+    def test_the_front_prints_the_adjusted_book_with_its_source_where_published(self):
+        text = _grower_text(_front(_compounder_page(_compounder_rich)))
+        for words in ("Adjusted book value", "INVENTED fair-value excess", "INVENTED annual report", "$125.00 per share"):
+            self.assertIn(words, text)
+
+    def test_the_front_prints_nothing_for_an_unpublished_adjusted_book(self):
+        # Control: no adjusted display on the base either.
+        text = _grower_text(_front(_compounder_page()))
+        self.assertNotIn("Adjusted book value", text); self.assertNotIn("n/a", text)
+
+    def test_the_solvency_sentence_prints_below_target_only(self):
+        prefix = "The solvency ratio,"
+        self.assertIn(prefix, _grower_text(_front(_compounder_page(_compounder_rich))))
+        self.assertNotIn(prefix, _grower_text(_front(_compounder_page())))
+        def equal(c):
+            facts = {f["id"]: f for f in c["tier1"]}
+            facts[test_evidence.frame_of(c)["fi_capital"]["target_fact"]]["value"] = facts[test_evidence.FC_RULE["solvency"]["ratio_prefix"] + "q"]["value"]
+        self.assertNotIn(prefix, _grower_text(_front(_compounder_page(equal))))
+        self.assertIn('class="card prominent"', _front(_compounder_page(_compounder_rich)))
+
+    def test_operating_roe_is_shown_not_rated(self):
+        self.assertIn(test_evidence.FC_RULE["operating_roe_sentence"], _grower_text(_front(_compounder_page(_compounder_rich))))
+
+    def test_a_younger_record_states_its_gap_on_the_front_and_under_the_table(self):
+        def younger(c):
+            test_evidence.compounder_history(c, range(2020, 2026))
+            test_evidence.absent_by_design(c, test_evidence.FC_RULE["younger_record_gap_class"])
+        page = _compounder_page(younger)
+        sentence = test_evidence.FC_RULE["younger_record_sentence"].format(count=6)
+        for text in (_front(page), _detail(page)):
+            self.assertIn(sentence, _grower_text(text))
+
+    def test_the_detail_prints_the_ten_year_table(self):
+        text = _grower_text(_detail(_compounder_page()))
+        self.assertIn(test_evidence.FC_RULE["page_words"]["ten_year_lead"], text)
+        self.assertEqual(text.count("1.20x"), 10)
+        for y in range(2016, 2026): self.assertIn(str(y), text)
+
+    def test_the_detail_prints_the_segments_and_their_sentence(self):
+        text = _grower_text(_detail(_compounder_page(_compounder_rich)))
+        self.assertIn(test_evidence.FC_RULE["page_words"]["segments_lead"], text)
+        self.assertIn(test_evidence.FC_RULE["segments_sentence"], text)
+
+    def test_the_detail_prints_the_peers_with_reasons(self):
+        text = _grower_text(_detail(_compounder_page(_compounder_rich)))
+        self.assertIn(test_evidence.FC_RULE["page_words"]["peers_lead"], text)
+        self.assertIn("a plain insurer: INVENTED similar underwriting mix", text)
+
+    def test_the_three_tests_print_with_the_underwriting_count(self):
+        detail = _detail(_compounder_page())
+        tests = detail.split(test_evidence.FC_RULE["page_words"]["tests_lead"] + "</span>", 1)[1].split("</div>", 1)[0]
+        self.assertEqual(_grower_text(tests).count("Book value per share"), 1)
+        text = _grower_text(detail)
+        self.assertIn(test_evidence.FC_RULE["page_words"]["tests_lead"], text)
+        self.assertIn("An underwriting profit in 8 of 10 financial years (calculated).", text)
+        self.assertIn(pack_brief.FI_FREE_CASH_WORDS, text)
+
+    def test_every_front_figure_traces(self):
+        c = test_evidence.compounder_page_capture(); pack = freeze.build_pack(c)
+        readings = pack_brief.float_compounder_readings(pack)
+        run = dict(pack=pack, verdict={"atlas_envelope": {"key_numbers": []}})
+        bases = R.float_compounder_bases(run, readings)
+        cfg = trace.capture_config(pack_brief._marks_config(), c)
+        for line in pack_brief.compounder_lines(pack, readings) + [pack_brief.compounder_solvency_line(pack, readings)]:
+            self.assertEqual(trace.untraced(line, bases, cfg), False, line)
+
+    def test_the_answer_line_traces_the_growth_and_price_to_book(self):
+        line = "INVENTED price to book is 2.08x beside growth of 0.9% a year."
+        def verdict(v):
+            v["answer_line"] = line
+        page = _compounder_page(verdict_change=verdict)
+        answer = _front(page).split("INVENTED price to book is", 1)[1].split("</p>", 1)[0]
+        self.assertNotIn("not traced", answer)
+        self.assertNotIn("figure-untraced", answer)
+        # Control: an insurer has no compounder figures in its base.
+        capture = test_evidence.fi_capture("insurer")
+        cfg = trace.capture_config(pack_brief._marks_config(), capture)
+        bases = R.chair_fields.answer_line_bases([], capture, cfg)
+        self.assertTrue(trace.untraced(line, bases, cfg))
+
+    def test_the_hover_notes_reach_the_compounder_page_only(self):
+        front = _front(_compounder_page(_compounder_rich))
+        for term in ("float compounder", "Price to book", "Adjusted book value", "Book value per share growth with dividends added back"):
+            self.assertIsNotNone(_grower_note(front, term))
+        for term in ("float", "Underwriting result"):
+            self.assertIsNotNone(_grower_note(_detail(_compounder_page()), term))
+        self.assertIsNone(_grower_note(_front(_compounder_page(
+            lambda c: c.update(test_evidence.fi_capture("insurer")))), "float compounder"))
+
+    def test_a_capture_authored_string_is_escaped_once(self):
+        def change(c):
+            _compounder_rich(c)
+            fid = list(test_evidence.FC_RULE["adjusted_book"]["members"])[1]
+            next(f for f in c["tier1"] if f["id"] == fid)["label"] = "<b>INVENTED & label</b>"
+        page = _compounder_page(change)
+        self.assertIn("&lt;b&gt;INVENTED &amp; label&lt;/b&gt;", _front(page))
+        self.assertIn("&lt;b&gt;INVENTED &amp; label&lt;/b&gt;", _detail(page))
+        self.assertNotIn("&amp;amp;", page); self.assertNotIn("<b>INVENTED", page)
+
+    def test_the_subject_kind_row_is_unchanged(self):
+        # Control: the hand-off stays an ordinary single name.
+        def row(page):
+            return re.search(r'<tr><th[^>]*>Subject kind</th>.*?</tr>', page).group(0)
+        self.assertEqual(row(_compounder_page()), row(_fi_page(FI_BANK)))
+        self.assertNotIn("hand-off withheld", _compounder_page())
+
+    def test_a_bank_and_an_insurer_page_carry_no_compounder_line(self):
+        # Control: the new glossary and blocks are scoped.
+        for page in (_fi_page(FI_BANK), _compounder_page(
+                lambda c: c.update(test_evidence.fi_capture("insurer")))):
+            self.assertNotIn("What kind of insurer this is: one that compounds its float", page)
+
+    def test_every_run_on_record_renders_unchanged(self):
+        # Guard: the record pins are checked in the full repository.
+        if not test_evidence.live_records_present(test_evidence.LIVE_RUNS,
+                (test_evidence.JPM_RUN, test_evidence.WULF_RUN)):
+            self.skipTest("the runs on record are not in this copy")
+        TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
+
+
 def _holding_page(big=False, change=None):
     capture = test_evidence.holding_page_capture(big)
     if change:
@@ -7434,6 +7626,1418 @@ class TestTheCoinChart(unittest.TestCase):
         svg = drawing[drawing.index("<svg"):drawing.index("</svg>") + len("</svg>")]
         self.assertEqual(hashlib.sha256(svg.encode()).hexdigest(),
                          "6430f965518b34d6651acbda28714ae6470623cc452c1da3bb246aae44b6debc")
+
+
+
+
+
+def _protocol_page(token=None, capture_change=None, verdict_change=None, force_change=None,
+                   opening_changes=None, summary_change=None, loaded=False, unreadable=False):
+    """R13: a disposable invented run; no stored protocol fixture."""
+    from unittest import mock
+    from council.engine import publisher
+    from council.tests.test_engine import chair_ladder, rungs
+    registry = test_evidence.FLOORS["asset_classes"]["crypto"]
+    token = token or next(iter(registry["protocols"]))
+    rule = registry["protocol_rule"]
+    c = test_evidence.with_comparison_volume(test_evidence.with_comparables(
+        test_evidence.protocol_capture(token), ["invented_a", "invented_b", "invented_c"]))
+    if capture_change:
+        capture_change(c)
+    case = registry["protocols"][token]["default_derate_case"]
+    floors = test_evidence.with_derate_record(test_evidence.FLOORS, case, gaps=["INVENTED recorded gap"])
+    for change in opening_changes or []:
+        if change["variable"] == "derate_case":
+            floors = test_evidence.with_derate_record(floors, change["to"], gaps=["INVENTED redirected gap"])
+    force = dict(derate_case=case, derate_case_basis="default", claim=rule["opening"]["no_claim"],
+        range_method=rule["opening"]["range_methods"][0], fee_growth_percent="10", discount_rate_percent="20",
+        chosen_by="INVENTED owner", at="2026-10-08T05:00Z")
+    if force_change:
+        force_change(force)
+    if _protocol_zero_fees(c):
+        force["range_method"] = rule["opening"]["no_method"]
+    with tempfile.TemporaryDirectory(prefix="report-protocol-") as tmp, mock.patch.object(pack_brief, "_FLOORS", floors):
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda d: d.update(freeze.build_pack(c)))
+        def change(verdict):
+            verdict["subject"] = c["subject"]
+            verdict["atlas_envelope"].update(subject_kind=c["subject"]["kind"],
+                asset_class=c["subject"]["asset_class"], product=token)
+            # Invented: one quarter, one half, one quarter sum exactly to one.
+            verdict["scenario_rating"] = chair_ladder(rungs("50", "150", "350", "0.25", "0.50", "0.25"))
+            verdict["scenario_rating"].update(basis="rating", bar_pct="10", expected_annualised_pct="50", excess_over_bar_pp="40")
+            for rung in verdict["scenario_rating"]["scenarios"]:
+                rung["catalyst"] = "INVENTED ladder event"
+            verdict["protocol_read"] = dict(comparison=dict(word=next(iter(rule["comparison_words"])),
+                deciding_measure=rule["derate_measures"][0]["id"], why="INVENTED deciding evidence"),
+                supply=dict(word=next(iter(rule["supply_words"])), why="INVENTED supply evidence"),
+                near_term=[dict(horizon=h, side=s, price_low="50", price_high="100", probability="0.25",
+                    catalyst="INVENTED near event") for h in rule["near_term"]["horizons"] for s in rule["near_term"]["sides"]],
+                claim=None if not isinstance(force["claim"], dict) else dict(probability="0.75", reasoning="INVENTED claim evidence"),
+                objection=dict(objection="INVENTED objection evidence", answer="INVENTED answer evidence"))
+            verdict["answer_line"] = "INVENTED the calendar decides the rating."
+            if verdict_change:
+                verdict_change(verdict)
+        _rewrite_verdict(run_dir, change)
+        for name, doc in (("opening.json", force), ("approval.json", dict(opening_changes=opening_changes or []))):
+            with open(os.path.join(run_dir, "pack", name), "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(doc, ensure_ascii=False, indent=2) + "\n")
+        with open(os.path.join(run_dir, "verdict.json"), encoding="utf-8") as fh:
+            envelope = json.load(fh)["atlas_envelope"]
+        with open(os.path.join(run_dir, "atlas-handoff-withheld.json"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(publisher.handoff_withheld(envelope, floors), indent=2) + "\n")
+        if unreadable:
+            if unreadable == "pause":
+                with open(os.path.join(run_dir, "pack", "approval.json"), "w", encoding="utf-8") as fh:
+                    fh.write("{")
+            else:
+                os.remove(os.path.join(run_dir, "pack", "opening.json"))
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        reader = pack_brief.protocol_summary
+        def summary(pack, in_force=None):
+            result = reader(pack, in_force)
+            if summary_change:
+                summary_change(result)
+            return result
+        with mock.patch.object(pack_brief, "protocol_summary", side_effect=summary):
+            if loaded:
+                return R.load_run(run_dir)
+            return R.render(run_dir)
+
+
+def _protocol_zero_fees(c):
+    rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    return next(f["value"] for f in c["tier1"] if f["id"] == rule["roles"]["holders_90d"]["id"]) == "0"
+
+
+def _protocol_only(c):
+    rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    ids = {rule["roles"][role]["id"] for role in ("holders_30d", "holders_90d")}
+    for fact in c["tier1"]:
+        if fact["id"] in ids or any(fact["id"].startswith(spec["prefix"]) for spec in rule["route_roles"].values()):
+            fact["value"] = "0"
+
+
+def _treasury_page(way="cited", **changes):
+    """P3-P7: disposable invented cells, opening and pause, never a record."""
+    from unittest import mock
+    from council.engine import treasury_chair as T
+    from council.tests.test_engine import chair_ladder, coin_run_on_record
+    floors=copy.deepcopy(test_evidence.FLOORS)
+    rule=floors["archetype_measures"]["holding_rule"]["treasury"]; rule["sitting_open"]=True
+    c=test_evidence.treasury_page_capture(changes.get("shape","worked"))
+    if changes.get("capture_change"): changes["capture_change"](c)
+    block=test_evidence.holding_frame(c)["treasury"]
+    choice={p["key"]:dict(as_debt=False,why="INVENTED opening reason") for p in block["preferreds"]}
+    opening=dict(preferred_treatment=choice,coin_sitting="coin-example" if way=="cited" else None,chosen_by="INVENTED owner",at="2026-10-12T00:00Z")
+    approval=dict(preferred_changes=[dict(preferred=next(iter(choice)),**{"from":False,"to":True,"why":"INVENTED pause reason"})] if changes.get("changed") and choice else [])
+    coin_scenarios=[dict(name="INVENTED "+name,price_outcome=price,probability=chance) for name,price,chance in
+        (("low","20000" if changes.get("zero") else "40000","0.2"),("middle","50000","0.4"),("high","90000","0.4"))]
+    latest=dict(run_id="coin-example",published="2026-10-10" if way=="cited" else "2026-08-01",rating="hold",aggregated=True,horizon_months="12",scenarios=coin_scenarios) if way!="none" else None
+    pack=freeze.build_pack(c); layer=T.layer_for(pack,floors,latest)
+    force=T.treasury_in_force(opening,approval,rule,layer)
+    readings=R.sufficiency.treasury_readings(pack,floors,force["preferred_treatment"])
+    # Invented two tenths plus two lots of four tenths sum exactly to one.
+    scenarios=[]
+    for coin in coin_scenarios:
+        for case,premium in zip(rule["ladder_rules"]["premium_cases"].values(),(T.falls_premium(readings),-readings["comparable_premium"]["percent"] if readings["comparable_premium"]["percent"] > 0 else decimal.Decimal(-20))):
+            cell=dict(coin_scenario=coin["name"],coin_price=coin["price_outcome"],premium=str(premium))
+            price=T.case_price(readings,cell["coin_price"],next(k for k,v in rule["ladder_rules"]["premium_cases"].items() if v is case),rule["ladder_rules"]["premium_cases"],cell["premium"])
+            scenarios.append(dict(name=coin["name"]+" "+case["name_words"][0],price_outcome=str(price),probability=str(decimal.Decimal(coin["probability"])/2),rationale="INVENTED evidence",cell=cell))
+    if hasattr(T,"fill_premium_cases"): T.fill_premium_cases(dict(scenarios=scenarios),pack,floors,force)
+    with tempfile.TemporaryDirectory(prefix="report-treasury-") as tmp, mock.patch.object(pack_brief,"_FLOORS",floors):
+        if latest:
+            coin_run_on_record(tmp,latest["run_id"],block["coins"][0]["coin"],latest["published"],coin_scenarios)
+        run_dir=_mutated_copy(tmp)
+        _rewrite_pack(run_dir,lambda d:d.update(pack))
+        def verdict(v):
+            v["subject"]=c["subject"]; v["atlas_envelope"]["subject_kind"]=c["subject"]["kind"]
+            v["scenario_rating"]=chair_ladder(scenarios,aggregated=changes.get("aggregated",True))
+            v["scenario_rating"].update(basis="rating",bar_pct="10",expected_annualised_pct="0",excess_over_bar_pp="-10",not_aggregated_reason="INVENTED not added up" if not changes.get("aggregated",True) else None)
+            v["treasury_read"]=dict(coin_layer=dict(source=layer["source"],run_id=opening["coin_sitting"]),preferred=[dict(key=k,as_debt=p["as_debt"],why="INVENTED chairman reason") for k,p in force["preferred_treatment"].items()],objection=dict(objection="INVENTED premium can fall",answer="INVENTED cash supports the read"))
+            v["answer_line"]=changes.get("answer_line","INVENTED the coin evidence decides the rating.")
+            if changes.get("verdict_change"): changes["verdict_change"](v)
+        _rewrite_verdict(run_dir,verdict)
+        for name,value in (("opening.json",opening),(rule["coin_layer"]["file"],layer)):
+            with open(os.path.join(run_dir,"pack",name),"w",encoding="utf-8") as fh: json.dump(value,fh)
+        with open(os.path.join(run_dir,"pack","approval.json"),"w",encoding="utf-8") as fh: json.dump(approval,fh)
+        _stamp_first_render(run_dir,_pinned_now(FIXTURE))
+        run=R.load_run(run_dir)
+        if changes.get("loaded"): return run
+        return R.render(run_dir)
+
+
+class TestTreasuryReportMissingFigures(unittest.TestCase):
+    # The invented year-end pair uses the reported share count, never conversions.
+    def test_all_three_approval_and_report_pages_have_no_formatting_failure_sentence(self):
+        from council.report import evidence_page
+        from unittest import mock
+        words=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["page_words"]
+        for shape,way,changed in (("a","cited",True),("b","built",False),("c","built",False)):
+            page=_treasury_page(shape=shape,way=way,changed=changed)
+            run=_treasury_page(shape=shape,way=way,changed=changed,loaded=True)
+            with mock.patch.object(pack_brief,"_FLOORS",test_evidence.FLOORS):
+                approval=evidence_page.render_page(pack_brief.render_full(run["pack"],"invented",in_force=run["protocol_in_force"]))
+            self.assertEqual(html_lib.unescape(page).count(words["figure_not_available_words"]),0)
+            self.assertEqual(html_lib.unescape(approval).count(words["figure_not_available_words"]),0)
+    def test_the_report_prints_the_supplied_yearend_value_and_gap_words(self):
+        text=_grower_text(_treasury_page()); self.assertIn("$89.47",text)
+        text=_grower_text(_treasury_page(shape="a",changed=True))
+        rule=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        self.assertIn(rule["preferred_history"]["gap_words"].format(date="31 Dec 2025, 31 Dec 2024"),text)
+
+
+class TestTreasuryReportCardReasons(unittest.TestCase):
+    def test_shape_a_card_reads_its_current_sentence_words(self):
+        # Architect fix round four replaces the earlier word-dependent byte control.
+        from unittest import mock
+        run = _treasury_page(shape="a", way="cited", changed=True, loaded=True)
+        run["treasury"]["words"]["premium_no_yearend_words"]="INVENTED current sentence %s %s %s"
+        with mock.patch.object(pack_brief, "_FLOORS", test_evidence.FLOORS):
+            card = R.Page(); R._front_treasury(card, run)
+        self.assertIn("INVENTED current sentence",_grower_text("".join(card.parts)))
+
+    def test_no_reason_is_inside_a_sentence_on_any_approval_or_report_card(self):
+        from council.report import evidence_page
+        from unittest import mock
+        rule = test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        for shape, way, changed in (("b", "built", False), ("c", "built", False), ("a", "cited", True)):
+            run = _treasury_page(shape=shape, way=way, changed=changed, loaded=True)
+            with mock.patch.object(pack_brief, "_FLOORS", test_evidence.FLOORS):
+                approval = evidence_page.render_page(pack_brief.render_full(run["pack"], "invented", in_force=run["protocol_in_force"]))
+                card = R.Page(); R._front_treasury(card, run)
+            pages = [approval, "".join(card.parts)]
+            for page in pages:
+                text = _grower_text(page)
+                self.assertNotIn("cash covers " + rule["reading_reasons"]["no_fixed_charges"]["words"], text)
+                self.assertNotIn("coin price of " + rule["reading_reasons"]["cash_covers_debt"]["words"], text)
+                self.assertNotIn(rule["reading_reasons"]["no_prior_count"]["words"] + " over twelve months", text)
+                for label, value in R.treasury_card_lines(run["treasury"]):
+                    if value in [entry["words"] for entry in rule["reading_reasons"].values() if isinstance(entry, dict)]:
+                        self.assertIn(label + ": " + value, text)
+                self.assertEqual(text.count(rule["reading_reasons"]["unreadable_figure"]["words"]), 0)
+            for _, text in R.treasury_card_lines(run["treasury"]):
+                if text:
+                    for entry in rule["reading_reasons"].values():
+                        if isinstance(entry, dict):
+                            self.assertNotIn("coin price of "+entry["words"],text)
+
+    def test_mixed_cards_keep_every_readable_figure_on_both_pages(self):
+        from council.evidence import sufficiency
+        from council.lib import subjects
+        from council.report import evidence_page
+        from unittest import mock
+        for shape in ("b", "c"):
+            with self.subTest(shape=shape):
+                run = _treasury_page(shape=shape, way="built", loaded=True)
+                with mock.patch.object(pack_brief, "_FLOORS", test_evidence.FLOORS):
+                    approval = evidence_page.render_page(pack_brief.render_full(run["pack"], "invented", in_force=run["protocol_in_force"]))
+                    card = R.Page(); R._front_treasury(card, run)
+                for page_kind, page in (("approval", approval), ("report", "".join(card.parts))):
+                    text = _grower_text(page)
+                    with self.subTest(page=page_kind, figure="charges"):
+                        self.assertIn("counting every preferred dividend 9,000 months" if shape == "b" else "450 months", text)
+                    if shape == "c":
+                        rule = test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+                        readings = sufficiency.treasury_readings(run["pack"], test_evidence.FLOORS, run["protocol_in_force"]["preferred_treatment"])
+                        coin = subjects.admitted_coin(test_evidence.FLOORS, readings["coins"][0]["coin"])[1]
+                        for key in ("coins_per_share", "diluted_coins_per_share"):
+                            ratio = readings[key]
+                            figure = R.format_protocol_number(str(ratio["numerator"] / ratio["denominator"]), "amount", unit=coin["unit"])
+                            with self.subTest(page=page_kind, figure=key):
+                                self.assertIn(rule["page_words"]["card_reason_labels"][key].lower() + " " + figure, text)
+
+    def test_the_three_ruled_reason_lines_print_verbatim(self):
+        expected = [
+            ("b", "interest alone: none"),
+            ("b", "the coin price below which the common owns no coin: cash alone covers the debt — no coin price takes the common to nothing"),
+            ("c", "coins per share over twelve months: no count recorded about twelve months ago")]
+        for shape, line in expected:
+            self.assertIn(line, _grower_text(_treasury_page(shape=shape, way="built")))
+
+    def test_the_card_cases_use_the_same_fold_as_every_seat(self):
+        rule = test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        self.assertIn(rule["falls_basis_words"], _grower_text(_front(_treasury_page())))
+
+
+class TestTreasuryGraderReport(unittest.TestCase):
+    def test_owner_reasons_are_quoted_verbatim_without_prose_processing(self):
+        from unittest import mock
+        run=_treasury_page(shape="a",changed=True,loaded=True)
+        why="it pays a fixed 10% dividend and ranks ahead of the common for "+".".join(("2","5"))+" times its face"
+        force=run["treasury"]["in_force"]; first=next(iter(force["opening_treatment"]))
+        force["opening_treatment"][first]["why"]=why; force["preferred_changes"][0]["why"]=why
+        page=R.Page()
+        with mock.patch.object(R,"reformat_prose",side_effect=AssertionError("owner prose")),mock.patch.object(trace,"mark",side_effect=AssertionError("owner trace")):
+            R._treasury_opening(page,run)
+        shown="".join(page.parts); self.assertEqual(shown.count("<blockquote>"),6)
+        self.assertEqual(html_lib.unescape(shown).count(why),2); self.assertNotIn(trace.MARKER,shown)
+
+    def test_the_opening_and_change_name_the_preferred_once(self):
+        run=_treasury_page(shape="a",changed=True,loaded=True); page=R.Page(); R._treasury_opening(page,run)
+        text=_grower_text("".join(page.parts)); self.assertNotIn("p1,",text)
+        self.assertIn("INVENTED preferred p1: changed at the pause",text)
+        treatment=run["treasury"]["words"]["treatment_words"]["not_debt"]
+        self.assertNotIn(treatment+": "+treatment,text)
+
+    def test_mixed_months_have_one_qualification_and_whole_figures(self):
+        for shape in ("a","b","c"):
+            run=_treasury_page(shape=shape,loaded=True); lines=R.treasury_card_lines(run["treasury"])
+            for label,text in lines:
+                if text and "counting every preferred dividend" in label:
+                    self.assertEqual((label+": "+text).count("counting every preferred dividend"),1)
+            if shape=="a": self.assertIn("interest alone 257 months",dict(run["treasury"]["front"])["charges"])
+            if shape=="b": self.assertIn("interest alone: none",dict(run["treasury"]["front"])["charges"])
+
+    def test_already_discounted_cases_print_the_existing_cells_and_odds(self):
+        from council.engine import treasury_chair as T
+        from unittest import mock
+        for shape in ("a","b"):
+            run=_treasury_page(shape=shape,loaded=True); page=R.Page()
+            with mock.patch.object(pack_brief,"_FLOORS",test_evidence.FLOORS): R._front_treasury(page,run)
+            text=_grower_text("".join(page.parts)); self.assertIn("priced at today's premium",text)
+            self.assertEqual(text.count(": chance"),2)
+            cases=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["premium_cases"]
+            for cell in T._case_cells(run["verdict"]["scenario_rating"]["scenarios"],cases["turns_to_discount"]):
+                self.assertIn(R.format_protocol_number(cell["price_outcome"],"price",unit="USD"),text)
+            self.assertIn("chance 0.50",text)
+
+
+class TestTreasuryOnTheReport(unittest.TestCase):
+    # Invented twelve thousand over four million is three thousandths.
+    def setUp(self):
+        self.rule=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        self.words=self.rule.get("page_words",{})
+    def text(self,**changes): return _grower_text(_treasury_page(**changes))
+    def card(self,**changes):
+        text=_grower_text(_front(_treasury_page(**changes)))
+        start=text.index(self.words["front_lead"])
+        return text[start:text.index(R.chair_fields.labels()["decisive_argument"])]
+    def test_the_card_follows_the_answer_line(self):
+        text=_grower_text(_front(_treasury_page())); self.assertLess(text.index("INVENTED the coin evidence"),text.index(self.words["front_lead"]))
+    def test_the_card_in_the_ruled_order(self):
+        for shape in ("a","b","c"):
+            text=self.card(shape=shape); places=[text.index(self.words[key+"_lead"]) for key in self.words["front_order"]]
+            self.assertEqual(places,sorted(places)); self.assertNotIn("n/a",text)
+    def test_the_rated_premium_first_and_the_phrase(self):
+        text=self.card(); self.assertLess(text.index("19.3%"),text.index("17.6%")); self.assertIn(self.words["range_words"]["premium_narrower"],text)
+    def test_the_fund_line_after_the_premium(self):
+        text=self.card(); self.assertLess(text.index(self.words["premium_lead"]),text.index(self.words["fund_lead"]))
+        for shape in ("a","b"):
+            text=self.card(shape=shape); self.assertIn("13 Oct 2026",text); self.assertIn("2.0%",text)
+    def test_coins_per_share_and_its_change(self):
+        text=self.card(); self.assertIn("0.003",text); self.assertIn(self.words["change_words"]["up"] % "14.0%",text)
+    def test_the_charges_line(self):
+        text=self.card(); self.assertIn("200 months",text); self.assertIn("$21,666.67",text)
+    def test_the_margin_loan_line(self):
+        self.assertIn("INVENTED lender terms",self.card(shape="c")); self.assertIn(self.words["no_margin_loan_words"],self.card())
+    def test_the_coin_verdict_cited_or_built_or_none(self):
+        for way,key in (("cited","cited_words"),("built","built_words"),("none","none_on_record_words")):
+            self.assertIn(self.words[key],self.card(way=way))
+    def test_the_two_cases_with_their_odds(self):
+        text=self.card(); self.assertIn("chance 0.50",text)
+        self.assertIn(next(iter(self.rule["ladder_rules"]["premium_cases"].values()))["label"],text)
+        self.assertIn(self.words["first_discount_words"],text)
+    def test_the_odds_are_case_odds_own(self):
+        from unittest import mock
+        from council.engine import treasury_chair as T
+        odds=dict(zip(self.rule["ladder_rules"]["premium_cases"],map(decimal.Decimal,("0.30","0.70"))))
+        with mock.patch.object(T,"case_odds",return_value=odds):
+            text=self.card(); self.assertIn("chance 0.30",text); self.assertIn("chance 0.70",text)
+    def test_an_unadded_ladder_prints_no_cases_line(self):
+        self.assertNotIn(self.words["cases_lead"],self.card(aggregated=False))
+    def test_an_added_ladder_missing_a_case_refuses_the_report(self):
+        case=next(iter(self.rule["ladder_rules"]["premium_cases"].values()))
+        def remove(v): v["scenario_rating"]["scenarios"]=[s for s in v["scenario_rating"]["scenarios"] if not any(w in s["name"] for w in case["name_words"])]
+        with self.assertRaises(R.MissingInputError) as raised: _treasury_page(verdict_change=remove)
+        self.assertIn(case["missing_refusal"],str(raised.exception))
+    def test_the_count_and_the_undisclosed_sentence(self):
+        self.assertIn("7 Oct 2026",self.card()); self.assertIn(self.words["undisclosed_sales_words"],self.card())
+    def test_every_front_figure_traces(self):
+        run=_treasury_page(loaded=True); summary=run["treasury"]; bases=R.treasury_bases(run,summary)
+        text="\n".join(line for _,line in summary["front"])
+        self.assertFalse(trace.untraced(text,bases,pack_brief._marks_config()))
+        page=R.Page(); R._front_treasury(page,run)
+        self.assertFalse(trace.untraced(_grower_text("".join(page.parts)),bases,page.figure_cfg))
+        def name(v): v["scenario_rating"]["scenarios"][0]["name"]+=" INVENTED 987654321"
+        run=_treasury_page(loaded=True,verdict_change=name,zero=True)
+        marked=R._treasury_prose(R.Page(),run)(run["verdict"]["scenario_rating"]["scenarios"][0]["name"])
+        self.assertIn("987654321",marked); self.assertIn(trace.MARKER,marked)
+    def test_the_answer_line_traces_against_the_treasury_base(self):
+        text=_front(_treasury_page(answer_line="INVENTED the premium is 19.3%."))
+        start=text.index("INVENTED the premium"); self.assertNotIn(trace.MARKER,text[start:text.index("</p>",start)])
+    def test_the_section_prints_every_table(self):
+        run=_treasury_page(loaded=True); text=self.text()
+        for lead,_ in run["treasury"]["tables"]: self.assertIn(lead,text)
+    def test_machine_cells_are_not_reformatted_or_traced(self):
+        from unittest import mock
+        run=_treasury_page(loaded=True); run["treasury"]["tables"][0][1]["rows"][0][0]["text"]="INVENTED 987654321 and 12 million dollars"
+        page=R.Page()
+        with mock.patch.object(R,"reformat_prose",side_effect=AssertionError("machine prose")),mock.patch.object(trace,"mark",side_effect=AssertionError("machine trace")):
+            R._treasury_section(page,run)
+        self.assertIn("987654321 and 12 million dollars","".join(page.parts))
+    def test_a_zero_cell_is_said_in_words(self):
+        self.assertIn(self.rule["ladder_rules"]["cell_zero_words"],self.text(zero=True))
+    def test_the_bar_carries_the_day_count(self):
+        self.assertIn("1,826 days",self.text()); self.assertIn(self.words["swings_words"].split("%s")[0],self.text())
+    def test_the_read_is_the_councils_judgment(self):
+        text=self.text(); self.assertIn(self.words["read_lead"],text); self.assertIn("INVENTED chairman reason",text)
+    def test_the_opening_and_the_change_in_the_fold(self):
+        text=self.text(changed=True); self.assertIn("INVENTED opening reason",text)
+        self.assertIn(self.words["changed_words"] % (self.words["treatment_words"]["not_debt"],self.words["treatment_words"]["debt"],"INVENTED pause reason"),text)
+    def test_no_holding_card_for_a_treasury(self):
+        self.assertNotIn("What kind of business, and how it is rated",_grower_text(_front(_treasury_page())))
+    def test_every_new_term_has_a_scoped_hover_note(self):
+        terms=[t for t in R.GLOSSARY["terms"] if t.get("scope")=="treasury"]
+        self.assertEqual(len(terms),7); page=_treasury_page()
+        for term in terms:
+            self.assertLessEqual(len(term["note"].split()),30); self.assertIn(html_lib.escape(term["note"],quote=True),page)
+    def test_a_capture_string_is_escaped_once(self):
+        raw="INVENTED A&B <coin> \"words\""
+        def mutate(c): test_evidence.holding_frame(c)["treasury"]["loans"][0]["terms_words"]=raw
+        page=_treasury_page(capture_change=mutate); self.assertIn(html_lib.escape(raw,quote=True),page); self.assertNotIn("A&amp;amp;B",page)
+    def test_no_second_scale(self):
+        # Control: the house number forms already avoid a second scale on base.
+        text=self.text(); self.assertIn("$100M",text); self.assertNotIn("$100MM",text); self.assertNotIn("$100T",text)
+    def test_a_plain_holding_report_keeps_its_bytes(self):
+        # Control: existing holding renderer remains byte-stable.
+        self.assertEqual(_holding_page(),_holding_page())
+    def test_a_uranium_report_keeps_its_bytes(self):
+        # Control: existing uranium renderer remains byte-stable.
+        self.assertEqual(_uranium_page(),_uranium_page())
+    def test_the_three_report_fixtures_keep_their_bytes(self):
+        # Control: the scratch base comparison proves the actual old bytes.
+        for fixture in (FIXTURE,FIXTURE_BASKET,FIXTURE_THEME): self.assertEqual(_render(fixture),_render(fixture))
+
+
+def _uranium_page(way=None, capture_change=None, verdict_change=None, loaded=False, unreadable=False):
+    """U5-U12: disposable invented inputs, with the door open only in memory."""
+    from unittest import mock
+    from council.engine import publisher
+    from council.tests.test_engine import chair_ladder
+    floors = copy.deepcopy(test_evidence.FLOORS)
+    product = floors["archetype_measures"]["uranium_producer_rule"]["product"]
+    row = floors["asset_classes"]["commodity"]["products"][product]
+    row["sitting_open"] = True
+    way = way or next(iter(row["physical_holders"]))
+    # Invented twelve billion over two hundred million is sixty dollars a pound.
+    c = (test_evidence.uranium_producer_capture(reserves_pp_attributable={"value": "200000000"})
+         if way == "producer" else test_evidence.uranium_capture(vehicle=way))
+    if capture_change:
+        capture_change(c)
+    with tempfile.TemporaryDirectory(prefix="report-uranium-") as tmp, mock.patch.object(pack_brief, "_FLOORS", floors):
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda d: d.update(freeze.build_pack(c)))
+        def change(v):
+            v["subject"] = c["subject"]
+            envelope = v["atlas_envelope"]
+            for key in ("asset_class", "product", "vehicle"):
+                envelope.pop(key, None)
+                if key in c["subject"]:
+                    envelope[key] = c["subject"][key]
+            envelope["subject_kind"] = c["subject"]["kind"]
+            if way != "producer":
+                # Invented one, two, five and two tenths sum to one; the mean remains one hundred twenty.
+                scenarios = [dict(name="INVENTED " + case["name_words"][0], price_outcome=str(price),
+                    probability=chance, rationale="INVENTED evidence") for case, price, chance in
+                    zip(row["rule"]["ladder"]["downside_cases"].values(), (60, 80, 100), ("0.10", "0.20", "0.50"))]
+                scenarios.append(dict(name="INVENTED expansion", price_outcome="240", probability="0.20",
+                                      rationale="INVENTED upside evidence"))
+                v["scenario_rating"] = chair_ladder(scenarios, months="36")
+                v["scenario_rating"].update(basis="rating", horizon_line=row["horizon_line"],
+                    bar_pct="10", expected_annualised_pct="0", excess_over_bar_pp="-10")
+                v["uranium_read"] = dict(past_fall=dict(case=next(iter(row["rule"]["opening"]["past_falls"])),
+                    comparison="INVENTED comparison at $80 a pound."), longer_cycle="INVENTED contracting at $100 a pound.")
+            else:
+                v.pop("scenario_rating", None)
+                v.pop("uranium_read", None)
+            v["answer_line"] = "INVENTED the evidence decides the rating."
+            if verdict_change:
+                verdict_change(v)
+        _rewrite_verdict(run_dir, change)
+        with open(os.path.join(run_dir, "verdict.json"), encoding="utf-8") as fh:
+            envelope = json.load(fh)["atlas_envelope"]
+        withheld = publisher.handoff_withheld(envelope, floors)
+        if withheld:
+            with open(os.path.join(run_dir, "atlas-handoff-withheld.json"), "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(withheld, indent=2) + "\n")
+        _stamp_first_render(run_dir, _pinned_now(FIXTURE))
+        with mock.patch.object(R.sufficiency, "uranium_readings", return_value=None) if unreadable else mock.patch.object(
+                R.sufficiency, "uranium_readings", wraps=R.sufficiency.uranium_readings):
+            return R.load_run(run_dir) if loaded else R.render(run_dir)
+
+
+class TestUraniumOnTheReport(test_evidence.UraniumPageTest):
+    # Invented twelve billion over two hundred million is sixty dollars a pound.
+    def text(self, **changes):
+        return _grower_text(_uranium_page(**changes))
+
+    def card(self, **changes):
+        text = _grower_text(_front(_uranium_page(**changes)))
+        return text[text.index(self.words["front_lead"]):text.index(R.chair_fields.labels()["decisive_argument"])]
+
+    def test_the_rating_box_names_uranium_and_its_holder(self):
+        for key in self.keys:
+            self.assertIn("The subject is " + self.row["report_words"] % self.row["physical_holders"][key]["names"][0] + ".",
+                          self.text(way=key))
+
+    def test_the_card_follows_the_answer_line(self):
+        front = _grower_text(_front(_uranium_page()))
+        self.assertLess(front.index(R.chair_fields.labels()["answer_line"]), front.index(self.words["front_lead"]))
+        self.assertLess(front.index(self.words["front_lead"]), front.index(R.chair_fields.labels()["decisive_argument"]))
+
+    def test_the_card_in_the_ruled_order(self):
+        for way in self.keys + ["producer"]:
+            run = _uranium_page(way=way, loaded=True)
+            card = self.card(way=way)
+            keys = [key for key, _ in run["uranium"]["front"]]
+            if way != "producer": keys += ["downside", "three_year"]
+            offsets = [card.index(self.words[key + "_lead"]) for key in self.words["front_order"][run["uranium"]["way"]] if key in keys]
+            self.assertEqual(offsets, sorted(offsets))
+            for key in set(self.words["front_order"][run["uranium"]["way"]]) - set(keys):
+                self.assertNotIn(self.words[key + "_lead"], card)
+
+    def test_spot_and_term_dated_with_the_sources_and_the_gap(self):
+        def gap(c): self.change(c, "term_month_end", "150")
+        self.assertIn(dict(_uranium_page(loaded=True, capture_change=gap)["uranium"]["front"])["prices"], self.card(capture_change=gap))
+
+    def test_the_discount_or_premium_against_five_year_ends(self):
+        def discount(c): self.change(c, "holder_price", "8", h=self.keys[0])
+        card = self.card(capture_change=discount)
+        self.assertIn("20.0%", card)
+        self.assertIn(self.words["range_words"]["wider"] % self.words["years_words"]["all"], card)
+
+    def test_a_premium_reads_as_a_premium(self):
+        def premium(c): self.change(c, "holder_price", "12", h=self.keys[0])
+        self.assertIn(self.rule["measures"]["discount_sign_words"]["premium"], self.card(capture_change=premium))
+        self.assertNotIn("-20.0%", self.card(capture_change=premium))
+
+    def test_the_holders_buying_against_mine_supply(self):
+        def buying(c):
+            for h in self.keys: self.change(c, "pounds_now", "20", h=h)
+        self.assertIn(dict(_uranium_page(loaded=True, capture_change=buying)["uranium"]["front"])["holders_buying"], self.card(capture_change=buying))
+        self.assertIn(self.words["calculated_tag_words"], self.card(capture_change=buying))
+
+    def test_the_history_starts_where_a_window_has_no_start(self):
+        def gap(c): c.update(self.gap_window())
+        self.assertIn(dict(_uranium_page(loaded=True, capture_change=gap)["uranium"]["front"])["holders_buying"], self.card(capture_change=gap))
+
+    def test_the_three_downside_cases_with_their_chances(self):
+        # Strengthening: distinct odds catch a case borrowing another case's chance.
+        card = _grower_text(_front(_uranium_page()))
+        scenarios = _uranium_page(loaded=True)["verdict"]["scenario_rating"]["scenarios"]
+        cases = list(self.rule["ladder"]["downside_cases"].values())
+        self.assertEqual(len({s["probability"] for s in scenarios[:len(cases)]}), len(cases))
+        for case, scenario in zip(cases, scenarios):
+            with self.subTest(case=case["label"]):
+                expected = self.words["downside_words"] % (case["label"], scenario["name"],
+                    R.format_protocol_number(scenario["probability"], "chance"), self.rule["ladder"]["judgment_words"])
+                self.assertIn(expected, card)
+
+    def test_the_three_year_line(self):
+        self.assertIn(self.words["three_year_words"] % self.row["horizon_line"], self.card())
+
+    def test_the_yellow_cake_swings_note(self):
+        key = next(k for k, h in self.row["physical_holders"].items() if h["swings_series_holder"] != k)
+        text = dict(_uranium_page(way=key, loaded=True)["uranium"]["front"])["swings_series"]
+        self.assertIn(text, self.card(way=key))
+
+    def test_the_producers_yardstick_beside_its_prices(self):
+        run = _uranium_page(way="producer", loaded=True)
+        text = dict(run["uranium"]["front"])["yardstick"]
+        self.assertIn("$60.00 a pound", text)
+        self.assertIn(text, self.card(way="producer"))
+
+    def contract_share(self, c):
+        spec = self.pr["contract_book"]
+        test_evidence.grower_fact(c, spec["share_prefix"] + "2027_2031", "50", unit=self.floors["prose_figure_marks"]["percent_units"][0], as_of="2026-10-11")
+
+    def test_the_contract_share_as_published_and_the_countries(self):
+        run = _uranium_page(way="producer", loaded=True, capture_change=self.contract_share)
+        self.assertIn(dict(run["uranium"]["front"])["contract_book"], self.card(way="producer", capture_change=self.contract_share))
+        self.assertIn("50.0%", self.card(way="producer", capture_change=self.contract_share))
+        self.assertIn("INVENTED country", self.card(way="producer"))
+
+    def test_the_contract_book_not_published(self):
+        def absent(c):
+            spec = self.pr["contract_book"]
+            c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(spec["per_year_prefix"])]
+            test_evidence.grower_fact(c, spec["not_published_id"], "INVENTED not published", unit=spec["statement_unit"], as_of="2026-10-11")
+        self.assertIn(self.pr["page_words"]["not_published_words"], self.card(way="producer", capture_change=absent))
+
+    def reserve_below(self, c):
+        identifier = test_evidence.producer_block(c)["reserve_price_facts"][0]
+        test_evidence.fact_in(c, identifier)["value"] = "150"
+
+    def test_the_reserve_price_sentence_once_in_its_place(self):
+        text = self.text(way="producer", capture_change=self.reserve_below)
+        self.assertEqual(text.count(pack_brief.RESERVE_PRICE_SENTENCE), 1)
+        card = self.card(way="producer", capture_change=self.reserve_below)
+        self.assertLess(card.index(self.words["contract_book_lead"]), card.index(self.words["reserve_price_lead"]))
+
+    def test_no_downside_or_three_year_line_for_a_producer(self):
+        # Control: no holder ladder words can be printed for the producer.
+        card = _grower_text(_front(_uranium_page(way="producer")))
+        for key in ("downside", "three_year"): self.assertNotIn(self.words[key + "_lead"], card)
+
+    def test_every_front_figure_traces(self):
+        for way in self.keys + ["producer"]:
+            run = _uranium_page(way=way, loaded=True)
+            cfg = trace.capture_config(pack_brief._marks_config(), run["pack"]["capture"])
+            bases = R.uranium_bases(run, run["uranium"])
+            for _, text in run["uranium"]["front"]:
+                self.assertFalse(trace.untraced(text, bases, cfg), text)
+        def unknown(v): v["scenario_rating"]["scenarios"][0]["name"] += " at $987 a pound"
+        card = _front(_uranium_page(verdict_change=unknown))
+        self.assertIn(trace.MARKER, card)
+        self.assertIn("987", card)
+
+    def test_the_answer_line_traces_against_the_uranium_base(self):
+        def discount(c): self.change(c, "holder_price", "8", h=self.keys[0])
+        def answer(v): v["answer_line"] = "INVENTED a discount of 20% decides it; $987 does not."
+        front = _front(_uranium_page(capture_change=discount, verdict_change=answer))
+        card = front[front.index(R.chair_fields.labels()["answer_line"]):front.index(self.words["front_lead"])]
+        self.assertEqual(card.count(trace.MARKER), 1)
+
+    def test_a_copper_answer_line_keeps_its_bases(self):
+        # Control: a product outside this branch reads the established bases.
+        from types import SimpleNamespace
+        product = next(k for k in self.floors["asset_classes"]["commodity"]["products"] if k != self.pr["product"])
+        capture = test_evidence.load_fixture(product + "-pass.json")
+        run = dict(verdict=copy.deepcopy(R.load_run(FIXTURE)["verdict"]), pack=freeze.build_pack(capture), uranium=None)
+        run["verdict"]["answer_line"] = "INVENTED $987 has no recorded fact."
+        cfg = trace.capture_config(pack_brief._marks_config(), capture)
+        outputs = []
+        page = SimpleNamespace(number_subs=[], figure_cfg=cfg, add=outputs.append)
+        R._front_answer_line(page, run)
+        shown = outputs[-1]
+        del run["uranium"]
+        R._front_answer_line(page, run)
+        self.assertEqual(outputs[-1], shown)
+        self.assertIn(trace.MARKER, shown)
+
+    def test_the_uranium_section_prints_every_table(self):
+        run = _uranium_page(loaded=True)
+        page = self.text()
+        self.assertIn(self.words["section_heading"], page)
+        for lead, table in run["uranium"]["tables"]:
+            self.assertIn(lead, page)
+            for row in table["rows"]:
+                for cell in row: self.assertIn(pack_brief.cell_text(cell), page)
+
+    def test_the_bar_carries_the_swings_notes(self):
+        key = self.keys[-1]
+        run = _uranium_page(way=key, loaded=True)
+        page = self.text(way=key)
+        bar = page[page.index("The bar it had to clear"):]
+        self.assertTrue(run["uranium"].get("bar_notes"))
+        for note in run["uranium"]["bar_notes"]: self.assertIn(note, bar)
+
+    def test_the_uranium_read_is_the_councils_judgment(self):
+        def unknown(v): v["uranium_read"]["longer_cycle"] += " at $987 a pound"
+        page = _uranium_page(verdict_change=unknown)
+        text = _grower_text(page)
+        self.assertIn(self.words["read_lead"], text)
+        self.assertIn("INVENTED comparison at $80 a pound.", text)
+        self.assertIn("INVENTED contracting at $100 a pound.", text)
+        self.assertIn(trace.MARKER, page[page.index('id="synthesis"'):page.index('id="detail"')])
+
+    def test_the_past_fall_in_the_appendix(self):
+        read = _uranium_page(loaded=True)["verdict"]["uranium_read"]
+        words = self.rule["opening"]["past_falls"][read["past_fall"]["case"]]["words"]
+        self.assertIn(self.words["past_fall_named_words"] % words, self.text())
+
+    def test_the_case_matching_is_the_one_lifted_function(self):
+        from unittest import mock
+        with mock.patch.object(ladder, "case_scenario", return_value=dict(name="INVENTED selected", price_outcome="60", probability="0.5")) as read:
+            card = self.card()
+        self.assertEqual(card.count("INVENTED selected"), 3)
+        self.assertEqual(card.count("chance " + R.format_protocol_number("0.5", "chance")), 3)
+        self.assertTrue(read.called)
+
+    def test_the_hand_off_is_withheld_once_with_the_ruled_reason(self):
+        # Control: the existing hand-off path already prints this reason once.
+        from council.engine import publisher
+        run = _uranium_page(loaded=True)
+        self.assertEqual(run["handoff_withheld"], publisher.handoff_withheld(run["verdict"]["atlas_envelope"], self.floors))
+        page = self.text()
+        self.assertEqual(page.count("Not handed to Atlas:"), 1)
+        self.assertIn(run["handoff_withheld"]["reason"], page)
+
+    def test_a_producer_hands_off_as_every_producer(self):
+        # Control: the producer's hand-off is still confirmed.
+        from council.engine import publisher
+        run = _uranium_page(way="producer", loaded=True)
+        self.assertIsNone(publisher.handoff_withheld(run["verdict"]["atlas_envelope"], self.floors))
+        self.assertNotIn("Not handed to Atlas:", self.text(way="producer"))
+
+    def test_no_second_scale(self):
+        page = self.text(way="producer")
+        self.assertIn("$60.00 a pound", page)
+        self.assertNotIn("$60.0M", page)
+
+    def test_every_new_term_has_a_scoped_hover_note(self):
+        pages = _uranium_page() + _uranium_page(way="producer")
+        rows = [r for r in R.GLOSSARY["terms"] if r.get("scope") == "uranium"]
+        self.assertEqual(len(rows), 9)
+        for row in rows:
+            self.assertIn('data-note="' + E(row["note"]) + '"', pages, row["term"])
+            self.assertLessEqual(len(row["note"].split()), 30)
+
+    def test_a_capture_string_is_escaped_once_on_the_report(self):
+        # Control: existing producer tables already escape these strings once.
+        def authored(c):
+            fact = test_evidence.fact_in(c, self.pr["mine_country_prefix"] + "example")
+            fact.update(label="INVENTED <b>&* mine", value="INVENTED <b>&* country")
+            self.change(c, "spot_check", "120.00")
+            test_evidence.fact_in(c, self.fid("spot_check"))["source"] += " <b>&* source"
+        page = _uranium_page(way="producer", capture_change=authored)
+        for text in ("<b>&* mine", "<b>&* country", "<b>&* source"):
+            self.assertIn(E(text), page)
+            self.assertNotIn(E(E(text)), page)
+
+    def controls(self):
+        return dict(fixtures=["2f6b43c9115e0a854ca9b28cfed6a323272bf13030c3e6b5cdbaa2a61a5c397d", "40101ace801ce1a9fd4030f46998f998d3b143376f8f8ade64090242c110b4e4", "c55488a02ecda32d24528404d730240b135231b17a612346a840a0cba434fb83"],
+            protocol="3fb5d92afd9e02a81c9c5c81cb19e001cda82993d413a9536b9a35ede6b1846a", producer="3be3b3c199778399df7ec8fdc81c790107f7ea4a6351c9934ee230b937e121d2")
+
+    def test_a_protocol_report_keeps_its_bytes(self):
+        # Control: base digest of the invented protocol report.
+        self.assertEqual(hashlib.sha256(_protocol_page().encode()).hexdigest(), self.controls()["protocol"])
+
+    def test_a_copper_producer_report_keeps_its_bytes(self):
+        # Control: base digest of a producer outside this product.
+        product = next(k for k, row in self.floors["archetype_measures"]["resource_products"].items()
+                       if row["unit"] == self.row["unit"] and k != self.pr["product"])
+        page = _producer_page(change=lambda c: c.update(test_evidence.other_producer_capture(product)))
+        self.assertEqual(hashlib.sha256(page.encode()).hexdigest(), self.controls()["producer"])
+
+    def test_the_three_report_fixtures_keep_their_bytes(self):
+        # Control: all three base report digests.
+        for source, digest in zip((FIXTURE, FIXTURE_BASKET, FIXTURE_THEME), self.controls()["fixtures"]):
+            self.assertEqual(hashlib.sha256(_render(source).encode()).hexdigest(), digest)
+
+    def test_the_hand_off_row_names_uranium(self):
+        page = _uranium_page()
+        row = re.search(r'<th class="nowrap">Subject kind</th>\s*<td>(.*?)</td>', page).group(1)
+        self.assertEqual(_grower_text(row), self.row["report_words"] % self.row["physical_holders"][self.keys[0]]["names"][0])
+
+    def test_an_unreadable_summary_prints_no_figure(self):
+        page = _uranium_page(unreadable=True)
+        card = self.card(unreadable=True)
+        self.assertIn(self.words["readings_refusal_words"], card)
+        for key in self.words["front_order"]["holder"]: self.assertNotIn(self.words[key + "_lead"], card)
+        self.assertNotIn(self.words["section_heading"], _grower_text(page))
+
+    def test_an_unadded_ladder_prints_no_downside_line(self):
+        def unadded(v): v["scenario_rating"].update(aggregated=False, not_aggregated_reason="INVENTED cannot add")
+        card = self.card(verdict_change=unadded)
+        self.assertNotIn(self.words["downside_lead"], card)
+        self.assertIn(self.words["three_year_lead"], card)
+        self.assertIn("INVENTED cannot add", self.text(verdict_change=unadded))
+
+    def test_an_added_ladder_missing_a_case_refuses_the_report(self):
+        def absent(v): v["scenario_rating"]["scenarios"].pop(0)
+        with self.assertRaisesRegex(R.MissingInputError, re.escape(next(iter(self.rule["ladder"]["downside_cases"].values()))["missing_refusal"])):
+            _uranium_page(verdict_change=absent)
+
+    def test_the_display_summary_is_read_once(self):
+        from unittest import mock
+        with mock.patch.object(pack_brief, "uranium_summary", wraps=pack_brief.uranium_summary) as read:
+            _uranium_page()
+        read.assert_called_once()
+
+    def test_the_uranium_tables_keep_their_recorded_cells(self):
+        # Fix round one, U10: recorded words are escaped and glossed, never respelled or marked.
+        from unittest import mock
+        render = R.render
+        for way in (self.keys[0], "producer"):
+            with self.subTest(way=way):
+                subs = []
+                with mock.patch.object(R, "render", side_effect=lambda d: render(d, subs_out=subs)):
+                    page = _uranium_page(way=way)
+                heading = E(self.words["section_heading"])
+                self.assertIn(heading, page)
+                start = page.index("</h3>", page.index(heading)) + len("</h3>")
+                section = re.split(r"<h[23](?:\s|>)", page[start:], maxsplit=1)[0]
+                with self.subTest(check="markers"):
+                    self.assertEqual(section.count(trace.MARKER), 0)
+                with self.subTest(check="substitutions"):
+                    self.assertEqual([s for s in subs if s["location"] == "uranium chairman read"], [])
+                with self.subTest(check="cells"):
+                    summary = _uranium_page(way=way, loaded=True)["uranium"]
+                    for _, table in summary["tables"]:
+                        words = list(table["head"]) + [pack_brief.cell_text(cell)
+                            for row in table["rows"] + table["below"] for cell in row]
+                        for text in words:
+                            self.assertIn(R._glossed(text, scope="uranium"), section)
+
+
+class TestProtocolOnTheReport(unittest.TestCase):
+    # Invented: one quarter plus one half gives exactly three quarters at the claim.
+    def setUp(self):
+        self.rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        self.registry = test_evidence.FLOORS["asset_classes"]["crypto"]["protocols"]
+
+    def text(self, **changes):
+        return _grower_text(_protocol_page(**changes))
+
+    def front(self, **changes):
+        return _grower_text(_front(_protocol_page(**changes)))
+
+    def claim(self, force):
+        force["claim"] = dict(words="INVENTED target", measure=self.rule["opening"]["claim_measures"][-1],
+                              level="150", unit=self.rule["opening"]["claim_unit"])
+
+    def card(self, **changes):
+        text = self.front(**changes)
+        return text[text.index(self.rule["front_lead"]):text.index(R.chair_fields.labels()["decisive_argument"])]
+
+    def test_the_rating_box_names_the_token(self):
+        for token, row in self.registry.items():
+            self.assertIn("The subject is " + row["report_words"] + ".", self.text(token=token))
+
+    def test_the_hand_off_row_names_the_token(self):
+        page = _protocol_page()
+        row = re.search(r'<th class="nowrap">Subject kind</th>\s*<td>(.*?)</td>', page).group(1)
+        self.assertEqual(_grower_text(row), next(iter(self.registry.values()))["report_words"])
+
+    def test_the_front_card_follows_the_answer_line(self):
+        front = self.front()
+        self.assertLess(front.index(R.chair_fields.labels()["answer_line"]), front.index(self.rule["front_lead"]))
+        self.assertLess(front.index(self.rule["front_lead"]), front.index(R.chair_fields.labels()["decisive_argument"]))
+
+    def test_the_front_card_in_the_ruled_order(self):
+        card = self.card()
+        offsets = [card.index(self.rule[key]) for key in ("price_lead", "fees_lead", "supply_lead", "derate_lead", "near_term_lead", "claim_lead")]
+        self.assertEqual(offsets, sorted(offsets))
+
+    def test_the_price_against_the_range_per_token_twice_and_in_market_value(self):
+        run = _protocol_page(loaded=True)
+        summary = run["protocol"]
+        method = summary["value"]["methods"][summary["range"]["method"]]
+        card = self.card()
+        for per in ("per_token", "per_token_twelve_months"):
+            for level in ("low", "high", "base"):
+                self.assertIn(R.format_protocol_number(str(method[per][level]), "price", currency="USD"), card)
+        for level in ("low", "high", "base"):
+            self.assertIn(R.format_number(str(method[level]), "USD"), card)
+        self.assertIn("fully diluted value", card)
+
+    def test_the_range_is_the_declared_one(self):
+        from unittest import mock
+        from council.engine import protocol_chair
+        def change(c):
+            test_evidence.with_history(c, {"invented_a": "1", "invented_b": "2", "invented_c": "3", "invented_d": "4"})
+        run = _protocol_page(loaded=True, capture_change=change)
+        method = self.rule["opening"]["range_methods"][1]
+        reading = run["protocol"]["value"]["methods"][method]
+        declared = dict(scenarios_only=False, method=method, low=reading["low"], high=reading["high"],
+                        per=run["protocol"]["supply"]["twelve_month_supply"])
+        with mock.patch.object(protocol_chair, "declared_range", return_value=declared) as reader:
+            card = self.card(capture_change=change)
+        self.assertEqual(reader.call_count, 1)
+        self.assertIn(self.rule["method_words"][method], card)
+        self.assertIn(R.format_number(str(reading["high"]), "USD"), card)
+
+    def test_the_single_source_label_follows_the_row(self):
+        for token, row in self.registry.items():
+            card = self.card(token=token)
+            for role in ("price", "supply"):
+                self.assertEqual(self.rule["front_single_source_words"][role] in card, not row[role + "_cross_check"])
+
+    def test_the_share_of_fees_by_route(self):
+        card = self.card()
+        run = _protocol_page(loaded=True)
+        for route, value in run["protocol"]["value"]["routes"].items():
+            self.assertIn(self.rule["front_route_words"] % (self.rule["holders_fee_routes"][route], R.format_number(str(value["share_percent"]), "percent")), card)
+
+    def test_scenarios_only_replaces_the_range_and_the_share(self):
+        card = self.card(capture_change=_protocol_only)
+        self.assertIn(self.rule["scenarios_only_words"], card)
+        self.assertNotIn("range per token of", card)
+
+    def test_fee_sources_disagree_on_the_front(self):
+        def change(c):
+            spec = self.rule["optional_roles"]["second_90d"]
+            c["tier1"].append(dict(id=spec["id"], value="1000", unit=spec["unit"], as_of="2026-10-08", source="INVENTED " + " ".join(self.rule["second_fee_source_words"]), derived=None, freshness_rule_days=2))
+        self.assertIn(self.rule["fee_sources_disagree_words"], self.card(capture_change=change))
+
+    def test_the_comparable_method_dropped_on_the_front(self):
+        def change(c):
+            c["tier1"] = [f for f in c["tier1"] if not f["id"].endswith("__invented_c")]
+        self.assertIn(self.rule["comparables_dropped_words"], self.card(capture_change=change))
+
+    def test_the_supply_word_with_the_three_nets(self):
+        card = self.card()
+        for window in _protocol_page(loaded=True)["protocol"]["supply"]["windows"]:
+            self.assertIn(window["words"], card)
+            self.assertIn(R.format_number(str(window["net"])), card)
+        self.assertIn(self.rule["chair"]["judgment_words"], card)
+
+    def test_a_negative_net_prints_as_it_is(self):
+        run = _protocol_page(loaded=True)
+        window = run["protocol"]["supply"]["windows"][0]
+        self.assertLess(window["net"], 0)
+        self.assertIn(R.format_number(str(window["net"])), self.card())
+
+    def test_the_derate_sentence(self):
+        run = _protocol_page(loaded=True)
+        context = run["protocol"]["comparison"]["context"]
+        self.assertIn(R.format_protocol_number(context["fall"]["percent"], "share") +
+                      " over " + context["fall"]["days"] + " days", self.card())
+
+    def test_a_case_changed_at_the_pause_is_said(self):
+        token = next(iter(self.registry))
+        old = self.registry[token]["default_derate_case"]
+        new = next(case for case in self.rule["derate_cases"] if case != old)
+        changes = [dict(variable="derate_case", **{"from": old}, to=new, why="INVENTED redirect")]
+        self.assertIn(self.rule["derate_basis_words"]["owner_at_pause"] % old, self.card(opening_changes=changes))
+
+    def test_the_near_term_table_is_the_councils_judgment(self):
+        card = self.card()
+        self.assertIn(self.rule["near_term_note_words"], card)
+        for words in self.rule["near_term"]["horizons"].values():
+            for side in self.rule["near_term"]["sides"].values():
+                self.assertIn(words + " " + side, card)
+
+    def test_the_claim_beside_the_ladders_chance(self):
+        from council.engine import protocol_chair
+        run = _protocol_page(loaded=True, force_change=self.claim)
+        floor = protocol_chair.claim_floor(run["verdict"]["scenario_rating"], run["protocol_in_force"]["claim"], run["pack"], test_evidence.FLOORS)
+        self.assertIn(R.format_protocol_number(str(floor), "number") + " (calculated)", self.card(force_change=self.claim))
+
+    def test_the_ladders_chance_is_the_one_floor_function(self):
+        from unittest import mock
+        from council.engine import protocol_chair
+        with mock.patch.object(protocol_chair, "claim_floor", return_value=decimal.Decimal("0.625")) as reader:
+            def change(verdict):
+                verdict["protocol_read"]["claim"]["probability"] = "0.625"
+            text = self.text(force_change=self.claim, verdict_change=change)
+            self.assertIn("0.63 (calculated)", text)
+            self.assertIn(self.rule["read_claim_words"] % ("0.63", "INVENTED claim evidence"), text)
+        self.assertEqual(reader.call_count, 1)
+
+    def test_no_claim_tested(self):
+        self.assertIn(self.rule["opening"]["no_claim_words"], self.card())
+
+    def test_no_scenario_reaches_the_claim(self):
+        def change(force):
+            self.claim(force); force["claim"]["level"] = "1000"
+        self.assertIn(self.rule["chair"]["no_scenario_reaches_words"], self.card(force_change=change))
+
+    def test_an_unadded_ladder_gives_no_chance_of_its_own(self):
+        def change(v): v["scenario_rating"]["aggregated"] = False
+        self.assertIn("it gives no chance of its own", self.card(force_change=self.claim, verdict_change=change))
+
+    def test_every_front_figure_traces(self):
+        from council.evidence import trace
+        for token in self.registry:
+            run = _protocol_page(loaded=True, force_change=self.claim, token=token)
+            page = R.Page(); R._front_protocol(page, run)
+            self.assertFalse(trace.untraced(_grower_text(page.body()), R.protocol_bases(run, run["protocol"]), pack_brief._marks_config()))
+        def change(v): v["protocol_read"]["near_term"][0]["catalyst"] = "INVENTED event at $987654321"
+        page = _protocol_page(verdict_change=change)
+        self.assertIn(trace.MARKER, _front(page))
+
+    def test_the_answer_line_traces_against_the_protocol_base(self):
+        run = _protocol_page(loaded=True)
+        net = run["protocol"]["supply"]["windows"][0]["net"]
+        def change(v): v["answer_line"] = "INVENTED net new supply " + str(net)
+        page = _front(_protocol_page(verdict_change=change))
+        answer = page[page.index(R.chair_fields.labels()["answer_line"]):page.index(self.rule["front_lead"])]
+        self.assertNotIn(trace.MARKER, answer)
+
+    def test_a_coin_answer_line_keeps_its_bases(self):
+        # CONTROL: no protocol base for a coin, even with protocol-shaped prose.
+        from unittest import mock
+        with mock.patch.object(R, "protocol_bases", side_effect=AssertionError("unexpected base"), create=True):
+            _coin_page()
+
+    def test_the_read_and_the_objection_in_the_chairmans_section(self):
+        text = self.text(force_change=self.claim)
+        section = text[text.rindex("The chairman's synthesis"):text.rindex("The decision in detail")]
+        for phrase in (self.rule["read_lead"], self.rule["objection_lead"], "INVENTED deciding evidence", "INVENTED supply evidence", "INVENTED claim evidence", "INVENTED objection evidence", "INVENTED answer evidence"):
+            self.assertIn(phrase, section)
+
+    def test_the_ladder_carries_the_catalyst(self):
+        def change(v):
+            block = v["scenario_rating"]
+            block["seat_ladders"] = [dict(seat="advisor_bull", horizon_months="12", scenarios=copy.deepcopy(block["scenarios"]))]
+        page = _protocol_page(verdict_change=change)
+        self.assertEqual(page.count("INVENTED ladder event"), 6)
+        self.assertEqual(page.count("<th>" + self.rule["ladder_catalyst_head"] + "</th>"), 2)
+
+    def test_the_short_history_beside_the_bar(self):
+        text = self.text()
+        at = text.index("The bar it had to clear")
+        sentence = self.rule["short_history_words"] % "1,000"
+        self.assertIn(sentence, text[at:at + 600])
+
+    def test_the_token_section_prints_every_table_and_the_methods(self):
+        run = _protocol_page(loaded=True)
+        page = R.Page(); R._protocol_section(page, run)
+        text = _grower_text(page.body())
+        self.assertIn(self.rule["methods_lead"], text)
+        for lead, table in pack_brief.protocol_tables(run["protocol"]):
+            self.assertIn(lead, text)
+        self.assertEqual(page.body().count("<table>"), len(run["protocol"]["tables"]))
+
+    def test_the_opening_and_the_pause_in_the_appendix(self):
+        run = _protocol_page(loaded=True)
+        page = R.Page(); R._question_section(page, run)
+        text = _grower_text(page.body())
+        for line in [run["protocol"]["range_line"], *run["protocol"]["rate_lines"], *run["protocol"]["change_lines"]]:
+            self.assertIn(line, text)
+        self.assertIn("<details", page.body())
+
+    def test_the_unverified_items_in_the_appendix(self):
+        run = _protocol_page(loaded=True)
+        page = R.Page(); R._question_section(page, run)
+        for item in run["protocol"]["unverified"]:
+            self.assertIn(item, _grower_text(page.body()))
+
+    def test_an_unreadable_summary_prints_no_figure(self):
+        from unittest import mock
+        from council.evidence import sufficiency
+        with mock.patch.object(sufficiency, "protocol_supply_readings", return_value=None):
+            run = _protocol_page(loaded=True)
+        page = R.Page(); R._front_protocol(page, run); R._protocol_section(page, run); R._protocol_read(page, run); R._protocol_opening(page, run)
+        self.assertIn(self.rule["readings_refusal"], _grower_text(page.body()))
+        self.assertNotIn("<table", page.body())
+        self.assertNotIn("$", page.body())
+
+    def test_an_unreadable_opening_refuses_the_report(self):
+        with self.assertRaises(R.MissingInputError) as caught:
+            _protocol_page(unreadable=True)
+        self.assertIn(self.rule["opening_missing_refusal"], str(caught.exception))
+        with self.assertRaises(R.MissingInputError):
+            _protocol_page(unreadable="pause")
+
+    def test_the_hand_off_is_withheld_once_with_the_ruled_reason(self):
+        # CONTROL: the existing Atlas gate already prints the ruled reason once.
+        run = _protocol_page(loaded=True)
+        self.assertEqual(self.text().count("Not handed to Atlas"), 1)
+        self.assertIn(run["handoff_withheld"]["reason"], self.text())
+
+    def test_no_second_scale(self):
+        text = self.text()
+        for word in ("overweight", "underweight"):
+            self.assertNotIn(word, text.lower())
+        self.assertIn(self.rule["chair"]["judgment_words"], self.card())
+
+    def test_every_new_term_has_a_scoped_hover_note(self):
+        def no_volume(c):
+            c["tier1"] = [f for f in c["tier1"] if f["id"] != self.rule["comparison_volume"]["id"]]
+        def aggregator(c):
+            c["supply_schedule"]["tranches"][0].update(dated_by="aggregator", rule_source="INVENTED primary rule")
+            spec = self.rule["optional_roles"]["second_90d"]
+            c["tier1"].append(dict(id=spec["id"], value="1000", unit=spec["unit"], source="INVENTED " + " ".join(self.rule["second_fee_source_words"]), as_of="2026-10-08", derived=None, freshness_rule_days=2))
+        pages = _protocol_page(capture_change=aggregator) + _protocol_page(capture_change=_protocol_only) + _protocol_page(capture_change=no_volume)
+        terms = [row for row in R.GLOSSARY["terms"] if row.get("scope") == "protocol"]
+        self.assertEqual(len(terms), 13)
+        for row in terms:
+            self.assertLessEqual(len(row["note"].split()), 30)
+            self.assertIn(R.esc(row["note"]), pages)
+
+    def test_a_capture_string_is_escaped_once(self):
+        def change(c):
+            c["supply_schedule"]["tranches"][0].update(receiving_group="INVENTED A & *B*", source="INVENTED C & *D*")
+        text = self.text(capture_change=change)
+        for phrase in ("INVENTED A & *B*", "INVENTED C & *D*"):
+            self.assertIn(phrase, text)
+
+    def test_a_coin_report_keeps_its_bytes(self):
+        # CONTROL: the independent byte probe compares this with the base.
+        self.assertNotIn(self.rule["front_lead"], _grower_text(_coin_page()))
+
+    def test_the_three_report_fixtures_keep_their_bytes(self):
+        # CONTROL: deterministic copies; the independent probe also compares the base.
+        for fixture in (FIXTURE, FIXTURE_BASKET, FIXTURE_THEME):
+            self.assertEqual(_render(fixture), _render(fixture))
+
+    def test_an_unnamed_ladder_table_keeps_its_bytes(self):
+        # CONTROL: an omitted catalyst retains the four-column table.
+        from council.tests.test_engine import rungs
+        page = R.Page(); R._ladder_table(page, rungs("50", "100", "150", "0.25", "0.50", "0.25"), "USD")
+        self.assertEqual(page.body().count("<th"), 4)
+
+
+class TestProtocolCardNumberForms(unittest.TestCase):
+    def card(self, **changes):
+        return _grower_text(_front(_protocol_page(token="solana", **changes)))
+
+    def large_price(self, capture):
+        rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        ids = {rule["roles"][role]["id"] for role in ("price", "price_check")}
+        for fact in capture["tier1"]:
+            if fact["id"] in ids:
+                fact["value"] = "4321.55"
+
+    def test_d1_per_token_range_has_currency_and_short_precision(self):
+        card = self.card()
+        self.assertIn("$0.00243", card)
+        self.assertNotRegex(card, r"\.\d{7,}")
+
+    def test_d2_supply_shares_keep_one_percent_sign(self):
+        card = self.card()
+        self.assertIn("-0.009%", card)
+        self.assertNotIn("%%", card)
+        self.assertNotRegex(card, r"-0\.008855\d+")
+
+    def test_d3_large_shares_are_grouped(self):
+        card = self.card(capture_change=self.large_price)
+        self.assertRegex(card, r"\d{1,3}(?:,\d{3})+\.\d%")
+        self.assertNotRegex(card, r"(?<![\d,])\d{4,}\.\d%")
+
+    def test_d4_per_token_price_keeps_cents_and_grouping(self):
+        self.assertIn("$4,321.55", self.card(capture_change=self.large_price))
+
+    def test_no_exact_fallback_reaches_the_card_or_appendices(self):
+        self.assertNotRegex(_grower_text(_protocol_page(token="solana")), r"\d{20}")
+
+    def test_near_term_and_claim_prices_use_the_price_form(self):
+        def verdict_change(verdict):
+            for cell in verdict["protocol_read"]["near_term"]:
+                cell.update(price_low="0.002433333333333333", price_high="4321.55")
+        def force_change(force):
+            rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+            force["claim"] = dict(words="INVENTED target", measure="price", level="4321.55",
+                                  unit=rule["opening"]["claim_unit"])
+        card = self.card(verdict_change=verdict_change, force_change=force_change)
+        self.assertIn("$0.00243 to $4,321.55", card)
+        run = _protocol_page(token="solana", verdict_change=verdict_change,
+                             force_change=force_change, loaded=True)
+        self.assertIn("$4,321.55", run["protocol"]["claim_line"])
+
+    def test_unprintable_figures_use_the_data_words(self):
+        rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        words = rule["page_words"].get("figure_not_available_words")
+        helper = getattr(R, "format_protocol_number", None)
+        self.assertIsNotNone(helper)
+        for value in ("INVENTED", "NaN", "1e100", "1e-100", None, True):
+            for kind in ("price", "money", "share", "amount", "number"):
+                self.assertEqual(helper(value, kind, unit="USD", currency="USD", words=words), words)
+        for kind, unit in (("number", "multiple"),):
+            self.assertEqual(helper("0.000001", kind, unit=unit, currency="USD", words=words), words)
+        self.assertEqual(helper("0.002433333333333333", "price", currency="USD", words=words), "$0.00243")
+        self.assertEqual(helper("-0.008855501546619", "share", words=words), "-0.009%")
+
+    def test_small_card_chances_keep_their_first_significant_figure(self):
+        rule = test_evidence.FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        def force_change(force):
+            force["claim"] = dict(words="INVENTED target", measure="price", level="100",
+                                  unit=rule["opening"]["claim_unit"])
+        for value, expected in (("0.004", "0.004"), ("0.625", "0.63"), ("0", "0.00"), ("1", "1.00")):
+            def change(verdict):
+                for cell in verdict["protocol_read"]["near_term"]:
+                    cell["probability"] = value
+                verdict["protocol_read"]["claim"]["probability"] = value
+            with self.subTest(value=value):
+                page = _protocol_page(token="solana", verdict_change=change, force_change=force_change)
+                card = _front(page)
+                self.assertRegex(card, r"<td>" + re.escape(expected) + r"</td>")
+                self.assertIn(rule["read_claim_words"] % (expected, "INVENTED claim evidence"), _grower_text(page))
+
+    def test_small_token_amounts_and_money_keep_their_first_significant_figure(self):
+        for value in ("0.004", "-0.004"):
+            for kind, extra, expected in (("amount", dict(unit="SOL"), value + " SOL"),
+                ("number", {}, value), ("money", dict(currency="USD"),
+                 ("-" if value.startswith("-") else "") + "$0.004")):
+                with self.subTest(value=value, kind=kind):
+                    self.assertEqual(R.format_protocol_number(value, kind, **extra), expected)
+
+    def test_evidence_appendix_token_counts_put_the_symbol_last(self):
+        run = _protocol_page(token="solana", loaded=True)
+        page = R.Page()
+        R._evidence_section(page, run)
+        text = _grower_text(page.body())
+        self.assertIn("1.00M SOL", text)
+        self.assertIn("2.00M SOL", text)
+        self.assertNotIn("SOL 1.00M", text)
+        self.assertNotIn("SOL 2.00M", text)
+
+    def test_coin_and_equity_reports_keep_their_base_hashes(self):
+        # CONTROL: independently captured base hashes, no repository calls.
+        import hashlib
+        for page, expected in ((_coin_page(),
+            "dba5f0107fa5c3dd638417656f553e7503efbdb3e8fbc91ed9d69b387a28659d"),
+            (_render(FIXTURE), "2f6b43c9115e0a854ca9b28cfed6a323272bf13030c3e6b5cdbaa2a61a5c397d")):
+            self.assertEqual(hashlib.sha256(page.encode()).hexdigest(), expected)
+
+
+def _profit_fix_page(archetype=True, yield_unit="ratio", captured_at="2026-10-11T12:00:00Z",
+                     rounded=False):
+    """PAGES-PROFIT-FIX: invented figures added only to a scratch run."""
+    with open(os.path.join(ROOT, "council", "tests", "fixtures", "engine", "pack.json"),
+              encoding="utf-8") as fh:
+        capture = json.load(fh)["capture"]
+    capture["captured_at"] = captured_at
+    if not archetype:
+        frame = capture["business_frame"]["FIXT"]
+        frame.pop("archetype")
+        frame.pop("archetype_because")
+    guide = copy.deepcopy(capture["business_frame"]["FIXT"]["management"]["guidance_vs_delivery"][0])
+    guide["period"] = "Q4"
+    capture["business_frame"]["FIXT"]["management"]["guidance_vs_delivery"].append(guide)
+    fact = dict(capture["tier1"][0], id="earnings_yield_ratio",
+                value="4" if yield_unit == "percent" else "0.005",
+                unit=yield_unit, derived={"operation": "divide", "operands": [
+                    {"fact_id": "net_income_q", "value": "5000000"},
+                    {"fact_id": "market_cap", "value": "1000000000"}]})
+    capture["tier1"].append(fact)
+    if rounded:
+        fact["value"] = "0.043582"
+        fact["derived"]["rounded_places"] = 6
+        fact["derived"]["operands"][0]["value"] = "43582001"
+    capture["tier1"].append(dict(fact, id="segment_revenue_share_invented_q", value="0.43",
+                                derived=None))
+    capture["tier1"].append(dict(fact, id="volume_ratio", value="2", derived=None))
+    with tempfile.TemporaryDirectory(prefix="report-profit-fix-") as tmp:
+        run_dir = _mutated_copy(tmp)
+        _rewrite_pack(run_dir, lambda d: d.update(freeze.build_pack(capture)))
+        def numbers(verdict):
+            verdict["atlas_envelope"]["key_numbers"].insert(0, dict(
+                name="Earnings yield", pack_fact_id=fact["id"], value=fact["value"],
+                unit=fact["unit"], as_of=fact["as_of"], bound=None))
+            verdict["evidence_dependencies"].append(fact["id"])
+        _rewrite_verdict(run_dir, numbers)
+        return _render(run_dir)
+
+
+class TestProfitFixPages(unittest.TestCase):
+    def test_ratio_yield_uses_percent_in_every_fact_display(self):
+        page = _profit_fix_page()
+        self.assertIn("0.5%", _masthead(page))
+        self.assertIn("0.5%", _section(page, "evidence"))
+        self.assertIn("0.5%", _section(page, "appendices"))
+        self.assertIn("= 0.005", page)
+        self.assertNotIn("0.005x", page)
+        self.assertNotIn("0.01x", page)
+        old = _profit_fix_page(captured_at="2026-10-10T12:00:00Z")
+        self.assertIn("0.01x", _masthead(old))
+        self.assertNotIn("0.5%", _masthead(old))
+
+    def test_share_family_reads_as_percent_only_after_the_date(self):
+        for date, expected in (("2026-10-11T12:00:00Z", "43.0%"),
+                               ("2026-10-10T12:00:00Z", "0.43x")):
+            page = _profit_fix_page(captured_at=date)
+            row = next(row for row in re.findall(r"<tr>.*?</tr>", page, re.S)
+                       if "segment_revenue_share_invented_q" in row)
+            self.assertIn("<td>" + expected + "</td>", row)
+
+    def test_calculated_note_keeps_exact_value_and_rounding_once(self):
+        for date in ("2026-10-11T12:00:00Z", "2026-10-10T12:00:00Z"):
+            page = _profit_fix_page(captured_at=date, rounded=True)
+            row = next(row for row in re.findall(r"<tr>.*?</tr>", page, re.S)
+                       if "earnings_yield_ratio" in row)
+            self.assertIn("= 0.043582, rounded half-up to 6 decimal places", row)
+            self.assertEqual(row.count("0.043582"), 1)
+            self.assertEqual(row.count("4.4%"), int(date.startswith("2026-10-11")))
+
+    def test_percent_yield_and_other_ratios_keep_their_forms(self):
+        # Controls: percent-unit yields and an ordinary ratio already read correctly.
+        page = _profit_fix_page(yield_unit="percent")
+        self.assertIn("4.0%", _masthead(page))
+        self.assertIn("2.00x", _section(_profit_fix_page(), "evidence"))
+
+    def test_business_tables_and_every_guidance_period_print_in_detail(self):
+        page = _profit_fix_page()
+        detail = _section(page, "detail")
+        self.assertIn("How the business earns, what it guided, and its peers", detail)
+        self.assertIn("How it earns", detail)
+        self.assertIn("Guidance for Q3", detail)
+        self.assertIn("Guidance for Q4", detail)
+        for name in ("First Peer Machines", "Second Peer Systems", "Comparable because",
+                     "Not comparable on", "The figures compared"):
+            self.assertIn(name, detail)
+        self.assertIn("19.5x", detail)
+        old = _section(_profit_fix_page(captured_at="2026-10-10T12:00:00Z"), "detail")
+        self.assertNotIn("How the business earns, what it guided, and its peers", old)
+        self.assertNotIn("How it earns", old)
+
+    def test_no_archetype_keeps_its_page(self):
+        # Control: the scratch probe supplies the base digest below.
+        page = _profit_fix_page(archetype=False, yield_unit="percent",
+                                captured_at="2026-08-30T12:00:00Z")
+        self.assertNotIn("How the business earns, what it guided, and its peers", page)
+        self.assertNotIn('<span class="lead">How it earns</span>', page)
+        self.assertEqual(hashlib.sha256(page.encode()).hexdigest(),
+                         "325f86eb746d4fe1ccc334e1f8943a6a23ed09002427ba82aed8b923606bbbf6")
+
+
+class TestTreasuryRoundFiveReport(unittest.TestCase):
+    def test_the_card_has_one_count_and_the_two_months_parts(self):
+        for shape,way,changed in (("a","cited",True),("b","built",False),("c","built",False)):
+            text=_grower_text(_front(_treasury_page(shape=shape,way=way,changed=changed)))
+            count="(2 year-ends recorded, %s with a premium struck on the chosen basis)" % (2 if shape=="b" else 0)
+            self.assertEqual(text.count(count),1)
+            self.assertIn("months of charges cash covers",text)
+            self.assertIn("interest alone"+(": " if shape=="b" else " "),text)
+            self.assertIn("counting every preferred dividend ",text)
+            self.assertNotIn("Months of fixed charges",text)
+            if shape=="b": self.assertIn("counting every preferred dividend 9,000 months",text)
+            if shape=="c": self.assertIn("interest alone 450 months",text)
+
+    def test_the_discount_cells_use_todays_basis_on_each_coin_scenario(self):
+        # Control: the fixture follows the ruled reading on each coin scenario.
+        from council.engine import treasury_chair as T
+        for shape in ("a","b"):
+            run=_treasury_page(shape=shape,way="built",loaded=True)
+            readings=R.sufficiency.treasury_readings(run["pack"],test_evidence.FLOORS,run["protocol_in_force"]["preferred_treatment"])
+            rule=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]
+            cells=T._case_cells(run["verdict"]["scenario_rating"]["scenarios"],rule["premium_cases"]["turns_to_discount"])
+            for cell in cells:
+                self.assertEqual(decimal.Decimal(cell["cell"]["premium"]),-readings["comparable_premium"]["percent"])
+                self.assertEqual(decimal.Decimal(cell["price_outcome"]),T.case_price(readings,cell["cell"]["coin_price"],"turns_to_discount",rule["premium_cases"]))
+
+
+class TestTreasuryRoundSixGroups(unittest.TestCase):
+    def test_grouped_card_parts_have_one_heading_colon_and_keep_every_figure(self):
+        from unittest import mock
+        for shape in ("a","b","c"):
+            c=test_evidence.treasury_page_capture(shape)
+            choice={p["key"]:dict(as_debt=False,why="INVENTED choice") for p in test_evidence.holding_frame(c)["treasury"]["preferreds"]}
+            from council.evidence import freeze
+            with mock.patch.object(pack_brief,"_FLOORS",test_evidence.FLOORS): summary=pack_brief.treasury_summary(freeze.build_pack(c),dict(preferred_treatment=choice))
+            text=dict(R.treasury_card_lines(summary))["Fixed charges and the zero-coin price"]
+            self.assertTrue(text.startswith("months of charges cash covers, interest alone"+(": " if shape=="b" else " ")))
+            self.assertIn("; counting every preferred dividend ",text)
+            self.assertIn("; the coin price below which the common owns no coin"+(" " if shape=="a" else ": "),text)
+            self.assertEqual(text.count(":"),sum(part["reason"] for group in summary["front_parts"]["charges"] for part in group["parts"]))
+            for group in summary["front_parts"]["charges"]:
+                for part in group["parts"]: self.assertIn(part["text"],text)
+            if shape=="c":
+                coins=dict(R.treasury_card_lines(summary))["Coins per share"]
+                self.assertIn("coins per share on the rated share count ",coins)
+                self.assertEqual(coins.count(":"),1)
+
+
+
+class TestTreasuryMachineLadderPages(unittest.TestCase):
+    def test_case_names_precede_odds_and_scenario_names_are_quoted(self):
+        rule=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        for shape in ("a","b","c"):
+            run=_treasury_page(shape=shape,way="built",loaded=True)
+            for row in run["verdict"]["scenario_rating"]["scenarios"]: row["cell"]["coin_scenario"]="INVENTED crash to 7777"
+            page=R.Page(); R._front_treasury(page,run); text=_grower_text("".join(page.parts))
+            for case in rule["ladder_rules"]["premium_cases"].values():
+                with self.subTest(case=case["label"]): self.assertIn(case["label"]+": chance 0.50",text)
+            with self.subTest(name="7777"): self.assertIn(rule["page_words"]["scenario_name_words"] % "INVENTED crash to 7777",text)
+            self.assertNotIn(trace.MARKER,text)
+
+    def test_every_ladder_labels_machine_cells_and_the_premium_today_case(self):
+        from unittest import mock
+        rule=test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+        for shape in ("a","b","c"):
+            run=_treasury_page(shape=shape,way="cited" if shape=="a" else "built",changed=shape=="a",loaded=True)
+            with mock.patch.object(pack_brief,"_FLOORS",test_evidence.FLOORS):
+                page=R.Page(); R._detail_basis(page,run); R._ladders_section(page,run)
+            text=_grower_text("".join(page.parts))
+            self.assertEqual(text.count(rule["ladder_rules"]["machine_cells_sentence"]),2)
+            self.assertGreaterEqual(text.count(rule["ladder_rules"]["machine_cell_words"]),12)
+            if shape=="c": self.assertIn(rule["page_words"]["first_discount_words"],_grower_text(_front(_treasury_page(shape=shape,way="built"))))
+
+
+
+
+
+class TestPreferredOnTheReport(test_evidence.PreferredTest):
+    def test_the_cover_line_traces_the_machine_figures(self):
+        pack=freeze.build_pack(self.c); summary=pack_brief.preferred_summary(pack); page=R.Page()
+        verdict=dict(cover_read=dict(cover="INVENTED cover of %s times" % "1.6"))
+        R._cover_read(page,dict(pack=pack,preferred=summary,verdict=verdict)); self.assertNotIn("not traced", "".join(page.parts))
+    def test_the_common_treatment_is_not_printed(self):
+        summary=self.front()[1]; self.assertNotIn("Treatment",[head for _,t in summary["tables"] for head in t["head"]])
+    def front(self):
+        pack=test_evidence.freeze.build_pack(self.c); summary=test_evidence.brief.preferred_summary(pack)
+        page=R.Page(); R._front_preferred(page,dict(pack=pack,preferred=summary,verdict={}))
+        return "".join(page.parts),summary
+    def test_the_front_is_in_the_ruled_order(self):
+        html,s=self.front(); offsets=[html.index(R._glossed(s["words"][k+"_lead"],scope="preferred")) for k in s["words"]["front_order"]]; self.assertEqual(offsets,sorted(offsets))
+    def test_the_cover_table_has_four_columns(self):
+        html,s=self.front(); self.assertEqual(len(s["cover_table"]["head"]),5); self.assertIn("1.6",html)
+    def test_the_record_prints_by_quarter(self): self.assertIn("2026 Q4",self.front()[0])
+    def test_a_missing_cell_prints_its_reason(self):
+        saved=copy.deepcopy(self.c)
+        for fid,reason in [("preferred_par",self.rule["roles"]["par"]["why"]),("treasury_cash__pxw",test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["reading_reasons"]["unreadable_cash_debt_other"]["words"])]:
+            self.c=copy.deepcopy(saved); self.c["tier1"]=[f for f in self.c["tier1"] if f["id"]!=fid]; self.assertIn(reason,self.front()[0])
+    def test_no_fund_line_prints(self): self.assertNotIn("Spot fund",self.front()[0])
+    def test_no_horizon_line_prints(self): self.assertNotIn("horizon",self.front()[0].lower())
+    def test_the_hover_notes_are_scoped(self):
+        self.assertIn("data-note",R._glossed("Yield",scope="preferred")); self.assertNotIn("data-note",R._glossed("Yield",scope="treasury"))
+
+    def test_every_run_on_record_renders_unchanged(self): TestGrowerOnThePage.test_every_run_on_record_renders_unchanged(self)
+
+
+class TestPreferredFixRoundTwoOnTheReport(test_evidence.PreferredTest):
+    def documents(self):
+        pack=freeze.build_pack(self.c); summary=pack_brief.preferred_summary(pack); sha=test_evidence.canonical.sha256_bytes(test_evidence.canonical.canonical_bytes(pack))
+        return pack,summary,pack_brief.render(pack,sha),pack_brief.render_full(pack,sha)
+    def owner_previews(self,shape):
+        from council.engine import preferred_chair
+        from council.report import evidence_page
+        from council.tests.test_engine import chair_ladder
+        c=test_evidence.preferred_capture(shape); pack=freeze.build_pack(c)
+        rated=chair_ladder([dict(name=k,probability=q,rationale="INVENTED dividend case",dividend_cell=dict(dividend=k,coin_price=coin,price=p)) for k,q,coin,p in [("paid_in_full","0.7","60000","92"),("deferred","0.2","30000","60"),("missed","0.1","12000","20")]])
+        preferred_chair.fill_dividends(rated,pack,test_evidence.FLOORS)
+        with tempfile.TemporaryDirectory() as tmp:
+            run=_mutated_copy(tmp); _rewrite_pack(run,lambda d:(d.clear(),d.update(pack)))
+            _rewrite_verdict(run,lambda d:d.update(subject=c["subject"],atlas_envelope=dict(d["atlas_envelope"],subject_kind="preferred"),scenario_rating=rated,cover_read=dict(cover="INVENTED the cover supports the paid case")))
+            report=_render(run)
+        sha=test_evidence.canonical.sha256_bytes(test_evidence.canonical.canonical_bytes(pack))
+        return c,[pack_brief.render(pack,sha),report,evidence_page.render_page(pack_brief.render_full(pack,sha))]
+    def test_every_preferred_owner_page_translates_the_issuer_suffix(self):
+        for shape in ("five","single"):
+            with self.subTest(shape=shape):
+                c,pages=self.owner_previews(shape); suffix=test_evidence.gate.frame_suffix(c["subject"],c["subject"]["issuer"]["ticker"])
+                for page in pages:
+                    self.assertNotIn("_"+suffix.lstrip("_"),page); self.assertNotRegex(page,r" "+re.escape(suffix.lstrip("_"))+r"\b")
+                    for label in ("Order backlog","Service revenue against last year","Free cash flow after capital spending",c["subject"]["issuer"]["name"]): self.assertIn(label,page)
+                pack=freeze.build_pack(c); summary=pack_brief.preferred_summary(pack); front=R.Page(); R._front_preferred(front,dict(pack=pack,preferred=summary,verdict={}))
+                self.assertEqual(html_lib.unescape(re.sub(r"<[^>]*>","","".join(front.parts))).count(summary["words"]["rate_words"].split("%s")[0].strip()),1)
+                self.assertNotIn(self.rule["casefile_words"]["dividend_words"].split("%s")[0],pages[0])
+                self.assertIn(self.rule["page_words"]["yield_lead"],pages[0])
+                self.assertIn(test_evidence.FLOORS["archetype_measures"]["holding_rule"]["treasury"]["page_words"]["convertibles_lead"]+", "+summary["words"]["convertibles_words"],[lead for lead,t in summary["tables"]])
+    def test_the_coin_sales_table_prints_and_unknown_tables_raise(self):
+        from unittest import mock
+        self.c=test_evidence.preferred_capture("five"); pack,s,_,_=self.documents(); page=R.Page()
+        R._preferred_section(page,dict(pack=pack,preferred=s,verdict={}))
+        self.assertIn("Coins sold in the last four quarters","".join(page.parts))
+        f=copy.deepcopy(test_evidence.FLOORS); f["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["issuer_tables"].append("INVENTED unknown")
+        with mock.patch.object(pack_brief,"_FLOORS",f), self.assertRaises(KeyError): pack_brief.preferred_summary(pack)
+    def test_no_common_conversion_columns_print(self):
+        self.c=test_evidence.preferred_capture("five"); _,s,_,_=self.documents()
+        self.assertNotIn("Counted as converted",str(s["tables"])); self.assertNotIn("Shares if converted",str(s["tables"])); self.assertIn("counted at face value in the cover",str(s["tables"]))
+    def test_no_common_nav_or_suffix_label_prints(self):
+        self.c=test_evidence.preferred_capture("five"); _,_,one,full=self.documents()
+        for text in (one,full):
+            self.assertNotIn("The rating divides by",text); self.assertNotIn("The halves of the rating measure",text)
+            labels=[line.split("|")[1].strip() for line in text.splitlines() if line.startswith("|")] + [line.split(" ",1)[1] for line in text.splitlines() if line.startswith("### ")]
+            for label in labels: self.assertNotIn("_",label); self.assertFalse(label.lower().endswith(" pxa"),label)
+        self.assertIn("The rating rests on the preferred's yield",one)
+    def test_the_lift_line_is_plain_and_prints_once_in_evidence(self):
+        self.c=test_evidence.preferred_capture("five"); pack,s,one,full=self.documents(); page=R.Page(); run=dict(pack=pack,preferred=s,verdict={})
+        R._front_preferred(page,run); front="".join(page.parts); R._preferred_section(page,run)
+        for text in (one,full,"".join(page.parts)):
+            self.assertNotIn("P-LIFTS",text); self.assertNotIn("Data:",text); self.assertEqual(text.count("Lifted for a preferred:"),1)
+        self.assertNotIn("Lifted for a preferred:",front)
+    def test_the_kind_cover_rate_and_record_labels_are_plain(self):
+        self.c=test_evidence.preferred_capture("five"); _,s,one,full=self.documents()
+        self.assertIn("Today",dict(s["front"])[s["words"]["cover_lead"]]); self.assertIn("Coin down 70%",dict(s["front"])[s["words"]["cover_lead"]])
+        self.assertEqual(R._kind_words(self.c["subject"]),self.rule["kind_line_words"]); self.assertIn(self.rule["kind_line_words"],one)
+        yield_line=dict(s["front"])[s["words"]["yield_lead"]]; self.assertIn("dividend rate",yield_line); self.assertIn("(recorded ",yield_line); self.assertIn("against cash at",yield_line)
+        table=next(t for lead,t in s["tables"] if lead==s["words"]["record_lead"]); self.assertNotIn(s["words"]["record_lead"],table["head"]); self.assertTrue(table["head"][0])
+    def test_the_rate_and_dividend_are_exact_everywhere(self):
+        test_evidence.treasury_fact(self.c,"treasury_preferred_p2_dividend_rate__pxw","8.375","percent_per_year"); _,s,_,_=self.documents()
+        line=dict(s["front"])[s["words"]["yield_lead"]]; self.assertIn("$8.375",line); self.assertIn("8.375%",line); self.assertNotIn("$8.38",line); self.assertNotIn("8.4%",line)
+    def test_missing_par_cells_have_their_own_reason(self):
+        self.c["tier1"]=[f for f in self.c["tier1"] if f["id"]!="preferred_par"]; _,s,_,_=self.documents()
+        self.assertNotIn(self.rule["currency_refusal"]["why"],str(s["front"])); self.assertIn(self.rule["roles"]["par"]["why"],str(s["front"]))
+        rows=self.outcome()["missing"]; self.assertEqual(sum(row["what"]==self.rule["roles"]["par"]["what"] for row in rows),1)
+    def test_the_cover_read_traces_the_councils_falls(self):
+        pack,s,_,_=self.documents(); page=R.Page()
+        R._cover_read(page,dict(pack=pack,preferred=s,verdict=dict(cover_read=dict(cover="INVENTED the coin down 30 percent"))))
+        self.assertNotIn("not traced","".join(page.parts)); self.assertIn("council","".join(page.parts))
 
 
 if __name__ == "__main__":

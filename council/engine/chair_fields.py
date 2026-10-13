@@ -161,11 +161,12 @@ def problems(verdict, capture):
 ROW_MARK = "not traced to a recorded fact"
 
 
-def _metric_bases(capture, cfg):
+def _metric_bases(capture, cfg, recorded=None):
     """{(constituent, folded metric name): [bases]} - each decisive metric's
     answered_by facts, any derived fact computed from them alone (on a
     basket or a theme only one wearing no member suffix or the row's own,
     P-U5b-4), and the figures an answering passage declares (P-U5b-3)."""
+    cfg = trace.capture_config(cfg, capture)
     subject = capture.get("subject") or {}
     members = subjects.expression_tickers(subject)
     tier1 = capture.get("tier1") or []
@@ -187,6 +188,9 @@ def _metric_bases(capture, cfg):
                 and not (suffix and gate._id_suffix(fact.get("id"))
                          not in ("", suffix))]
             bases = trace.facts_bases(facts, cfg)
+            key = (constituent, _fold(metric.get("name")))
+            if recorded is not None:
+                recorded.setdefault(key, []).extend(bases)
             for i in metric.get("answered_by") or []:
                 if i in passages:
                     bases += trace.figures_bases(
@@ -197,20 +201,62 @@ def _metric_bases(capture, cfg):
     return found
 
 
+def _row_untraced(text, bases, recorded, cfg):
+    """PAGES-PROFIT-FIX R2: two written operands, each traced to this metric's facts."""
+    text = str(text or "")
+    tokens = trace._classify(text, bases, cfg)
+    operands = []
+    for token in tokens:
+        if token.status != "traced":
+            continue
+        match = trace._TOKEN.match(text, token.start)
+        exponent, _end, percent = trace._read_after(text, match, cfg)[:3]
+        face = trace._decimal(match.group("digits"))
+        if (match.group("sign_pre") or match.group("sign")) == "-":
+            face = -face
+        scaled = face.scaleb(exponent) if exponent is not None else face
+        values = [base[0] for base in recorded if trace._traced(
+            scaled, face, percent, trace._sig_figs(match.group("digits")),
+            [base], cfg["tolerance"], exponent is None)]
+        operands.append(values)
+    calculated = []
+    try:
+        for i, left in enumerate(operands):
+            for j, right in enumerate(operands):
+                if i == j:
+                    continue
+                for a in left:
+                    for b in right:
+                        calculated.append((a - b, a - b, False))
+                        if b:
+                            quotient = a / b
+                            calculated.extend((
+                                (quotient, quotient, False),
+                                (quotient * 100, quotient * 100, True),
+                                ((quotient - 1) * 100, (quotient - 1) * 100, True)))
+    except decimal.DecimalException:
+        return trace.untraced(text, bases, cfg)
+    return trace.untraced(text, bases + calculated, cfg)
+
+
 def mark_rows(rows, capture, cfg):
     """(ROWS as published, the metric names marked): each row copied, the
     mark written by the host alone - set where the row's value writes a
     figure that traces to no fact of its metric, removed otherwise."""
     if not isinstance(rows, list):
         return rows, []
-    found = _metric_bases(capture, cfg)
+    cfg = trace.capture_config(cfg, capture)
+    recorded = {}
+    found = _metric_bases(capture, cfg, recorded)
     published, marked = [], []
     for row in rows:
         row = dict(row)
         row.pop("mark", None)
-        bases = found.get((row.get("constituent"), _fold(row.get("metric"))),
-                          [])
-        if trace.untraced(row.get("value"), bases, cfg):
+        key = (row.get("constituent"), _fold(row.get("metric")))
+        bases = found.get(key, [])
+        untraced = (_row_untraced(row.get("value"), bases, recorded.get(key, []), cfg)
+                    if cfg["page_rules_enabled"] else trace.untraced(row.get("value"), bases, cfg))
+        if untraced:
             row["mark"] = ROW_MARK
             marked.append(row.get("metric"))
         published.append(row)
@@ -250,6 +296,7 @@ def answer_line_bases(key_numbers, capture, cfg):
     of the case file, every figure a case-file passage declares (read as
     mark_rows reads an answering passage's - audit r5-1) and every key
     number the chairman gave."""
+    cfg = trace.capture_config(cfg, capture)
     return (trace.facts_bases(capture.get("tier1") or [], cfg)
             + [base for passage in capture.get("tier2") or []
                for base in trace.figures_bases(
@@ -260,6 +307,7 @@ def answer_line_bases(key_numbers, capture, cfg):
 def answer_line_untraced(text, key_numbers, capture, cfg):
     """The figures the one-line answer TEXT writes that trace to none of
     answer_line_bases, as written - the figures the page marks."""
+    cfg = trace.capture_config(cfg, capture)
     return [token.text for token in trace._classify(
         str(text or ""), answer_line_bases(key_numbers, capture, cfg), cfg)
         if token.status == "untraced"]

@@ -28,6 +28,10 @@ ruling and must not be reordered: the warnings list is complete before the
 envelope is built (the AB16(5) note is appended above), and both copies -
 the one inside the verdict and the standalone file - are built from the
 same dict, so read-back's field-for-field comparison keeps holding.
+
+Owner ruling AC78(6): for a subject Atlas has not confirmed it reads (the
+floors' `atlas_handoff`), atlas-handoff-withheld.json is written in place
+of atlas-envelope.json; read-back proves it names the verdict's product.
 """
 
 import json
@@ -38,7 +42,7 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from council.lib import canonical, subjects, validate  # noqa: E402
-from council.engine import briefs, chair_fields, ladder, runrecord  # noqa: E402
+from council.engine import briefs, chair_fields, ladder, runrecord, treasury_chair, preferred_chair  # noqa: E402
 from council.evidence import sufficiency, trace  # noqa: E402
 from council.ledger import ledger  # noqa: E402
 
@@ -49,12 +53,16 @@ FLOORS_PATH = os.path.join(ROOT, "council", "floors", "floors.json")
 RANK = {"sell": 0, "hold": 1, "buy": 2, "strong_buy": 3}
 
 DIFF_FIELDS = (
+    ("cover_read", "cover_read"),
     ("rating", "rating"),
     ("conviction_rationale", "conviction_rationale"),
     ("mispricing.read", ("mispricing", "read")),
     ("mispricing.magnitude", ("mispricing", "magnitude")),
     ("mispricing.arithmetic", ("mispricing", "arithmetic")),
     ("scenario_rating", "scenario_rating"),
+    ("protocol_read", "protocol_read"),
+    ("uranium_read", "uranium_read"),
+    ("treasury_read", "treasury_read"),
     ("tripwires", "tripwires"),
     ("sizing_inputs", "sizing_inputs"),
     ("constituent_notes", "constituent_notes"),
@@ -124,6 +132,26 @@ def _is_raise(before, after):
 
 def _rating_words(rating):
     return str(rating).replace("_", " ")
+
+
+HANDOFF_RULING = "AC70(2), AC78(6)"
+
+
+def handoff_withheld(envelope, floors):
+    """Owner ruling AC78(6): None when Atlas has confirmed it reads this
+    subject (the confirmed set is data in the floors' `atlas_handoff`),
+    else the withheld-hand-off document written in place of the envelope."""
+    rule = floors["atlas_handoff"]
+    confirmed = rule["confirmed"]
+    if envelope.get("subject_kind") in confirmed.get("subject_kinds_not_confirmed", []):
+        return {"withheld": True, "product": envelope.get("product"), "reason": confirmed["subject_kinds_why"] + " " + confirmed["subject_kinds_confirmed_by"], "ruling": HANDOFF_RULING}
+    product = envelope.get("product")
+    if (confirmed["every_subject_without_a_product"] if product is None
+            else product in confirmed["products"]):
+        return None
+    return {"withheld": True, "product": product,
+            "reason": rule["why"] + " " + rule["confirmed_by"],
+            "ruling": HANDOFF_RULING}
 
 
 # The gate that bites (owner ruling AC50(8), architect ruling A7): the one
@@ -509,7 +537,7 @@ def _scenario_rating(final, subject, pack, run_dir, events):
                                  "scenarios": seat_ladder["scenarios"]})
     published = {
         "aggregated": bool(block.get("aggregated")),
-        "basis": "rating" if subjects.is_anchorless(subject) else "context",
+        "basis": "rating" if treasury_chair.ladder_rated(subject, pack, canonical.read_json(FLOORS_PATH)) else "context",
         "not_aggregated_reason": block.get("not_aggregated_reason"),
         "horizon_months": str(block.get("horizon_months")),
         "scenarios": block.get("scenarios") or [],
@@ -519,10 +547,13 @@ def _scenario_rating(final, subject, pack, run_dir, events):
         "seat_ladders": seat_ladders,
         "arithmetic": [],
     }
+    holder = subjects.holder_product(subject, canonical.read_json(FLOORS_PATH))
+    if holder:
+        published["horizon_line"] = holder["horizon_line"]
     if not published["aggregated"] or published["basis"] != "rating":
         return published
     floors = canonical.read_json(FLOORS_PATH)
-    computed = ladder.compute(block, facts, floors)
+    computed = ladder.compute(block, facts, floors, zero_floor=treasury_chair.declared(pack, floors) is not None or preferred_chair.declared(pack, floors) is not None)
     for key in ("reference_price", "expected_price", "expected_total_pct",
                 "expected_annualised_pct", "cash_pct", "volatility_pct",
                 "bar_pct", "excess_over_bar_pp", "rating", "constants",
@@ -583,7 +614,8 @@ def _tag_rows(rows, id_key, facts):
 def assemble_and_publish(run_dir):
     """Assemble the verdict from the chairman's final document (or the
     draft, degraded, when the audit did not run), validate it, write
-    verdict.json and atlas-envelope.json, and record the hash. Returns the
+    verdict.json and atlas-envelope.json (or, for a product Atlas has not
+    confirmed, atlas-handoff-withheld.json), and record the hash. Returns the
     verdict hash. Raises PublishRefusal on mechanical defects only."""
     events = runrecord.read_events(run_dir)
     # Owner ruling M5, before anything else: a record already carrying a
@@ -712,7 +744,7 @@ def assemble_and_publish(run_dir):
         verdict_scenario_rating = degrade_scenario_rating(
             verdict_scenario_rating, degraded_from, final["rating"])
     verdict = {
-        "schema_version": "1.7.0",
+        "schema_version": "1.11.0",
         "run_id": invocation["run_id"],
         "subject": subject,
         "question_verbatim": invocation["question_verbatim"],
@@ -789,6 +821,14 @@ def assemble_and_publish(run_dir):
     # then stands. None of them travels in the Atlas envelope.
     for key in chair_fields.keys():
         verdict[key] = chair_fields.published_value(key, final.get(key))
+    if subjects.is_protocol_kind(subject, canonical.read_json(FLOORS_PATH)):
+        verdict["protocol_read"] = final["protocol_read"]
+    if subjects.holder_product(subject, canonical.read_json(FLOORS_PATH)):
+        verdict["uranium_read"] = final["uranium_read"]
+    if treasury_chair.declared(pack, canonical.read_json(FLOORS_PATH)):
+        verdict["treasury_read"] = final["treasury_read"]
+    if preferred_chair.declared(pack, canonical.read_json(FLOORS_PATH)):
+        verdict["cover_read"] = final["cover_read"]
     verdict["decisive_metrics_read"] = metric_rows
     schema_path = os.path.join(SCHEMA_DIR, "verdict_schema.json")
     with open(schema_path, "rb") as handle:
@@ -810,8 +850,16 @@ def assemble_and_publish(run_dir):
     if errors:
         raise PublishRefusal("the Atlas envelope does not match its "
                              "schema:\n  " + "\n  ".join(errors))
-    canonical.write_canonical_json(
-        os.path.join(run_dir, "atlas-envelope.json"), envelope)
+    # Owner ruling AC78(6): a subject Atlas has not confirmed it reads is
+    # published and ledgered as any other, but the standalone hand-off is
+    # withheld with its reason; the verdict's own copy is unchanged.
+    withheld = handoff_withheld(envelope, canonical.read_json(FLOORS_PATH))
+    if withheld is None:
+        canonical.write_canonical_json(
+            os.path.join(run_dir, "atlas-envelope.json"), envelope)
+    else:
+        canonical.write_canonical_json(
+            os.path.join(run_dir, "atlas-handoff-withheld.json"), withheld)
     # The verdict is now judgeable: one append-only row into the shared
     # ledger, its hash recorded so read-back proves the row is the row
     # this run wrote (owner ruling AC7, spec U7.1). Book-blind - identity,

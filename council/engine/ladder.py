@@ -202,14 +202,88 @@ def _plain(value):
     return text
 
 
-def delisting_reason(ladder, words, refusal):
-    """AC68(2), M9: the scenario's name carries the delisting case."""
-    return None if any(word.casefold() in str(scenario.get("name") or "").casefold()
-                       for scenario in ladder.get("scenarios") or ()
-                       for word in words) else refusal
+def case_scenario(ladder, words):
+    """AC87(1), architect ruling 6: one reader of a named case's first rung."""
+    for scenario in ladder.get("scenarios") or ():
+        if any(word.casefold() in str(scenario.get("name") or "").casefold()
+               for word in words):
+            return scenario
+    return None
 
 
-def check_shape(ladder, facts):
+def delisting_reason(ladder, words, refusal, zero_refusal):
+    """AC73(2): the first scenario whose name carries a word decides."""
+    scenario = case_scenario(ladder, words)
+    if scenario is not None:
+        try:
+            probability = Decimal(str(scenario.get("probability")))
+        except InvalidOperation:
+            return zero_refusal
+        return None if probability.is_finite() and probability > 0 else zero_refusal
+    return refusal
+
+
+def base_rung(ladder):
+    """AC78(3), C5: the first price-ordered cumulative half."""
+    with localcontext() as ctx:
+        ctx.prec = _PRECISION
+        mass = Decimal(0)
+        for rung in sorted(ladder["scenarios"], key=lambda s: _decimal(s["price_outcome"], "price")):
+            mass += _decimal(rung["probability"], "probability")
+            if mass >= Decimal(1) / 2:
+                return rung
+    return None
+
+
+def mass_at_or_above(ladder, level, per):
+    """AC81(2): compare cross products, never a divided token price."""
+    with localcontext() as ctx:
+        ctx.prec = _PRECISION
+        level, per = _decimal(level, "level"), _decimal(per, "supply")
+        return sum((_decimal(s["probability"], "probability") for s in ladder["scenarios"]
+                    if _decimal(s["price_outcome"], "price") * per >= level), Decimal(0))
+
+
+def range_reasons(ladder, low, high, per, words):
+    """AC78(3): the cumulative middle inside, upper rungs explained."""
+    with localcontext() as ctx:
+        ctx.prec = _PRECISION
+        low, high, per = [_decimal(v, "range") for v in (low, high, per)]
+        rung = base_rung(ladder)
+        reasons = []
+        if rung and not low <= _decimal(rung["price_outcome"], "price") * per <= high:
+            reasons.append(words["base_rung"] + ": %s; price %s; ends %s / %s on supply %s" %
+                           (rung["name"], rung["price_outcome"], low, high, per))
+        for rung in ladder["scenarios"]:
+            if _decimal(rung["price_outcome"], "price") * per > high and not str(rung.get("catalyst") or "").strip():
+                reasons.append(words["bull_catalyst"] + ": " + rung["name"])
+        return reasons
+
+
+def named_case_reasons(ladder, cases, shared_refusal, reference=None, below_refusal=None):
+    """AC87(1): existing named-case rule, distinct rungs and downside prices."""
+    reasons = []
+    with localcontext() as ctx:
+        ctx.prec = _PRECISION
+        for case in cases.values():
+            reason = delisting_reason(ladder, case["name_words"], case["missing_refusal"], case["zero_refusal"])
+            if reason:
+                reasons.append(reason)
+        def matches(scenario, case):
+            return any(w.casefold() in str(scenario.get("name") or "").casefold() for w in case["name_words"])
+        for scenario in ladder.get("scenarios") or ():
+            if sum(matches(scenario, c) for c in cases.values()) > 1:
+                reasons.append(shared_refusal + ": " + str(scenario.get("name")))
+        if reference is not None:
+            reference = _decimal(reference, "reference")
+            for case in cases.values():
+                first = case_scenario(ladder, case["name_words"])
+                if first and _decimal(first.get("price_outcome"), "price") >= reference:
+                    reasons.append(below_refusal + ": %s; %s >= %s" % (case["label"], first["price_outcome"], reference))
+    return reasons
+
+
+def check_shape(ladder, facts, *, zero_floor=False):
     """Every reason this ladder cannot earn a rating, in plain words.
     Empty list = the ladder is usable. Shape only: the arithmetic is
     `compute`."""
@@ -245,10 +319,10 @@ def check_shape(ladder, facts):
                 "the probability of %r is %s - every scenario carries a "
                 "probability strictly between 0 and 1; a certainty is not "
                 "a scenario" % (label, item.get("probability")))
-        if price <= 0:
+        if price < 0 or price == 0 and not zero_floor:
             reasons.append("the price outcome of %r is %s, and a price "
-                           "outcome must be above zero"
-                           % (label, item.get("price_outcome")))
+                           "outcome must be %s zero"
+                           % (label, item.get("price_outcome"), "at or above" if zero_floor else "above"))
         total += probability
         prices.append(price)
         if not str(item.get("rationale") or "").strip():
@@ -295,18 +369,18 @@ def check_shape(ladder, facts):
     return reasons
 
 
-def compute(ladder, facts, floors):
+def compute(ladder, facts, floors, *, zero_floor=False):
     """The whole arithmetic of the rating, from the chairman's ladder and
     the frozen pack. Raises LadderError with a plain reason where the
     ladder cannot produce a rating at all."""
     with localcontext() as context:
         context.prec = _PRECISION
-        return _compute(ladder, facts, floors)
+        return _compute(ladder, facts, floors, zero_floor=zero_floor)
 
 
-def _compute(ladder, facts, floors):
+def _compute(ladder, facts, floors, *, zero_floor=False):
     ruled = constants(floors)
-    shape = check_shape(ladder, facts)
+    shape = check_shape(ladder, facts, zero_floor=zero_floor)
     if shape:
         raise LadderError(shape[0])
     months = int(str(ladder["horizon_months"]))

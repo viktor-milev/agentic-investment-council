@@ -22,6 +22,7 @@ the case that earns a mark and costs nothing, by design of the ruling.
 """
 
 import re
+from datetime import date
 from decimal import (Decimal, DecimalException, InvalidOperation,
                      ROUND_HALF_UP)
 
@@ -117,6 +118,9 @@ def config(floors):
                              (block.get("month_words") or ())),
         "percent_units": frozenset(block.get("percent_units") or ()),
         "fraction_units": frozenset(block.get("fraction_units") or ()),
+        "hyphen_term_words": tuple(block.get("hyphen_term_words") or ()),
+        "quotient_families": (floors or {}).get("rounded_quotient_families") or {},
+        "page_rules_applies_from": ((floors or {}).get("pages_profit_fix") or {}).get("applies_from"),
         # Every fraction unit the floors allow a capture to use: the
         # chairman's scorecard reads each one's prose form (READ-C1).
         "allowed_fraction_units": frozenset(
@@ -126,6 +130,20 @@ def config(floors):
                                  (block.get("currency_scale_units")
                                   or {}).items()},
     }
+
+
+def page_rules_apply(capture, cfg):
+    """Architect fix round 1: one capture-date boundary for all four page rules."""
+    try:
+        return date.fromisoformat(str(capture.get("captured_at") or "")[:10]) >= date.fromisoformat(
+            cfg.get("page_rules_applies_from") or "")
+    except (TypeError, ValueError):
+        return False
+
+
+def capture_config(cfg, capture):
+    """Bind the shared page rules to this capture, without changing cached configuration."""
+    return dict(cfg, page_rules_enabled=page_rules_apply(capture, cfg))
 
 
 def _decimal(text):
@@ -173,6 +191,7 @@ def _fact_bases(capture, ticker, cfg):
     a double-underscore tail on its id included (P-FIb-4). Derived facts
     are facts."""
     subject = capture.get("subject") or {}
+    cfg = capture_config(cfg, capture)
     suffix = gate.frame_suffix(subject, ticker)
     bases = []
     for fact in capture.get("tier1") or []:
@@ -181,6 +200,15 @@ def _fact_bases(capture, ticker, cfg):
             continue
         bases.extend(facts_bases([fact], cfg))
     return bases
+
+
+def is_page_fraction(fact, cfg):
+    """PAGES-PROFIT-FIX R1, fix round 1: ruled yields and shares, after the date."""
+    family = cfg.get("quotient_families") or {}
+    fact_id = str(fact.get("id") or fact.get("pack_fact_id") or "")
+    return bool(cfg.get("page_rules_enabled") and fact.get("unit") in ("ratio", "x", "multiple")
+                and (any(fact_id.startswith(p) for p in family.get("prefixes") or [])
+                     or any(p in fact_id for p in family.get("contains") or [])))
 
 
 def facts_bases(facts, cfg):
@@ -194,7 +222,7 @@ def facts_bases(facts, cfg):
         unit = str(fact.get("unit") or "")
         if unit in cfg["percent_units"]:
             bases.append((value, value, True))
-        elif unit in cfg["fraction_units"]:
+        elif unit in cfg["fraction_units"] or is_page_fraction(fact, cfg):
             bases.append((value * 100, value * 100, True))
         else:
             exponent = cfg["currency_scale_units"].get(unit)
@@ -482,6 +510,12 @@ def _is_exempt(match, digits, exponent, is_percent, start, after_number,
     # merely begins with an ordinal bigram ("40 stores" -> "st", "40thstore")
     # is not an ordinal and does not lift the mark (audit UPGRADE2-U3f r4-1).
     tail = text[after_number:]
+    # PAGES-PROFIT-FIX R4: a direct or suspended compound term, never a range.
+    words = cfg.get("hyphen_term_words") or ()
+    if cfg.get("page_rules_enabled") and words and re.match(r"-(?:(?:,\s*(?:and\s+)?|\s+and\s+)\d+-)*(?:"
+                          + "|".join(re.escape(word) for word in words)
+                          + r")(?![\w])", tail, re.IGNORECASE):
+        return True
     for suffix in cfg["ordinal_suffixes"]:
         if (tail[:len(suffix)].lower() == suffix
                 and not tail[len(suffix):len(suffix) + 1].isalpha()):

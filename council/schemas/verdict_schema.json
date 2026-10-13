@@ -1,7 +1,7 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Council verdict 1.7.0 - the published document (REBUILD-SPEC section 8)",
-  "description": "One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). Since 1.4.0 (UPGRADE-2 U7, owner ruling AC7) the provenance names the ledger row this verdict is recorded under, so the sitting can be judged against what happened. Since 1.5.0 (UPGRADE-2 U5(b), owner rulings AC5, AC35(3) and AC25(4)) the chairman says what decided it - decisive_argument, business_read and decisive_metrics_read, required keys that are null where he did not supply the field in the form asked after the host's one re-ask - and the provenance names the codex version that ran the sitting's outside calls; the Atlas envelope is unchanged. Since 1.6.0 (UPGRADE-2 READ-C1, owner rulings AC44 and AC45) the chairman writes answer_line, one line answering the owner's question, a required key that is null where he did not supply it after the host's one re-ask; and each entry of the three tripwire lists may name the measure it tests, so the page reads the lists as one scorecard - the Atlas envelope carries the lists without that name and never the answer line, so the hand-off is unchanged. Since 1.7.0 (UPGRADE-2 GROWTH-ARCHETYPE, sub-charge b; owner ruling AC50(8), architect ruling A7) a change-appendix row may carry the label runway_cap: a growth company whose cash covers fewer months of its last four quarters' cash burn than the line the owner ruled publishes at most hold, sell still open, and the row names the rating the chairman gave, beside one warning naming the months, the line and the ruling - the degradation_cap precedent; the label list only widens, so every verdict written before stays as it was, and the Atlas envelope is unchanged. No field for what the owner owns exists anywhere in this contract.",
+  "title": "Council verdict 1.11.0 - the published document (REBUILD-SPEC section 8)",
+  "description": "Since 1.10.0 (UPGRADE-2 TREASURY(b1), owner rulings AC92(1)-(2)) a treasury verdict carries the chairman's treasury_read and each ladder scenario may carry its cell; the Atlas envelope gains nothing. One book-blind opinion: a rating on the owner's five-word scale, a priced mispricing read, tripwires, the asset facts a sizing engine needs, the challenge record with its change appendix, and the Atlas hand-off envelope - which since 1.3.0 names its own subject, carries the audit state, and tags every row that rests on a bound rather than a measurement (owner ruling AB23). Since 1.4.0 (UPGRADE-2 U7, owner ruling AC7) the provenance names the ledger row this verdict is recorded under, so the sitting can be judged against what happened. Since 1.5.0 (UPGRADE-2 U5(b), owner rulings AC5, AC35(3) and AC25(4)) the chairman says what decided it - decisive_argument, business_read and decisive_metrics_read, required keys that are null where he did not supply the field in the form asked after the host's one re-ask - and the provenance names the codex version that ran the sitting's outside calls; the Atlas envelope is unchanged. Since 1.6.0 (UPGRADE-2 READ-C1, owner rulings AC44 and AC45) the chairman writes answer_line, one line answering the owner's question, a required key that is null where he did not supply it after the host's one re-ask; and each entry of the three tripwire lists may name the measure it tests, so the page reads the lists as one scorecard - the Atlas envelope carries the lists without that name and never the answer line, so the hand-off is unchanged. Since 1.7.0 (UPGRADE-2 GROWTH-ARCHETYPE, sub-charge b; owner ruling AC50(8), architect ruling A7) a change-appendix row may carry the label runway_cap: a growth company whose cash covers fewer months of its last four quarters' cash burn than the line the owner ruled publishes at most hold, sell still open, and the row names the rating the chairman gave, beside one warning naming the months, the line and the ruling - the degradation_cap precedent; the label list only widens, so every verdict written before stays as it was, and the Atlas envelope is unchanged. Since 1.8.0 (UPGRADE-2 PROTOCOL(c), owner rulings AC78(3), AC79(4), AC80(3), AC81(1)-(2)) the protocol kind carries the chairman's protocol read, and its ladder may name catalysts above the declared range; the Atlas envelope gains the kind alone. Since 1.9.0 (UPGRADE-2 URANIUM(c), owner rulings AC87(1), AC88(2)) the physical holder verdict carries the chairman's uranium read and a publisher-written three-year horizon line inside scenario_rating; the Atlas envelope gains nothing. No field for what the owner owns exists anywhere in this contract. Since 1.11.0 (UPGRADE-2 TREASURY(c), owner ruling AC92(3)), the subject and envelope admit preferred, the subject carries its issuer, each scenario may carry a dividend_cell and the chairman carries cover_read. Other subjects keep their contracts.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,7 +29,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.7.0"
+      "const": "1.11.0"
     },
     "run_id": {
       "type": "string",
@@ -48,15 +48,7 @@
       ],
       "properties": {
         "kind": {
-          "enum": [
-            "single_stock",
-            "etf",
-            "bitcoin",
-            "gold",
-            "commodity",
-            "theme",
-            "basket"
-          ]
+          "enum": ["single_stock", "etf", "bitcoin", "gold", "commodity", "theme", "basket", "protocol_token", "preferred"]
         },
         "asset_class": {
           "enum": [
@@ -252,7 +244,42 @@
               }
             }
           }
-        }
+        },
+        "issuer": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "ticker",
+                    "listing",
+                    "currency"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "ticker": {
+                      "type": "string",
+                      "pattern": "[A-Z0-9][A-Z0-9.\\-]*"
+                    },
+                    "listing": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "currency": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
       }
     },
     "question_verbatim": {
@@ -422,6 +449,201 @@
         }
       }
     },
+    "treasury_read": {"type": "object", "additionalProperties": false, "required": ["coin_layer", "preferred", "objection"], "properties": {"coin_layer": {"type": "object", "additionalProperties": false, "required": ["source", "run_id"], "properties": {"source": {"enum": ["on_record", "this_sitting"]}, "run_id": {"type": ["string", "null"]}}}, "preferred": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["key", "as_debt", "why"], "properties": {"key": {"type": "string", "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "as_debt": {"type": "boolean"}, "why": {"type": "string", "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}}}, "objection": {"type": "object", "additionalProperties": false, "required": ["objection", "answer"], "properties": {"objection": {"type": "string", "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "answer": {"type": "string", "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}}}},
+    "uranium_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "past_fall",
+        "longer_cycle"
+      ],
+      "properties": {
+        "past_fall": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "case",
+            "comparison"
+          ],
+          "properties": {
+            "case": {
+              "enum": [
+                "peak_2007",
+                "fukushima_2011"
+              ]
+            },
+            "comparison": {
+              "type": "string",
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        },
+        "longer_cycle": {
+          "type": "string",
+          "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+        }
+      }
+    },
+    "protocol_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "comparison",
+        "supply",
+        "near_term",
+        "claim",
+        "objection"
+      ],
+      "properties": {
+        "comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "word",
+            "deciding_measure",
+            "why"
+          ],
+          "properties": {
+            "word": {
+              "enum": [
+                "structurally_similar",
+                "structurally_different",
+                "in_between"
+              ]
+            },
+            "deciding_measure": {
+              "enum": [
+                "release_pace",
+                "holders",
+                "offsets",
+                "shape"
+              ]
+            },
+            "why": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        },
+        "supply": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "word",
+            "why"
+          ],
+          "properties": {
+            "word": {
+              "enum": [
+                "tailwind",
+                "neutral",
+                "headwind"
+              ]
+            },
+            "why": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        },
+        "near_term": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "horizon",
+              "side",
+              "price_low",
+              "price_high",
+              "probability",
+              "catalyst"
+            ],
+            "properties": {
+              "horizon": {
+                "enum": [
+                  "one_month",
+                  "three_months"
+                ]
+              },
+              "side": {
+                "enum": [
+                  "bull",
+                  "bear"
+                ]
+              },
+              "price_low": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "price_high": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "probability": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "catalyst": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              }
+            }
+          }
+        },
+        "claim": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "probability",
+            "reasoning"
+          ],
+          "properties": {
+            "probability": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            },
+            "reasoning": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        },
+        "objection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "objection",
+            "answer"
+          ],
+          "properties": {
+            "objection": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            },
+            "answer": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+            }
+          }
+        }
+      }
+    },
     "scenario_rating": {
       "type": [
         "object",
@@ -437,6 +659,7 @@
         "seat_ladders"
       ],
       "properties": {
+        "horizon_line": {"type": "string", "pattern": "[\\s\\S]*\\S[\\s\\S]*"},
         "aggregated": {
           "type": "boolean"
         },
@@ -482,10 +705,36 @@
                 "minLength": 1,
                 "pattern": "[\\s\\S]*\\S[\\s\\S]*"
               },
-              "rationale": {
+              "cell": {"type": "object", "additionalProperties": false, "required": ["coin_scenario", "coin_price", "premium"], "properties": {"coin_scenario": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "coin_price": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "premium": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}},
+              "catalyst": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"},
+          "rationale": {
                 "type": "string",
                 "minLength": 1,
                 "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+              },
+              "dividend_cell": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "dividend",
+                  "coin_price",
+                  "price"
+                ],
+                "properties": {
+                  "dividend": {
+                    "enum": [
+                      "paid_in_full",
+                      "deferred",
+                      "missed"
+                    ]
+                  },
+                  "coin_price": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "string"
+                  }
+                }
               }
             }
           }
@@ -631,10 +880,35 @@
                       "minLength": 1,
                       "pattern": "[\\s\\S]*\\S[\\s\\S]*"
                     },
+                    "cell": {"type": "object", "additionalProperties": false, "required": ["coin_scenario", "coin_price", "premium"], "properties": {"coin_scenario": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "coin_price": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "premium": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}},
                     "rationale": {
                       "type": "string",
                       "minLength": 1,
                       "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                    },
+                    "dividend_cell": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "dividend",
+                        "coin_price",
+                        "price"
+                      ],
+                      "properties": {
+                        "dividend": {
+                          "enum": [
+                            "paid_in_full",
+                            "deferred",
+                            "missed"
+                          ]
+                        },
+                        "coin_price": {
+                          "type": "string"
+                        },
+                        "price": {
+                          "type": "string"
+                        }
+                      }
                     }
                   }
                 }
@@ -1305,15 +1579,7 @@
           ]
         },
         "subject_kind": {
-          "enum": [
-            "single_stock",
-            "etf",
-            "bitcoin",
-            "gold",
-            "commodity",
-            "theme",
-            "basket"
-          ]
+          "enum": ["single_stock", "etf", "bitcoin", "gold", "commodity", "theme", "basket", "protocol_token", "preferred"]
         },
         "asset_class": {
           "enum": [
@@ -1688,6 +1954,19 @@
               }
             }
           }
+        }
+      }
+    },
+    "cover_read": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cover"
+      ],
+      "properties": {
+        "cover": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

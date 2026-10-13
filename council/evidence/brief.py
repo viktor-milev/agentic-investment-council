@@ -110,7 +110,7 @@ def _one_line(text):
     return " ".join(str(text if text is not None else "").split())
 
 
-def _safe(text):
+def _safe(text, *, plain_amp=False):
     """The ONE neutralization both the one-page brief and the full document
     put every untrusted, model-written string through before rendering it:
     capture prose, the plain-English fact labels, source sentences, and the
@@ -157,10 +157,10 @@ def _safe(text):
     rather than as the mark. These forge nothing a reader reads as evidence;
     the material vectors above are closed. Each escaped character still
     reads as itself in a Markdown viewer."""
-    return _escape(_one_line(text))
+    return _escape(_one_line(text), plain_amp=plain_amp)
 
 
-def _escape(text):
+def _escape(text, *, plain_amp=False):
     """The character escaping of _safe, without the collapse to one line.
     Split out for owner ruling AC19 (unit U3f): the untraced-figure marker
     is placed BETWEEN stretches of model prose, and each stretch is escaped
@@ -169,7 +169,11 @@ def _escape(text):
     still `_escape(_one_line(...))`, byte for byte what it was."""
     s = str(text if text is not None else "")
     s = s.replace("\\", "\\\\")
-    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    # Protocol print sites keep ordinary ampersands readable in Markdown;
+    # an entity written in capture text must still read as that exact text.
+    s = (re.sub(r"&(?=(?:[A-Za-z][A-Za-z0-9]*|#[0-9]+|#[xX][0-9A-Fa-f]+);)",
+                "&amp;", s) if plain_amp else s.replace("&", "&amp;"))
+    s = s.replace("<", "&lt;").replace(">", "&gt;")
     for character in "`[]*|":
         s = s.replace(character, "\\" + character)
     if s[:1] == "#":
@@ -481,6 +485,14 @@ def _head_lines(pack, pack_sha256):
     coin = subjects.named_coin(subject, _floors())
     kind_words = (_floors()["asset_classes"]["crypto"]["products"][coin]["brief_words"]
                   if coin else SUBJECT_KIND_WORDS.get(kind))
+    if kind == "preferred": kind_words = _floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["kind_line_words"]
+    token = subjects.protocol_token(subject, _floors())
+    if token is not None:
+        kind_words = _floors()["asset_classes"]["crypto"]["protocols"][token]["brief_words"]
+    holder_row = subjects.holder_product(subject, _floors())
+    if holder_row is not None:
+        holder = holder_row["physical_holders"][subjects.physical_holder(subject, _floors())]
+        kind_words = _safe(holder_row["brief_words"] % (holder["names"][0], holder["vehicle_ticker"]), plain_amp=True)
     # Unit READ-B2: the subject in words and the gathering time as a date,
     # never the schema's kind or a machine timestamp.
     lines.append("**%s%s, %s.** Evidence gathered %s."
@@ -725,6 +737,9 @@ _MEASURE_WORDS = {
         "price against book, read against the operating return on equity",
     "price_to_book_against_return_on_equity":
         "price against book, read against the return on equity",
+    "price_to_book_against_book_value_per_share_growth":
+        "price against book, read beside the growth of book value per share "
+        "over ten year-ends with dividends added back",
     "price_to_earnings_against_return_on_client_assets":
         "price against earnings, read against the return on client assets",
     "price_to_fee_earnings_against_fee_earning_assets":
@@ -752,6 +767,7 @@ FI_SUBTYPE_WORDS = {
     "traditional_asset_manager": "a traditional asset manager",
     "alternative_asset_manager": "an alternative asset manager",
     "financial_holding": "a financial holding company",
+    "float_compounder": "a float compounder, an insurer that compounds its float",
 }
 FI_RISK_KIND_WORDS = {
     "credit": "credit losses",
@@ -794,6 +810,242 @@ MOSTLY_PRIVATE_SENTENCE = "Most of what this company owns is private; private va
 HOLDING_LEAD = "Discount to net asset value"
 
 
+def compounder_rule():
+    """AC84: the ruled constants and wording shared by every reader."""
+    return _floors()["archetype_measures"]["float_compounder_rule"]
+
+
+def compounder_subject_frame(capture):
+    rule = compounder_rule()
+    frame = (capture.get("business_frame") or {}).get(
+        (capture.get("subject") or {}).get("ticker"))
+    return frame if (frame and frame.get("archetype") == rule["fi_archetype"]
+                     and frame.get("fi_subtype") == rule["compounder_subtype"]) else None
+
+
+def float_compounder_readings(pack):
+    """AC84(2)-(8): one exact reading; pages never select their own facts."""
+    capture = pack["capture"]
+    frame = compounder_subject_frame(capture)
+    if frame is None:
+        return None
+    rule = compounder_rule()
+    words = rule["page_words"]
+    tagged = sufficiency.float_compounder_role_set(pack, _floors())
+    facts = _facts_by_id(capture)
+    rating = next(r for r in capture["sufficiency"]["requirements"]
+                  if r["id"] == "rating_vs_history_or_peers")
+    row = _floors()["archetype_measures"]["table"][rule["fi_archetype"]]["subtypes"][rule["compounder_subtype"]]
+    result = dict(years=[], older=0, price_to_book=None, growth=None,
+                  price_to_book_by_year={}, price_to_book_by_year_reason={}, profit_years=0, adjusted=[],
+                  operating_roe=[], solvency=None, segments=[], peers=[],
+                  figures=[], errors=[], roles=tagged)
+
+    def figure(value, unit):
+        if value is not None:
+            result["figures"].append(dict(value=str(value), unit=unit))
+        return value
+
+    def quotient(top, bottom):
+        a, b = facts.get(top) or {}, facts.get(bottom) or {}
+        high, low = _number(a), _number(b)
+        if high is None or low is None or low <= 0 or a.get("unit") != b.get("unit"):
+            # Architect fix round 1, P2: the reason travels with its row.
+            return None, words["not_comparable_units_words"].format(
+                reason=words["not_comparable_words"], top_unit=a.get("unit"), bottom_unit=b.get("unit"))
+        with decimal.localcontext() as context:
+            context.prec = 28
+            return figure(high / low, "multiple"), None
+
+    keys = ("bvps", "dps", "price", "underwriting", "gains")
+    pairs = {}
+    for fid, roles in tagged.items():
+        for index, role in enumerate(rule["history"]):
+            if "history:" + role in roles:
+                suffix = fid[len(rule["history"][role]):]
+                pairs.setdefault(suffix, [None] * len(keys))[index] = fid
+    annual = sufficiency._holding_history(pairs, capture.get("gaps") or [], list(rule["history"].values()))
+    result["older"] = max(0, len(annual["complete"]) - rule["history_year_ends"])
+    result["years"] = [dict(year=year, **dict(zip(keys, ids)))
+                       for year, *ids in annual["complete"][:rule["history_year_ends"]]]
+    result["errors"] += [rule["history_member_refusal"] + ": " + year for year in annual["incomplete"]]
+    market, book = row["subject_numerator"], rule["yardstick_book"]
+    multiple, reason = quotient(market, book)
+    result.update(market=market, book=book, price_to_book=multiple, price_to_book_reason=reason)
+    for year in result["years"]:
+        multiple, reason = quotient(year["price"], year["bvps"])
+        result["price_to_book_by_year"][year["year"]] = multiple
+        result["price_to_book_by_year_reason"][year["year"]] = reason
+        number = _number(facts.get(year["underwriting"]))
+        if number is None:
+            result["errors"].append(rule["history_member_refusal"])
+        elif number > 0:
+            result["profit_years"] += 1
+    years = result["years"]
+    result["growth_reason"] = rule["history_short_refusal"]
+    if len(years) >= rule["history_min_year_ends"]:
+        latest, first = years[0], years[-1]
+        steps = int(latest["year"][2:]) - int(first["year"][2:])
+        values = [_number(facts.get(y["dps"])) for y in years[:-1]]
+        start, end = _number(facts.get(first["bvps"])), _number(facts.get(latest["bvps"]))
+        if start is not None and start > 0 and end is not None and None not in values and steps > 0:
+            with decimal.localcontext() as context:
+                context.prec = 28
+                total = end + sum(values, decimal.Decimal(0))
+                if total > 0:
+                    result["growth"] = figure(((total / start) ** (decimal.Decimal(1) / steps) - 1) * 100, "percent")
+            result.update(steps=steps, first=first["year"], last=latest["year"])
+        else:
+            result["growth_reason"] = rule["history_member_refusal"]
+    for fid, roles in tagged.items():
+        fact = facts.get(fid) or {}
+        if "adjusted_book" in roles:
+            adjusted = dict(id=fid, value=fact.get("value"), unit=fact.get("unit"),
+                            label=fact.get("label"), source=fact.get("source"), sum=None)
+            if fid == list(rule["adjusted_book"]["members"])[1] and years:
+                base = facts.get(years[0]["bvps"]) or {}
+                a, b = _number(base), _number(fact)
+                if a is not None and b is not None and base.get("unit") == fact.get("unit"):
+                    with decimal.localcontext() as context:
+                        context.prec = 28
+                        adjusted["sum"] = figure(a + b, fact["unit"])
+                else:
+                    result["errors"].append(words["not_comparable_words"])
+                adjusted.update(book=years[0]["bvps"], year=years[0]["year"])
+            result["adjusted"].append(adjusted)
+        if "operating_roe" in roles:
+            result["operating_roe"].append(fid)
+    target = (frame.get("fi_capital") or {}).get("target_fact")
+    if target:
+        ratio = rule["solvency"]["ratio_prefix"] + target.removeprefix(rule["solvency"]["target_prefix"])
+        a, b = facts.get(ratio) or {}, facts.get(target) or {}
+        comparable = (_number(a) is not None and _number(b) is not None and a.get("unit") == b.get("unit"))
+        result["solvency"] = dict(ratio=ratio, target=target, comparable=comparable,
+                                   below=comparable and _number(a) < _number(b))
+    segment_suffixes = set()
+    for fid, roles in tagged.items():
+        for role, prefix in rule["segments"].items():
+            if "segment:" + role in roles:
+                segment_suffixes.add(fid[len(prefix):])
+    for suffix in sorted(segment_suffixes, key=lambda s: (s.rsplit("_", 1)[0], -int(s.rsplit("fy", 1)[1]))):
+        sales = rule["segments"]["sales"] + suffix
+        profit = rule["segments"]["operating_profit"] + suffix
+        slug, year = suffix.rsplit("_", 1)
+        result["segments"].append(dict(name=(facts.get(sales) or {}).get("label") or slug.replace("_", " "),
+                                        year=year, sales=sales, operating_profit=profit))
+    tickers = {t for spec in rule["compounder_peers"].values() for t in spec["tickers"]}
+    for peer in frame.get("peers") or []:
+        slug = sufficiency.subjects.slug(peer["ticker"])
+        top = rule["peer_gap_class"] + row["peer_numerator_metric"] + "__" + slug
+        bottom = rule["peer_gap_class"] + rating["peer_denominator_metrics"][0] + "__" + slug
+        multiple, reason = quotient(top, bottom)
+        result["peers"].append(dict(name=peer.get("name"), ticker=peer["ticker"], market=top, book=bottom,
+                                    multiple=multiple, compounder=peer["ticker"] in tickers,
+                                    multiple_reason=reason,
+                                    reason=peer.get(rule["peer_reason_field"])))
+    figure(decimal.Decimal(result["profit_years"]), "multiple")
+    figure(decimal.Decimal(len(years)), "multiple")
+    if result.get("steps"):
+        figure(decimal.Decimal(result["steps"]), "multiple")
+    return result
+
+
+def compounder_lines(pack, readings, tests=False):
+    """AC84: raw display lines; each printer escapes capture text once."""
+    rule, facts = compounder_rule(), _facts_by_id(pack["capture"])
+    words = rule["page_words"]
+    def value(fid):
+        return cell_text(_id_cell(pack, facts, fid))
+    def calculated(number, unit="x", reason=None):
+        return cell_text(_calc(number, unit, "")) if number is not None else reason or words["not_comparable_words"]
+    price = words["price_to_book_words"].format(multiple=calculated(readings["price_to_book"], reason=readings["price_to_book_reason"]),
+        market=value(readings["market"]), book=value(readings["book"]))
+    growth = words["growth_none_words"].format(reason=readings["growth_reason"])
+    if readings["growth"] is not None:
+        span = (words["span_one_words"] if readings["steps"] == 1 else words["span_words"].format(count=readings["steps"]))
+        growth = words["growth_words"].format(rate=calculated(readings["growth"], "percent"), span=span,
+            first=readings["first"][2:], last=readings["last"][2:])
+    if tests:
+        lines = [words["test_growth_words"].format(growth=growth),
+                 words["test_underwriting_words"].format(count=readings["profit_years"], years=len(readings["years"])),
+                 words["test_rating_words"].format(multiple=calculated(readings["price_to_book"], reason=readings["price_to_book_reason"]))]
+        cash = next((r for r in pack["capture"]["sufficiency"]["requirements"] if r["id"] == FREE_CASH_ROW), {})
+        return lines + [FI_FREE_CASH_WORDS + ": " + "; ".join(value(fid) for fid in cash.get("answered_by") or [])]
+    lines = [price, growth]
+    for adjusted in readings["adjusted"]:
+        if "book" in adjusted:
+            lines.append(words["adjusted_sum_words"].format(year=adjusted["year"][2:], book=value(adjusted["book"]),
+                label=adjusted["label"], adjustment=value(adjusted["id"]), sum=calculated(adjusted["sum"], facts[adjusted["id"]]["unit"]), source=adjusted["source"]))
+        else:
+            lines.append(words["adjusted_value_words"].format(label=adjusted["label"], value=value(adjusted["id"]), source=adjusted["source"]))
+    if readings["adjusted"]:
+        lines.append(rule["adjusted_book_sentence"])
+    if readings["operating_roe"]:
+        lines += [words["operating_roe_words"].format(values="; ".join(value(fid) for fid in readings["operating_roe"])), rule["operating_roe_sentence"]]
+    if len(readings["years"]) < rule["history_year_ends"]:
+        lines.append(rule["younger_record_sentence"].format(count=len(readings["years"])))
+    return lines
+
+
+def compounder_solvency_line(pack, readings):
+    solvency = readings["solvency"]
+    if not solvency or (solvency["comparable"] and not solvency["below"]):
+        return None
+    rule, facts = compounder_rule(), _facts_by_id(pack["capture"])
+    words = rule["solvency_below_target_sentence"] if solvency["comparable"] else rule["page_words"]["solvency_units_words"]
+    return words.format(**{key: cell_text(_id_cell(pack, facts, solvency[key])) for key in ("ratio", "target")})
+
+
+def float_compounder_tables(pack, frame, readings):
+    """AC84: the one table construction for documents, reports and seats."""
+    rule, facts = compounder_rule(), _facts_by_id(pack["capture"])
+    words = rule["page_words"]
+    def value(fid):
+        return _id_cell(pack, facts, fid)
+    def multiple(number, reason):
+        return _calc(number, "x", "") if number is not None else _words(reason)
+    below = [[_words(rule["gains_sentence"])]]
+    if readings["older"]:
+        below.append([_words(words["older_years_words"].format(count=readings["older"]))])
+    if len(readings["years"]) < rule["history_year_ends"]:
+        below.append([_words(rule["younger_record_sentence"].format(count=len(readings["years"])))])
+    rows = [[_words(y["year"][2:]), value(y["bvps"]), value(y["dps"]), value(y["price"]),
+             multiple(readings["price_to_book_by_year"][y["year"]], readings["price_to_book_by_year_reason"][y["year"]]), value(y["underwriting"]), value(y["gains"])] for y in readings["years"]]
+    tables = [(words["ten_year_lead"], dict(head=words["ten_year_heads"], rows=rows, below=below))]
+    if readings["segments"]:
+        rows = [[_prose(s["name"]), _words(s["year"][2:]), value(s["sales"]), value(s["operating_profit"])] for s in readings["segments"]]
+        tables.append((words["segments_lead"], dict(head=words["segments_heads"], rows=rows, below=[[_words(rule["segments_sentence"])]])))
+    subject = pack["capture"]["subject"]
+    rows = [[_prose(subject["name"]), _prose(subject["ticker"]), value(readings["market"]), value(readings["book"]),
+             multiple(readings["price_to_book"], readings["price_to_book_reason"]), _words(words["subject_row_words"])]]
+    rows += [[_prose(p["name"]), _prose(p["ticker"]), value(p["market"]), value(p["book"]), multiple(p["multiple"], p["multiple_reason"]),
+              _words(words["peer_compounder_words"]) if p["compounder"] else _prose(words["peer_plain_words"].format(reason=p["reason"]))] for p in readings["peers"]]
+    tables.append((words["peers_lead"], dict(head=words["peers_heads"], rows=rows, below=[])))
+    return tables
+
+
+def _full_compounder_lines(pack, frame, bases):
+    readings = float_compounder_readings(pack)
+    if readings is None:
+        return []
+    words = compounder_rule()["page_words"]
+    cfg = trace.capture_config(_marks_config(), pack["capture"])
+    bases = bases + trace.facts_bases(readings["figures"], cfg)
+    def shown(line):
+        return trace.mark(line, bases, cfg, _escape, separate_after=True)
+    lines = ["", "**" + words["yardstick_lead"] + ".**", ""]
+    lines += [shown(line) for line in compounder_lines(pack, readings)]
+    lines += [shown(line) for line in readings["errors"]]
+    solvency = compounder_solvency_line(pack, readings)
+    if solvency:
+        lines.append(shown(solvency))
+    for lead, table in float_compounder_tables(pack, frame, readings):
+        lines += ["", "**" + lead + ".**", ""] + table_lines(table, bases)
+    lines += ["", "**" + words["tests_lead"] + ".**", ""]
+    lines += [shown(line) for line in compounder_lines(pack, readings, tests=True)]
+    return lines
+
+
 def holding_currency_words(unit):
     """AC62(H16): the pack's currency, named once in plain words."""
     unit = (_floors()["prose_figure_marks"].get("currency_aliases") or {}).get(unit, unit) or ""
@@ -831,6 +1083,7 @@ def holding_history_lead(readings):
 def holding_subject_frame(capture):
     frame = (capture.get("business_frame") or {}).get(
         (capture.get("subject") or {}).get("ticker"))
+    if frame and sufficiency.treasury_frame(_floors(), capture): return None
     return frame if frame and frame.get("archetype") == HOLDING_ARCHETYPE else None
 
 
@@ -875,7 +1128,8 @@ def holding_display_facts(capture, recorded=False):
     Recorded provenance and rule operands retain their source values;
     displayed money reads select the conversion vouched for by the rule."""
     facts = {fact.get("id"): fact for fact in capture.get("tier1") or []}
-    frame = holding_subject_frame(capture)
+    frame = holding_subject_frame(capture) or ((sufficiency.treasury_frame(_floors(), capture) or (None,))[0]
+                                             if capture.get("subject") else None)
     if frame is None or recorded:
         return facts
     tagged, _, _ = sufficiency._holding_roles(_floors(), frame, {}, facts,
@@ -1082,6 +1336,1106 @@ def _floors():
         _FLOORS = canonical.read_json(gate._FLOORS_PATH)
     return _FLOORS
 
+
+def uranium_tables(summary, definitions):
+    """AC85-AC88, U4: build each evidence table once, with raw capture words."""
+    for lead, head, rows, below, row_facts, below_facts in definitions:
+        summary["tables"].append((lead, dict(head=head,
+            rows=[[dict(_words(text), plain_amp=True) for text in cells] for cells in rows],
+            below=[[dict(_words(text), plain_amp=True)] for text in below],
+            row_facts=row_facts, below_facts=below_facts)))
+
+
+def preferred_owner_words(text, capture, html_page=False):
+    """Architect fix round 3: one owner-page translation of issuer keys."""
+    if capture["subject"]["kind"] != "preferred": return text
+    import html
+    issuer=capture["subject"]["issuer"]; suffix=gate.frame_suffix(capture["subject"],issuer["ticker"]); treasury=_floors()["archetype_measures"]["holding_rule"]["treasury"]
+    items=_floors()["asset_classes"]["commodity"]["products"]["uranium"]["page_words"]["absent_item_words"]["items"] | treasury["page_words"]["absent_item_words"]
+    for gap in capture.get("gaps",[]):
+        key=gap["fact_class"].removesuffix(suffix); word=next((v for k,v in items.items() if key.startswith(k)),key)
+        text=text.replace(gap["fact_class"],html.escape(word,quote=True) if html_page else _safe(word,plain_amp=True))
+    text=re.sub(r"_+"+re.escape(suffix.lstrip("_"))+r"\b","",text); name=html.escape(issuer["name"],quote=True) if html_page else _safe(issuer["name"],plain_amp=True)
+    return re.sub(r" "+re.escape(suffix.lstrip("_"))+r"\b",lambda m:treasury["listed_preferred"]["page_words"]["issuer_name_join_words"] % name,text)
+
+
+def preferred_context(pack):
+    """Architect fix round 3: issuer context without its common rating."""
+    view=sufficiency.issuer_pack(pack,_floors()); c=view["capture"]; frame=next(iter(c["business_frame"].values()))
+    frame["decisive_metrics"]=[r for r in frame.get("decisive_metrics",[]) if not set(r.get("answered_by",[])) & set(_rating_subject_denominators(c))]
+    frame.pop("archetype",None); c["business_frame"]={c["subject"]["name"]:frame}
+    return view
+
+
+def preferred_summary(pack):
+    """AC92(3), M10: one summary from the evidence reader for every page."""
+    from datetime import date
+    from council.engine import preferred_chair
+    from council.report.render_report import format_protocol_number, treasury_card_lines
+    floors = _floors()
+    if not preferred_chair.declared(pack,floors): return None
+    treasury = floors["archetype_measures"]["holding_rule"]["treasury"]; rule = treasury["listed_preferred"]
+    words = dict(rule["page_words"],card_joiners=treasury["page_words"]["card_joiners"]); r = sufficiency.preferred_readings(pack,floors)
+    summary = dict(words=words,kind_line=rule["kind_line_words"],front=[],front_parts={},lines=[],tables=[],figures=[],readings=r)
+    if not r or "entry" not in r: summary["lines"]=[rule["not_in_table_refusal"]["why"]]; return summary
+    currency = pack["capture"]["subject"]["currency"]
+    def shown(value,kind="money",key=None): return r["why"][key] if value is None else format_protocol_number(str(value),kind,currency=currency)
+    def ratio(value,key):
+        if not value: return r["why"][key]
+        if key=="cover": return preferred_chair._cover_words(value,floors)
+        return preferred_chair._ratio_words(value)
+    def card(key,text): summary["front_parts"].setdefault(key,[]).append(dict(joiner="plain",parts=[dict(label=words[key+"_lead"],key=key,text=text,reason=False)]))
+    gap = r["gap"]; gap_words = words["gap_words"]["level"] if gap and not gap["numerator"] else words["gap_words"]["above" if gap and gap["numerator"]>0 else "below"] % ratio(dict(gap,numerator=abs(gap["numerator"])) if gap else None,"gap")
+    card("yield",words["yield_words"] % (shown(r["price"],"price","price"),shown(r["par"],"price","par"),preferred_chair._exact_words(r["dividend"],currency) if r["dividend"] is not None else r["why"]["dividend"],ratio(r["yield"],"yield")+("%" if r["yield"] else ""),shown(r["cash"],"share","cash"),_format_date(r["cash_date"]),gap_words))
+    card("yield",words["rate_words"] % (preferred_chair._exact_words(r["rate"],percent=True),_format_date(r["rate_date"])) if r["rate"] is not None and r["rate_date"] else rule["roles"]["issuer_dividend_rate"]["why"])
+    card("yield",words["swings_words"] % shown(r["window_days"],"number","window_days"))
+    def cell(text): return dict(kind="words",text=str(text))
+    def table(head,rows): return dict(head=head,rows=[[cell(v) for v in row] for row in rows],below=[])
+    columns = r["cover"]; rows=[]
+    for key,label in zip(("coin_price","treasury","ahead","alongside","cover"),words["cover_rows"],strict=True):
+        rows.append([label,*[(ratio(c[key],key) if key=="cover" else shown(c[key])) for c in columns]] if columns else [label,*[r["why"]["cover"] for _ in words["cover_heads"][1:]]])
+    summary["cover_table"]=table(words["cover_heads"],rows); card("cover","; ".join(label+": "+ratio(c["cover"],"cover") for label,c in zip(words["cover_heads"][1:],columns,strict=True)) if columns else r["why"]["cover"])
+    summary["cover_table"]["below"] = [[cell(text)] for text in preferred_chair.casefile_lines(r,rule["casefile_words"])[2:]]
+    for q in r["record"]: card("record",words["quarter_words"] % (q["quarter"],q["count"],words["status_words"][q["status"]]))
+    if r["listed_on"] and (date.fromisoformat(pack["capture"]["captured_at"][:10])-date.fromisoformat(r["listed_on"])).days < rule["record_days"]: card("record",words["record_since_words"] % _format_date(r["listed_on"]))
+    card("terms",words["cumulative_words"][str(r["cumulative"]).lower()]); card("terms",words["redemption_words"] % (r["redemption_words"],_format_date(r["redemption_date"]) if r["redemption_date"] else r["why"]["redemption_date"]))
+    issuer = r["issuer"]; tw = treasury["page_words"]
+    card("issuer",tw["count_words"] % (_format_date(issuer["count_date"]),issuer["count_age_days"]) if issuer["count_date"] else r["issuer_readings"]["why"]["readings"])
+    card("issuer","; ".join(tw["margin_loan_words"] % (x["name"],shown(x["amount"]),x["terms_words"]) for x in issuer["margin_loans"]) if issuer["margin_loans"] else tw["no_margin_loan_words"] if issuer["margin_loans"] == [] else r["issuer_readings"]["why"]["readings"])
+    for sale in issuer["coin_sales"] or []:
+        source = next((f["as_of"] for f in pack["capture"]["tier1"] if f["id"].startswith("treasury_coin_sale_"+sale["key"]+"_")),None)
+        card("issuer",words["coin_sales_words"] % (_format_date(source),shown(sale["proceeds"]),sale["words"]))
+    if issuer["coin_sales"] == []: card("issuer",words["no_coin_sales_words"])
+    ranking=[]
+    for row in r["issuer_readings"].get("preferreds",[]):
+        key=row["key"]; relation="self" if key==r["entry"]["key"] else "ahead" if key in r["ahead"] else "alongside" if key in r["alongside"] else "behind"
+        ranking.append([row["name"],shown(row["amount"]),words["ranking_words"][relation],row.get("ranking_words",rule["ranking_refusal"]["why"])])
+    payments = [[_format_date(p["date"]),words["status_words"][p["status"]]] for p in r["payments"]]
+    summary["tables"]=[(words["cover_lead"],summary["cover_table"]),(words["ranking_lead"],table(words["ranking_heads"],ranking)),(words["record_lead"],table(words["record_heads"],payments))]
+    issuer_summary=treasury_summary(sufficiency.issuer_pack(pack,floors))
+    issuer_tables = dict(issuer_summary["tables"])
+    for family in rule["issuer_tables"]:
+        lead = treasury["page_words"]["sales_lead" if family=="coin_sales" else family+"_lead"]; heads = treasury["page_words"]["heads"]["sales" if family=="coin_sales" else family]
+        t = issuer_tables[lead] if lead in issuer_tables else table(heads,[[r["why"]["cover"] for _ in heads]])
+        if family == "convertibles": t = dict(t,head=t["head"][:6]+t["head"][8:],rows=[row[:6]+row[8:] for row in t["rows"]],below=t["below"]); lead += ", "+words["convertibles_words"]
+        if family == "preferreds":
+            t = dict(t,head=t["head"][:-1],rows=[row[:-1] for row in t["rows"]]); lead=words["ranking_heads"][0]
+        if family: summary["tables"].append((lead,t))
+    formula = preferred_chair.casefile_lines(r,rule["casefile_words"]) if r["issuer_readings"].get("coins") else []
+    summary["lifted"] = words["lifted_words"] if [v["why"] for v in rule["issuer_view"]["lifted"]] else ""
+    summary["front"] = treasury_card_lines(summary); summary["lines"]=[summary["kind_line"],*[lead+": "+text for lead,text in summary["front"]],*formula,summary["lifted"]]
+    return summary
+
+
+def treasury_summary(pack, in_force=None):
+    """AC89, AC91-AC94, P1: one raw display summary over the merged readings."""
+    from council.engine import treasury_chair
+    from council.report.render_report import format_protocol_number, _money_parse, treasury_card_lines
+    floors, capture = _floors(), pack["capture"]
+    if treasury_chair.declared(pack, floors) is None:
+        return None
+    rule = floors["archetype_measures"]["holding_rule"]["treasury"]
+    words, force = rule["page_words"], in_force or {}
+    summary = dict(words=words, kind_line=words["kind_line_words"], front=[], lines=[],
+                   line_facts=[], tables=[], figures=[], bar_notes=[], facts=[], in_force=force)
+    r = sufficiency.treasury_readings(pack, floors, force.get("preferred_treatment"))
+    if not r or set(r) == {"why"}:
+        summary["lines"] = [summary["kind_line"], words["readings_refusal_words"]]
+        summary["line_facts"] = [[], []]
+        return summary
+    facts = holding_display_facts(capture)
+    tagged = sufficiency.treasury_role_set(pack, floors)
+    figures, used, front = {}, set(), {}
+    reasons = rule["reading_reasons"]
+    # Architect fix round 3: every card part retains its figure or reason.
+    class Reason(str):
+        pass
+    def missing(key=None, why=None):
+        return Reason(r["why"].get(key) or why or reasons["unreadable_figure"]["words"])
+    summary["front_parts"] = {}
+    def card(key, joiner, values, labels, part_lead=None):
+        parts = [dict(label=words["card_reason_labels"][label] if label else words[key+"_lead"],
+                      key=label, text=str(value), reason=isinstance(value, Reason))
+                 for value, label in zip(values, labels, strict=True)]
+        summary["front_parts"].setdefault(key, []).append(dict(joiner=joiner, parts=parts, part_lead=part_lead))
+        front.update(treasury_card_lines(summary, {key: summary["front_parts"][key]}, raw=True))
+    currency = facts[next(fid for fid,tags in tagged.items() if ("cash",None,None,None) in tags)]["unit"].split("_")[0]
+    percent = floors["prose_figure_marks"]["percent_units"][0]
+    largest = max(r["coins"], key=lambda c: c["value"])
+    coin_row = subjects.admitted_coin(floors, largest["coin"])[1]
+
+    def shown(value, unit=None, kind="number", key=None, why=None):
+        if value is None:
+            return missing(key, why)
+        value = decimal.Decimal(str(value))
+        figures[(str(value), unit)] = dict(value=str(value), unit=unit)
+        text = format_protocol_number(str(value), kind, unit=unit, currency=currency,
+                                      words=words["figure_not_available_words"])
+        return Reason(text) if text == words["figure_not_available_words"] else text
+
+    def quotient(ratio, unit=None, kind="number", key=None, why=None, whole=False):
+        # Presentation of the helper's exact pair; no new business reading.
+        if ratio is None:
+            return missing(key, why)
+        with decimal.localcontext() as exact:
+            exact.prec = 100
+            value = ratio["numerator"] / ratio["denominator"]
+            return shown(int(value) if whole else value, unit, kind)
+
+    def sign(ratio, family="sign_words", reverse=False, key=None, why=None):
+        if ratio is None:
+            return missing(key, why)
+        value = ratio["numerator"]
+        key = "level" if not value else "premium" if (value > 0 if reverse else value < 0) else "discount"
+        template = words[family][key]
+        size = shown(abs(ratio["percent"]), percent, "share") if value else None
+        return size if isinstance(size, Reason) else template if not value else template % size
+
+    def ids(role, c=None, k=None, p=None):
+        return [fid for fid, tags in tagged.items() if (role, c, k, p) in tags]
+
+    def recorded(role, c=None, k=None, p=None, why=None):
+        names = ids(role, c, k, p)
+        reason_key = p+"_premium" if p and "price" in role else p or k
+        if not names or names[0] not in facts:
+            return missing(reason_key or (names[0] if names else None), why)
+        used.update(names)
+        fact = facts[names[0]]
+        value, unit = fact["value"], fact["unit"]
+        if gate._decimal_or_none(value) is None:
+            if rule["roles"][role]["numeric"]:
+                return missing(reason_key, why)
+            return _format_date(value) if unit == "iso_date" else str(value)
+        role_unit = rule["roles"][role]["unit"]
+        if role_unit == "coin_unit":
+            return shown(value,unit,"amount")
+        if "price" in role:
+            return shown(value,unit,"price")
+        money = _money_parse(unit) if role_unit == "money" else None
+        if money and not money[2]:
+            return shown(decimal.Decimal(value) * money[1], unit.split("_")[0], "money")
+        return shown(value, unit, "share" if unit in floors["prose_figure_marks"]["percent_units"]
+                     or unit == rule["roles"]["preferred_dividend_rate"]["unit"] else "number")
+
+    def yes(value):
+        return words["yes_no_words"]["yes" if value else "no"]
+
+    def treatment(value):
+        return words["treatment_words"]["debt" if value else "not_debt"]
+
+    definitions = []
+    def add(key, rows, below=(), references=None, lead=None):
+        definitions.append((lead or words[key + "_lead"], words["heads"][key], rows, list(below),
+                            references or [[] for _ in rows], [[] for _ in below]))
+
+    premium_pair = (sign(r["rated_premium"],key="diluted_preferred"), sign(r["comparable_premium"],key="issued_preferred"))
+    count_words = rule["casefile_words"]["yearend_count_words"] % (shown(sum(p["annual"] for p in r["periods"])), shown(len(r["history"])))
+    if r["history"]:
+        range_key = r["range_word"]
+        if range_key in ("wider", "narrower") and r["comparable_premium"]:
+            range_key = ("discount_" if r["comparable_premium"]["numerator"] > 0 else "premium_") + range_key
+        phrase = words["range_words"].get(range_key, missing("range_word", r["why"].get("issued_preferred")))
+        average = sign(r["history_average"], key="history_average")
+        card("premium", "premium", (*premium_pair, phrase, average, count_words),
+             ("rated_premium", "comparable_premium", "range_word", "history_average", None))
+        history_line = front["premium"]
+    else:
+        history_line = words["no_yearend_words"] % count_words
+        card("premium", "premium_no_yearend", (*premium_pair, history_line), ("rated_premium", "comparable_premium", None))
+    summary["already_discount"] = bool(r["comparable_premium"] and r["comparable_premium"]["numerator"] > 0)
+    fund = r["fund"]
+    if fund.get("gap"):
+        card("fund", "plain", (Reason(fund["gap"]),), (None,))
+    else:
+        card("fund", "fund", (
+            fund["ticker"], _format_date(fund["chosen_on"]), sign(fund["premium"], "fund_sign_words",key="fund_premium"),
+            _format_date(fund["date"]), sign(fund["rated_premium"],"fund_share_sign_words",key="diluted_preferred"), _format_date(fund["date"])),
+            (None, None, "fund_premium", None, "rated_premium", None))
+    change = r["twelve_month_change"]
+    change_text = missing("twelve_month_change") if change is None else words["change_words"]["level"]
+    if change and change["percent"]:
+        size = shown(abs(change["percent"]), percent, "share")
+        change_text = size if isinstance(size, Reason) else words["change_words"]["up" if change["percent"] > 0 else "down"] % size
+    card("coins_per_share", "coins_per_share", (
+        quotient(r["diluted_coins_per_share"], coin_row["unit"], "amount",key="diluted_coins_per_share"),
+        quotient(r["coins_per_share"], coin_row["unit"], "amount",key="coins_per_share"), change_text),
+        ("diluted_coins_per_share", "coins_per_share", "twelve_month_change"))
+    card("charges", "plain", (
+        Reason(words["no_interest_words"]) if r["interest"] == 0 else quotient(r["months_covered"]["interest"],key="interest_months",whole=True),
+        quotient(r["months_covered"]["all"],key="all_months",whole=True)),
+        ("interest_months", "all_months"), words["months_lead"])
+    summary["front_templates"] = {"charges": "charges_words"}
+    card("charges", "zero_prices", (
+        quotient(r["zero_coin_price"], coin_row["price_unit"], "price",key="zero_coin_price"),
+        quotient(r["preferred_zero_coin_price"], coin_row["price_unit"], "price",key="preferred_zero_coin_price")),
+        ("zero_coin_price", "preferred_zero_coin_price"))
+    for loan in r["margin_loans"]:
+        card("margin_loan", "margin_loan", (
+            loan["name"], shown(loan["amount"], currency, "money", key=loan["key"]), loan["terms_words"]),
+            (None, "margin_loan_amount", None))
+    if not r["margin_loans"]:
+        card("margin_loan", "plain", (words["no_margin_loan_words"],), (None,))
+    layer = force.get("coin_layer")
+    if layer:
+        latest = layer.get("latest")
+        if not latest:
+            card("coin_verdict", "plain", (words["none_on_record_words"],), (None,))
+        else:
+            card("coin_verdict", "coin_verdict", (latest["rating"], _format_date(latest["published"]),
+                words["cited_words" if layer["source"] == "on_record" else "built_words"]), (None, None, None))
+        shown(rule["coin_layer"]["max_age_days"])
+    card("count", "count", (_format_date(r["count_date"]), shown(r["count_age_days"], key="count_age_days")),
+         (None, "count_age_days"))
+    summary["front"] = [(key, front[key]) for key in words["front_order"] if key in front]
+    summary["lines"] = [summary["kind_line"], *[lead + (": " + text if text is not None else "")
+        for lead, text in treasury_card_lines(summary)]]
+    if r["may_sell_without_announcing"]:
+        summary["lines"].append(words["undisclosed_sales_words"])
+    summary["may_sell_without_announcing"] = r["may_sell_without_announcing"]
+    # AC89(4): both share counts, the coins and the debt bases remain labelled.
+    labels = words["display_labels"]
+    coin_name = lambda key: subjects.admitted_coin(floors,key)[1]["names"][0]
+    yard = [[labels["count"] % coin_name(c["coin"]), shown(c["count"], subjects.admitted_coin(floors,c["coin"])[1]["unit"], "amount")]
+            for c in r["coins"]]
+    for c in r["coins"]:
+        yard.append([labels["coin_price"] % coin_name(c["coin"]), recorded("coin_price",c["coin"])])
+        value = shown(c["value"],currency,"money")
+        fact = facts[ids("coin_value",c["coin"])[0]]
+        raw = decimal.Decimal(fact["value"]) * _money_parse(fact["unit"])[1]
+        if raw != c["value"]:
+            value = words["company_value_words"] % (value, recorded("coin_value",c["coin"]))
+        yard.append([labels["coin_value"] % coin_name(c["coin"]), value])
+    if ids("other_coins"):
+        yard.append([labels["other_coins"],shown(r["other_coins"],currency,"money")])
+    yard += [[labels[role], shown(r[key], currency if kind == "money" else "shares", kind)] for role,key,kind in
+             (("cash","cash","money"),("true_debt","true_debt","money"),("shares","shares_in_issue","number"))]
+    yard += [[labels["diluted_shares"], shown(r["diluted_shares"], "shares")]]
+    add("yardstick", yard, lead=words["yardstick_table_lead"])
+    for family in ("convertibles", "loans", "preferreds"):
+        rows, references = [], []
+        role = family[:-1]
+        for entry in r[family]:
+            k = entry["key"]
+            row = [entry["name"], recorded(role+"_amount", k=k), recorded(role+("_dividend_rate" if family=="preferreds" else "_rate"), k=k)]
+            if family == "convertibles":
+                row += [shown(entry.get("conversion_price"), currency, "price",key=k+"_conversion"), recorded(role+"_maturity", k=k), yes(entry["holder_put"]),
+                        yes(entry["in_the_money"]), quotient(entry["shares_if_converted"], "shares",key=k+"_conversion",why=r["why"].get(k)), shown(entry["yearly_charge"], currency, "money",key=k)]
+            elif family == "loans":
+                row += [recorded(role+"_maturity", k=k), yes(entry["lender_may_sell"]), entry["terms_words"], shown(entry["yearly_charge"], currency, "money",key=k)]
+            else:
+                choice = force.get("opening_treatment", {}).get(k)
+                current = force.get("preferred_treatment", {}).get(k)
+                chosen = missing("preferred_value",rule["no_opening_why"]) if not choice else words["treatment_line_words"] % (
+                    treatment(choice["as_debt"]), force["chosen_by"], choice["why"])
+                changes = [words["changed_words"] % (treatment(ch["from"]), treatment(ch["to"]), ch["why"])
+                           for ch in force.get("preferred_changes", []) if ch["preferred"] == k]
+                row += [yes(entry["cumulative"]), entry["redemption_words"], shown(entry["yearly_charge"], currency, "money",key=k), "; ".join([chosen, *changes])]
+            rows.append(row)
+            references.append([fid for fid,tags in tagged.items() if any(tag[2] == k and tag[0].startswith(role+"_") for tag in tags)])
+        add(family, rows, references=references)
+    add("charges", [[words["heads"]["convertibles"][-1], shown(r["interest"],currency,"money")],
+        [words["heads"]["preferreds"][-2], shown(r["preferred_dividends"],currency,"money")],
+        [words["charges_table_lead"], shown(r["fixed_charges"],currency,"money")]], lead=words["charges_table_lead"])
+    rows = []
+    for period in r["periods"]:
+        p = period["period"]
+        gap = period.get("why")
+        quarter = reasons["quarter_end"]["words"]
+        count = period["coins_per_share"]
+        counted = shown(count["numerator"],coin_row["unit"],"amount") if count else missing(p,gap)
+        raw = facts.get(next(iter(ids("history_coins",largest["coin"],p=p)),None),{})
+        if count and gate._decimal_or_none(raw.get("value")) != count["numerator"]:
+            counted = words["history_count_words"] % (counted,recorded("history_coins",largest["coin"],p=p))
+        rows.append([_format_date(period["date"]), counted,
+            recorded("history_coin_price",largest["coin"],p=p,why=gap) if period["annual"] else quarter,
+            recorded("history_shares",p=p), recorded("history_price",p=p,why=gap) if period["annual"] else quarter,
+            quotient(period.get("value_per_share"),currency,"price",key=p+"_value_per_share",why=gap) if period["annual"] else quarter,
+            sign(period.get("premium"),key=p+"_premium",why=gap) if period["annual"] else quarter,
+            quotient(period["coins_per_share"],coin_row["unit"],"amount",key=p,why=gap)])
+    gaps = {}
+    def gap_note(text):
+        pattern = r"\d{4}-\d{2}-\d{2}"
+        dates = gaps.setdefault(re.sub(pattern,"{date}",str(text)), [])
+        dates.extend(day for day in re.findall(pattern,str(text)) if day not in dates)
+    for row in rows:
+        for column, value in enumerate(row):
+            if isinstance(value, Reason):
+                gap_note(value); row[column] = words["history_gap_cell_words"]
+    for text in r.get("history_gaps", []): gap_note(text)
+    notes = [text.replace("{date}",words["history_gap_date_joiner"].join(map(_format_date,dates))) for text,dates in gaps.items()]
+    add("history", rows, [history_line, *notes])
+    add("raises", [[entry["name"], words["instrument_words"][entry["instrument"]], shown(entry["proceeds"],currency,"money"),
+        quotient(entry["price_received"],currency,"price",key=entry["key"]+"_price",why=entry.get("why")),
+        sign(entry["premium"],reverse=True,key=entry["key"]+"_premium",why=entry.get("why")),
+        words["effect_words"].get(entry["effect"],missing(entry["key"]+"_premium",entry.get("why")))] for entry in r["raises"]])
+    name = lambda entry: entry.get("name") or words["unnamed_line_words"]
+    add("sales", [[name(entry),shown(entry["proceeds"],currency,"money"),entry.get("words") or ""] for entry in r["coin_sales"]])
+    add("lines", [[coin_name(entry["coin"]),words["line_kind_words"][entry["kind"]],
+        shown(entry["count"],subjects.admitted_coin(floors,entry["coin"])[1]["unit"],"amount"),
+        words["counted_words"]["counted" if entry["counted"] else "not_counted"],
+        (entry.get("words") or "") + ("; " + words["company_token_words"] if entry["kind"] in rule["line_kinds_not_counted"] else "")]
+        for entry in r["lines"]])
+    add("measures", [[name(entry), recorded("measure",k=entry["key"]),(entry.get("words") or "") + "; " + facts[entry["fact"]]["source"]] for entry in r["company_measures"]],
+        [words["warrants_words"]] if any(facts[entry["fact"]]["unit"] == "shares" for entry in r["company_measures"]) else [])
+    add("yardstick", [[words["fund_lead"],front["fund"]]], lead=words["fund_lead"])
+    uranium_tables(summary, definitions)
+    window = next((facts[fid] for fid in facts if fid == rule["swings"]["window_id"]), {})
+    days = gate._decimal_or_none(window.get("value"))
+    summary["bar_notes"] = [words["swings_words"] % (shown(days), words["short_history_suffix"]
+        if days is not None and days < rule["swings"]["full_window_days"] else "")]
+    used.update(tagged)
+    summary["facts"] = sorted(used)
+    summary["line_facts"] = [summary["facts"] for _ in summary["lines"]]
+    summary["figures"] = list(figures.values())
+    return summary
+
+
+def uranium_lines(summary):
+    """U8, U12: neutralise capture words exactly once at the Markdown printer."""
+    return [_safe(line, plain_amp=True) for line in summary["lines"]]
+
+
+def uranium_gap_words(capture, role_names=None):
+    """AC88(3)-(4), AC91, revised Q3: both ways use the expanded roles."""
+    floors = _floors()
+    row = subjects.holder_product(capture.get("subject") or {}, floors)
+    if row is None:
+        if sufficiency.uranium_producer_frame(floors, capture) is None:
+            return {}
+        rule = floors["archetype_measures"]["uranium_producer_rule"]
+        row = floors["asset_classes"]["commodity"]["products"][rule["product"]]
+        role_names = rule["producer_roles"]
+    words = (row.get("page_words") or {}).get("absent_item_words")
+    if not words:
+        return {}
+    result = dict(words["items"])
+    tagged = sufficiency._holder_product_roles({"capture": capture}, floors, role_names)
+    for fid, roles in tagged.items():
+        for role, template in words["roles"].items():
+            if role not in roles:
+                continue
+            context, fill = roles[role], {}
+            if "h" in context:
+                fill["holder"] = row["physical_holders"][context["h"]]["names"][0]
+            if "window" in context:
+                fill["window"] = context["window"]["words"]
+            if "p" in context:
+                fill["producer"] = row["rule"]["largest_producers"][context["p"]]["names"][0]
+            if "yyyy" in context:
+                fill["year"] = context["yyyy"]
+            if "end" in context:
+                fill["end"] = context["end"]
+            result[fid] = template.format(**fill)
+    return result
+
+
+def uranium_summary(pack):
+    """AC85-AC88, U2-U4: one display reading; pages do no measure arithmetic."""
+    from council.report.render_report import format_protocol_number, _money_parse
+    floors, capture = _floors(), pack["capture"]
+    subject = capture.get("subject") or {}
+    row = subjects.holder_product(subject, floors)
+    producer = sufficiency.uranium_producer_frame(floors, capture)
+    if row is None and producer is None:
+        return None
+    pr = floors["archetype_measures"]["uranium_producer_rule"]
+    if row is None:
+        row = floors["asset_classes"]["commodity"]["products"][pr["product"]]
+    words, rule = row["page_words"], row["rule"]
+    holders, roles, measures = row["physical_holders"], rule["roles"], rule["measures"]
+    way = "producer" if producer else "holder"
+    summary = dict(way=way, row=row, words=words, kind_line=row["kind_line_words"],
+                   front=[], lines=[], line_facts=[], tables=[], figures=[], facts=[])
+    if producer:
+        summary["kind_line"] = producer_kind_words(producer[1], lambda text: text)
+    reading = sufficiency.uranium_readings(pack, floors)
+    if reading is None:
+        summary["lines"] = ["- " + words["one_page_leads"]["kind"] + ": " + summary["kind_line"],
+                            words["readings_refusal_words"]]
+        summary["line_facts"] = [[], []]
+        return summary
+    facts = _facts_by_id(capture)
+    gaps = {g["fact_class"]: _one_line(g.get("reason")) for g in capture.get("gaps") or ()}
+    figures, used, definitions, front = {}, set(), [], {}
+    why = reading["why"]
+    percent_unit = floors["prose_figure_marks"]["percent_units"][0]
+    pound_unit = row["unit"]
+    price_currency = roles["holder_value"]["unit"]
+
+    def fid(role, **context):
+        spec = roles[role]
+        return (spec.get("id") or spec["id_pattern"]).format(daily=rule["daily_value_holder"], **context)
+
+    def remember(value, unit):
+        figures[(str(value), unit)] = dict(value=str(value), unit=unit)
+
+    def shown(value, unit=None, kind="number", currency=None, magnitude=False):
+        if value is None:
+            return words["figure_not_available_words"]
+        value = decimal.Decimal(str(value))
+        remember(value, unit)
+        if magnitude:
+            value = abs(value)
+            remember(value, unit)
+        display_unit, scaled = unit, False
+        if unit in rule["unit_scales_lb"]:
+            value *= decimal.Decimal(rule["unit_scales_lb"][unit])
+            remember(value, pound_unit)
+            display_unit, kind, scaled = words["unit_words"][pound_unit], "amount", True
+        elif unit == rule["tonnes_to_pounds"]["from_unit"]:
+            display_unit, kind = words["unit_words"][unit], "amount"
+        result = format_protocol_number(str(value), kind, unit=display_unit,
+            currency=currency, scaled=scaled, words=words["figure_not_available_words"])
+        return result
+
+    def price(value):
+        return words["per_pound_words"] % shown(value, row["price_unit"], "price", price_currency)
+
+    def pct(value, magnitude=False):
+        return shown(value, percent_unit, "share", magnitude=magnitude)
+
+    def recorded(identifier):
+        f = facts.get(identifier)
+        if f is None:
+            return why.get(identifier, gaps.get(identifier, words["figure_not_available_words"]))
+        used.add(identifier)
+        number = gate._decimal_or_none(f.get("value"))
+        if number is None:
+            return _one_line(f.get("value"))
+        unit = f.get("unit")
+        if unit in {roles[role]["unit"] for role in ("reactors_operating_count", "reactors_construction_count")}:
+            return shown(number)
+        if unit == row["price_unit"]:
+            return price(number)
+        if unit.endswith("_per_share"):
+            return shown(number, unit, "price", unit.split("_")[0])
+        money = _money_parse(unit)
+        if money and not money[2]:
+            return shown(number * money[1], unit.split("_")[0], "money", unit.split("_")[0])
+        return shown(number, unit, "share" if unit in floors["prose_figure_marks"]["percent_units"] else "number")
+
+    def date_of(identifier):
+        return _format_date(facts.get(identifier, {}).get("as_of"))
+
+    def name(identifier):
+        return _one_line(facts.get(identifier, {}).get("label") or _words_of_id(identifier))
+
+    def add(key, rows, below=(), row_facts=None, below_facts=None, heads=None, columns=None):
+        definitions.append(((heads or words["heads"])[key], (columns or words["columns"])[key],
+            rows, list(below), row_facts or [[] for _ in rows], below_facts or [[] for _ in below]))
+
+    def fact_row(identifier, label=None):
+        f = facts.get(identifier, {})
+        return [label or name(identifier), recorded(identifier), date_of(identifier), _one_line(f.get("source"))]
+
+    def discount(ratio):
+        if ratio is None:
+            return why.get("discount_today", words["figure_not_available_words"])
+        value = ratio["percent"]
+        sign = "discount" if value > 0 else "premium" if value < 0 else "level"
+        text = measures["discount_sign_words"][sign]
+        return text if not value else text + ", " + pct(value, True)
+
+    # AC86(1)-(2), AC88(1): the daily proxy, its operands, and the checked pair.
+    price_ids = [fid("spot_proxy"), *[s.format(daily=rule["daily_value_holder"])
+                 for s in roles["spot_proxy"]["operands"]], fid("spot_check"),
+                 fid("spot_month_end"), fid("term_month_end")]
+    line_inputs = dict(kind=[], lifted=[], prices=[fid(role) for role in
+        ("spot_proxy", "spot_check", "spot_month_end", "term_month_end")])
+    price_labels = ["daily", "operand_value", "operand_pounds", "cross_check", "month_end_spot", "month_end_term"]
+    rows = [fact_row(identifier, words["labels"][label]) for identifier, label in zip(price_ids, price_labels)]
+    pair = reading["spot_term"]
+    gap_text = why.get("spot_term", words["readings_refusal_words"])
+    if pair is not None:
+        gap_text = pair["sign"]
+        if pair["gap"]:
+            gap_text = words["prices_words"].rsplit(";", 1)[-1].strip() % (
+                pair["sign"], price(abs(pair["gap"])), pct(pair["gap_percent_of_spot"], True))
+            remember(pair["gap"], row["price_unit"])
+        rows.append([words["labels"]["gap"], gap_text, _format_date(pair["as_of"]), words["calculated_tag_words"]])
+        front["prices"] = words["prices_words"] % (recorded(price_ids[0]), date_of(price_ids[0]),
+            words["daily_source_words"] % holders[rule["daily_value_holder"]]["names"][0],
+            price(pair["spot"]), price(pair["term"]), _format_date(pair["as_of"]),
+            words["month_end_source_words"], pair["sign"], price(abs(pair["gap"])), pct(pair["gap_percent_of_spot"], True))
+        if not pair["gap"]:
+            front["prices"] = front["prices"].rsplit(";", 1)[0] + "; " + pair["sign"] + "."
+    else:
+        front["prices"] = gap_text
+    remember(rule["cross_check_tolerance_percent"], percent_unit)
+    add("prices", rows, [words["cross_check_words"] % shown(rule["cross_check_tolerance_percent"])],
+        [[identifier] for identifier in price_ids] + ([price_ids[-2:]] if pair else []), [price_ids[:4]])
+
+    # AC86(4): histories and totals are the helper's; dates are selected, not calculated.
+    buying = reading["buying"]
+    holder_rows, holder_ids, starts, missing_starts = [], [], [], []
+    for h in buying["holders"]:
+        now_id = fid("pounds_now", h=h["key"])
+        start = min([w["start_as_of"] for w in h["windows"] if w["start_as_of"]] or [facts[now_id]["as_of"]])
+        starts.append(start)
+        if h["windows"][-1]["gap"]:
+            missing_starts.append(start)
+        cells = []
+        ids = [now_id]
+        for window in h["windows"]:
+            start_id = fid("pounds_start", h=h["key"], point=window["point"])
+            ids.append(start_id)
+            cells.append(words["window_gap_words"] % _format_date(start) + "; " + window["gap"] if window["gap"] else
+                why.get(now_id, why.get(start_id, words["readings_refusal_words"])) if window["change"] is None else
+                shown(window["change"], pound_unit) + ", " + pct(window["change_percent"]) + " " + words["calculated_tag_words"])
+        holder_rows.append([holders[h["key"]]["names"][0], shown(h["now"], pound_unit), date_of(now_id), *cells])
+        holder_ids.append(ids)
+        used.update(i for i in ids if i in facts)
+    below = [words["labels"]["total"] + " - " + t["words"] + ": " +
+        (shown(t["change"], pound_unit) if t["change"] is not None else measures["no_total_words"]) for t in buying["totals"]]
+    dominant = buying["dominant"]
+    if dominant:
+        remember(measures["dominance_percent"], percent_unit)
+    dominance = (words["dominant_words"] % (holders[dominant]["names"][0], shown(measures["dominance_percent"])) if dominant else "")
+    if dominance:
+        below.append(dominance)
+    ratio, total = reading["supply_ratio"], buying["totals"][-1]["change"]
+    if total is None:
+        buying_text = words["no_history_words"] % (measures["no_total_words"], _format_date(min(missing_starts or starts)))
+    elif ratio is None:
+        buying_text = why["supply_ratio"]
+    else:
+        buying_text = words["holders_buying_words"] % (shown(total, pound_unit), pct(ratio["low_percent"]),
+            pct(ratio["high_percent"]), ratio["supply_words"], ratio["calculated_words"])
+    below.append(buying_text)
+    front["holders_buying"] = buying_text + (" " + dominance if dominance else "")
+    all_holder_ids = [i for ids in holder_ids for i in ids]
+    year = int(capture["captured_at"][:4])
+    line_inputs["buying"] = ([i for ids in holder_ids for i in (ids[0], ids[-1])] +
+        [fid("guidance", p=p, yyyy=year, end=end) for p in rule["largest_producers"]
+         for end in roles["guidance"]["ends"]])
+    add("holders", holder_rows, below, holder_ids, [all_holder_ids for _ in below])
+
+    vehicle = reading["holder"]
+    if vehicle is not None:
+        h = vehicle["key"]
+        vehicle_ids = [fid(role, h=h) for role in ("nav", "holder_price", "costs", "pounds_now")]
+        vehicle_rows = [[words["labels"][label], recorded(i), date_of(i)] for label, i in zip(("nav", "price", "costs", "pounds_now"), vehicle_ids)]
+        vehicle_rows.insert(2, [words["labels"]["discount"], discount(vehicle["discount_today"]), date_of(vehicle_ids[1])])
+        add("vehicle", vehicle_rows, row_facts=[[vehicle_ids[0]], [vehicle_ids[1]], vehicle_ids[:2], [vehicle_ids[2]], [vehicle_ids[3]]])
+        history = vehicle["history"]
+        history_rows = [[date_of(entry["nav_fact"]), recorded(entry["nav_fact"]), recorded(entry["price_fact"]), discount(entry["discount"])] for entry in history]
+        keep = floors["archetype_measures"]["holding_rule"]["history_year_ends"]
+        years = words["years_words"]["all"] if len(history) == keep else words["years_words"]["fewer"] % HOLDING_COUNT_WORDS[len(history)]
+        range_text = (words["range_words"][vehicle["range_word"]] % years if vehicle["range_word"] else why.get("history", words["figure_not_available_words"]))
+        average = discount(vehicle["history_average"])
+        history_below = [words["labels"]["average"] + " " + average + " " + words["calculated_tag_words"], range_text]
+        if len(history) < keep:
+            history_below += [g["reason"] for g in capture.get("gaps") or () if g["fact_class"].startswith(roles["history_nav"]["prefix"])]
+        history_ids = [[e["nav_fact"], e["price_fact"]] for e in history]
+        line_inputs["holder"] = vehicle_ids[:2] + [i for ids in history_ids for i in ids]
+        add("year_ends", history_rows, history_below, history_ids, [[i for ids in history_ids for i in ids] for _ in history_below])
+        front["holder_discount"] = words["holder_words"] % (holders[h]["names"][0], recorded(vehicle_ids[1]), recorded(vehicle_ids[0]),
+            date_of(vehicle_ids[0]), discount(vehicle["discount_today"]).split(", ", 1)[0],
+            pct(vehicle["discount_today"]["percent"], True) if vehicle["discount_today"] else why["discount_today"], range_text, average)
+        if vehicle["discount_today"] and not vehicle["discount_today"]["percent"]:
+            front["holder_discount"] = front["holder_discount"].replace(", " + pct(0) + " " + words["calculated_tag_words"], "")
+
+    market_ids = [spec["id"] for role, spec in roles.items() if role.startswith("reactors_")]
+    market_ids += [i for i in facts if i.startswith(roles["guidance"]["prefix"])]
+    market_ids += [fid(r) for r in ("uncontracted_us", "uncontracted_global") if fid(r) in facts]
+    market_rows = [fact_row(i) for i in market_ids]
+    global_id = fid("uncontracted_global")
+    if global_id in market_ids:
+        f = facts[global_id]
+        market_rows[market_ids.index(global_id)][3] += "; " + words["paid_publisher_label_words"] % (f["source"], date_of(global_id))
+    gap_words = uranium_gap_words(capture)
+    market_gaps = [words["labels"]["next_year_gap"] + ": " + rule["next_year_gap_words"] + "; " + gap_words.get(k, k) + ": " + v
+                   for k, v in gaps.items() if k.startswith(roles["guidance"]["prefix"])]
+    add("market", market_rows, market_gaps, [[i] for i in market_ids])
+    background_ids = [f["id"] for f in capture.get("tier1") or () if any(f["id"].startswith(a["prefix"]) for a in row["anchors"]
+                      if a.get("prefix", "").startswith("background_"))]
+    add("background", [fact_row(i, name(i) + " - " + words["background_words"]) for i in background_ids],
+        [words["unverified_words"]], [[i] for i in background_ids])
+    if vehicle is not None:
+        add("lifted", [[words["lifted_names"][i], reason] for i, reason in row["class_anchors_lifted"].items()], [words["absent_by_design_words"]])
+        swings = reading["swings"]
+        if swings:
+            notes = []
+            if swings["window_days"] < rule["swings"]["full_window_days"]:
+                notes.append(words["short_history_words"] % shown(swings["window_days"]))
+            if swings["series_holder"] != vehicle["key"]:
+                front["swings_series"] = words["swings_series_words"] % (holders[vehicle["key"]]["names"][0],
+                    words["frequency_words"][holders[vehicle["key"]]["nav_frequency"]], holders[swings["series_holder"]]["names"][0])
+                notes.append(front["swings_series"])
+            summary["bar_notes"] = notes
+            add("swings", [[words["labels"][k], shown(swings[k])] for k in ("history_days", "window_days")] +
+                [[words["labels"]["series"], holders[swings["series_holder"]]["names"][0]]], notes,
+                [[fid("history")], [fid("window")], []], [[fid("history"), fid("window")] for _ in notes])
+
+    if producer:
+        frame = producer[1]
+        resource = producer_readings(pack)
+        tagged = sufficiency.producer_role_set(pack, floors)
+        pw, p = pr["page_words"], reading["producer"]
+        cash_cell = producer_cash_multiple(pack, frame, resource)
+        if cash_cell["kind"] == "calc":
+            remember(cash_cell["value"], cash_cell["unit"])
+        if p:
+            numerator, _ = _producer_roles(capture, frame)
+            money = _money_parse(facts[numerator]["unit"])
+            value = p["value_per_pound"]
+            if value is not None:
+                remember(value, facts[numerator]["unit"])
+                value *= money[1] if money else 1
+            front["yardstick"] = words["yardstick_words"] % (shown(value, price_currency, "price", price_currency)
+                if value is not None else why["value_per_pound"], price(p["reserve_price"]) if p["reserve_price"] is not None else why["reserve_price"],
+                price(p["today_term"]) if p["today_term"] is not None else why["today_term"],
+                price(p["today_spot"]), cell_text(cash_cell), price(p["received"]), price(p["received_spot_average"]), price(p["received_term_average"]))
+            if p["below_reserve_price"]:
+                front["reserve_price"] = RESERVE_PRICE_SENTENCE
+        def members(role):
+            return [i for i, rs in tagged.items() if pr["product"] + ":" + role in rs]
+        reserves = producer_reserve_rows(pack, frame)
+        reserves["head"][-1] = words["reserves_term_head"]
+        reserves["head"].append(words["reserves_spot_head"])
+        reserve_rows, reserve_ids = [], []
+        for cells in reserves["rows"]:
+            ids = [c["id"] for c in cells if c["kind"] == "fact"]
+            texts = [recorded(c["id"]) if c["kind"] == "fact" else cell_text(c) for c in cells]
+            texts.append("" if cells[0].get("note") else price(p["today_spot"]) if p else why.get("today_spot", words["readings_refusal_words"]))
+            reserve_rows.append(texts)
+            reserve_ids.append(ids + [fid("spot_proxy")])
+        definitions.append((PRODUCER_LEADS[0], reserves["head"], reserve_rows, [], reserve_ids, []))
+        def ptable(key, rows, below=(), row_facts=None, below_facts=None):
+            add(key, rows, below, row_facts, below_facts, pw["heads"], pw["columns"])
+        bought = members("bought")
+        ptable("bought", [[i[len(pr["bought_prefix"]):], recorded(pr["bought_companion_prefix"] + i[len(pr["bought_prefix"]):]), recorded(i)] for i in bought],
+            [pw["bought_words"], *[v for k, v in gaps.items() if k == pr["bought_prefix"]]],
+            [[i, pr["bought_companion_prefix"] + i[len(pr["bought_prefix"]):]] for i in bought])
+        segments = members("segment")
+        ptable("segment", [[name(i), recorded(i)] for i in segments],
+            [pw["segment_not_valued_sentence"].format(segment=name(i), value=recorded(i)) for i in segments] +
+            [v for k, v in gaps.items() if k == pr["segment_prefix"]], [[i] for i in segments], [[i] for i in segments] + [[] for k in gaps if k == pr["segment_prefix"]])
+        book = (p or {}).get("contract_book") or {}
+        ids, share, shape = book.get("fact_ids", []), book.get("share_fact_id"), book.get("shape")
+        book_rows, book_ids = [], []
+        shape_words = pw["not_published_words"]
+        for i in ids:
+            period = i.removeprefix(next((pr["contract_book"][s + "_prefix"] for s in ("per_year", "average", "total") if i.startswith(pr["contract_book"][s + "_prefix"])), i))
+            ends = period.split("_")
+            statement = pw["contract_book_words"].get(shape, pw["not_published_words"]).format(first=ends[0], last=ends[-1])
+            if shape != "not_published":
+                shape_words = statement
+            book_rows.append([period, recorded(i) if shape != "not_published" else "", statement + (": " + recorded(i) if shape == "not_published" else "")])
+            book_ids.append([i])
+        if share:
+            period = share[len(pr["contract_book"]["share_prefix"]):].split("_")
+            contract_text = words["contract_words"]["share"] % (recorded(share), period[0], period[-1])
+            book_rows.append([" - ".join(period), "", contract_text])
+            book_ids.append([share])
+        else:
+            contract_text = words["contract_words"]["none"] % pw["not_published_words"] if shape == "not_published" else words["contract_words"]["shape"] % (shape_words, measures["not_published_share_words"])
+        pricing_id = pr["contract_book"]["pricing_id"]
+        pricing = pw["pricing_lead_words"] + " " + recorded(pricing_id) if pricing_id in facts else gaps.get(pricing_id, pw["pricing_gap_words"])
+        ptable("contract_book", book_rows, [pricing], book_ids, [[pricing_id] if pricing_id in facts else []])
+        received_ids = list(pr["price_received_beside"].values())
+        ptable("price_received", [[name(received_ids[0]), *[recorded(i) for i in received_ids], "; ".join(date_of(i) for i in received_ids)]], row_facts=[received_ids])
+        mines = members("mine_country")
+        mine_name = lambda i: _one_line(facts[i].get("label") or _words_of_id(i[len(pr["mine_country_prefix"]):]))
+        ptable("mines", [[mine_name(i), recorded(i)] for i in mines], row_facts=[[i] for i in mines])
+        front["contract_book"] = contract_text + " " + words["countries_words"] % "; ".join(words["mine_country_words"] % (mine_name(i), recorded(i)) for i in mines)
+        line_inputs["contract"] = ids + ([share] if share else []) + mines
+        tonnes_rows, tonnes_ids = [], []
+        for original in members("tonnes"):
+            converted = [i for i in tagged if any(o.get("fact_id") == original for o in (facts[i].get("derived") or {}).get("operands", []))]
+            for i in converted:
+                tonnes_rows.append([name(i), recorded(i), pw["tonnes_beside_words"].format(tonnes=shown(facts[original]["value"])),
+                    shown(rule["tonnes_to_pounds"]["factor"]) + " " + words["unit_words"][pound_unit] + " / " + words["unit_words"][rule["tonnes_to_pounds"]["from_unit"]]])
+                tonnes_ids.append([i, original])
+                used.add(original)
+        ptable("tonnes", tonnes_rows, row_facts=tonnes_ids)
+        peer_rows, peer_ids = [], []
+        for i in members("peer_product"):
+            product = facts[i]["value"]
+            if product in pr["outside_peer_products"]:
+                slug = i.rsplit("__", 1)[-1]
+                peer = next(peer for peer in frame["peers"] if peer["ticker"].lower() == slug)
+                peer_rows.append([peer["ticker"], product, pw["outside_peer_words"].format(product=product) + "; " + _one_line(peer["comparable_because"]), words["not_comparable_words"]])
+                peer_ids.append([i])
+        if peer_rows:
+            ptable("peers", peer_rows, row_facts=peer_ids)
+
+    uranium_tables(summary, definitions)
+    summary["front"] = [(key, front[key]) for key in words["front_order"][way] if key in front]
+    leads = words["one_page_leads"]
+    entries = [("kind", summary["kind_line"]), ("prices", front["prices"])]
+    if "holder_discount" in front:
+        entries.append(("holder", front["holder_discount"]))
+    entries.append(("buying", front["holders_buying"]))
+    if "contract_book" in front:
+        entries.append(("contract", front["contract_book"]))
+    if vehicle:
+        entries.append(("lifted", words["lifted_line_words"] % ", ".join(words["lifted_names"][i] for i in row["class_anchors_lifted"])))
+    summary["facts"] = sorted(used | {i for definition in definitions for ids in definition[-2:] for group in ids for i in group if i in facts})
+    summary["lines"] = ["- " + leads[key] + ": " + _one_line(text) for key, text in entries]
+    summary["line_facts"] = [sorted(set(line_inputs[key]) & set(summary["facts"])) for key, _ in entries]
+    summary["figures"] = list(figures.values())
+    return summary
+
+
+def protocol_summary(pack, in_force=None):
+    """AC79-AC81, PG1: one display reading, with every printed figure."""
+    from council.engine import protocol_chair
+    from council.report.render_report import format_protocol_number
+    floors = _floors()
+    capture = pack.get("capture", {})
+    token = subjects.protocol_token(capture.get("subject") or {}, floors)
+    if token is None:
+        return None
+    registry = floors["asset_classes"]["crypto"]
+    row, rule = registry["protocols"][token], registry["protocol_rule"]
+    words = rule["page_words"]
+    labels, heads, columns = words["labels"], words["heads"], words["columns"]
+    supply = sufficiency.protocol_supply_readings(pack, floors)
+    value = sufficiency.protocol_value_readings(pack, floors, in_force)
+    range_read = protocol_chair.declared_range(pack, floors, in_force)
+    comparison = (sufficiency.protocol_derate_comparison(pack, floors, in_force["derate_case"])
+                  if in_force else None)
+    summary = dict(token=token, row=row, rule=rule, supply=supply, value=value,
+                   range=range_read, comparison=comparison, in_force=in_force,
+                   figures=[], facts=[], lines=[], line_facts=[], tables=[], declaration=[])
+    figures = {}
+
+    def shown(number, unit=None, calculated=True, kind=None):
+        if number is None:
+            return rule["derate_gap_words"]
+        exact = str(number)
+        figures[(exact, unit)] = {"value": exact, "unit": unit}
+        if kind is None:
+            kind = ("share" if unit == "percent" else "amount" if unit == row["unit"] else
+                    "money" if unit == "USD" else "number")
+        return format_protocol_number(exact, kind, unit=unit,
+            currency=capture["subject"].get("currency"), words=words["figure_not_available_words"]) + (
+            " (calculated)" if calculated else "")
+
+    def money(number, calculated=True):
+        return shown(number, "USD", calculated)
+
+    def price(number, calculated=True):
+        return shown(number, "USD", calculated, kind="price")
+
+    def amount(number, calculated=True):
+        return shown(number, row["unit"], calculated)
+
+    def percent(number):
+        return shown(number, "percent")
+
+    def line(text, ids=()):
+        summary["lines"].append(text)
+        summary["line_facts"].append(sorted(set(ids) & set(summary["facts"])))
+
+    def table(lead, head, rows, below=(), row_facts=(), below_facts=()):
+        summary["tables"].append((lead, dict(head=head,
+            rows=[[dict(_words(cell), plain_amp=True) for cell in cells] for cells in rows],
+            below=[[dict(_words(text), plain_amp=True)] for text in below],
+            row_facts=list(row_facts) or [[] for _ in rows],
+            below_facts=list(below_facts) or [[] for _ in below])))
+
+    named_members = {member for reading in (value or {}).get("methods", {}).values()
+                     for member in reading.get("members", ())}
+
+    def record_text(item, key="", calculated=False, kind=None):
+        # Print the comparison as recorded, including dates, kind and source.
+        if item is None:
+            return rule["derate_gap_words"]
+        if isinstance(item, dict):
+            # Record ids are metadata; their supplied description names the row.
+            return "; ".join(("" if key == "shape" and k == "word" else
+                (_words_of_id(k) if k in named_members else labels["reason" if k == "why" else k]) + ": ") +
+                record_text(v, k, calculated, "price" if k == "level" and item.get("measure") == "price" else None)
+                for k, v in item.items()
+                if k != "id" and not (k == "gap" and v is None))
+        if isinstance(item, list):
+            return "; ".join(record_text(v, key, calculated) for v in item) or rule["derate_gap_words"]
+        if isinstance(item, bool):
+            return (rule["method_standing_words" if item else "method_not_standing_words"]
+                    if key == "used" else words["boolean_words"]["true" if item else "false"])
+        if isinstance(item, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", item):
+            return _format_date(item)
+        number = gate._decimal_or_none(str(item))
+        if number is not None:
+            unit = ("percent" if "percent" in key else "USD" if "usd" in key or key in ("low", "base", "high", "peak", "trough", "level")
+                    else row["unit"] if key == "amount" else None)
+            return shown(number, unit, calculated, kind=kind)
+        if key == "word":
+            return rule["derate_shapes"][item]
+        if key == "kind" or key.endswith("_kind"):
+            return words["kind_words"][item]
+        if key == "place":
+            return words["place_words"][item]
+        if key in ("numerator", "denominator", "measure"):
+            return labels[item]
+        return _one_line(item)
+
+    declaration = summary["declaration"]
+    summary["kind_line"] = row["report_words"] + " — " + (
+        rule["scenarios_only_words"] if value and value["scenarios_only"] else rule["kind_line_words"])
+    summary["case_basis"], summary["short_history_line"] = None, None
+    line("- " + rule["front_lead"] + ": " + summary["kind_line"])
+    declaration.extend([rule["declaration_heading"], "", rule["pause_words"], ""])
+    if supply is None or value is None or range_read is None or (in_force and comparison is None):
+        for text in (rule["readings_refusal"], rule["declaration_pointer_words"], rule["absent_sentence"]):
+            line("- " + text)
+        declaration.append(rule["readings_refusal"])
+        if in_force is None:
+            declaration.append(rule["opening_missing_refusal"])
+        return summary
+    summary["facts"] = sorted(set(supply["facts"].values()) | set(value["facts"]))
+    facts = _facts_by_id(capture)
+    if comparison and rule["comparison_volume"]["id"] in facts:
+        summary["facts"].append(rule["comparison_volume"]["id"])
+
+    def role_ids(*roles):
+        return sorted(fid for fid, tags in value["facts"].items() if set(roles) & set(tags))
+
+    def member_ids(member, business_line=None, history=False):
+        suffix = (business_line + "__" if business_line else "") + member
+        prefixes = (rule["history_prefixes"].values() if history else
+                    [rule["comparable_prefix"] + metric + "__" for metric in rule["comparable_metrics"]])
+        return [fid for fid in summary["facts"] if any(fid == p + suffix for p in prefixes)]
+
+    unverified = []
+    source_rows = []
+    source_ids = []
+    for role, number in (("price", supply["price"]), ("supply", supply["circulating"])):
+        fid = supply["facts"][role]
+        fact = facts[fid]
+        check = row[role + "_cross_check"]
+        check_fact = facts.get(supply["facts"].get(role + "_check"))
+        label = ((price(check_fact["value"], False) if role == "price" else amount(check_fact["value"], False))
+                 + "; " + _one_line(check_fact["source"]) + "; " + _format_date(check_fact["as_of"]) if check
+                 else rule["single_source_words"])
+        text = (price(number, False) if role == "price" else amount(number, False))
+        source_rows.append([labels[role], text, _one_line(fact["source"]), _format_date(fact["as_of"]), label])
+        source_ids.append(role_ids(role, role + "_check"))
+        if not check:
+            unverified.append(labels[role] + ": " + label)
+    price_line = "; ".join(" — ".join(r) for r in source_rows)
+    line("- " + rule["price_lead"] + ": " + price_line +
+         "; " + labels["market_value"] + " " + money(value["market_value"]),
+         role_ids("price", "price_check", "supply", "supply_check"))
+    if supply["supply_beside"] is not None:
+        beside = supply["supply_beside"]
+        text = rule["supply_beside_words"] + ": " + amount(beside["value"], False) + "; " + percent(beside["gap_percent"])
+        source_rows.append([rule["supply_beside_words"], amount(beside["value"], False),
+                            _one_line(facts[supply["facts"]["supply_protocol"]]["source"]),
+                            _format_date(facts[supply["facts"]["supply_protocol"]]["as_of"]), percent(beside["gap_percent"])])
+        source_ids.append(role_ids("supply", "supply_protocol"))
+        unverified.append(text)
+    fee_rows = []
+    fee_ids, fee_gaps, fee_gap_ids = [], [], []
+    for name, fees in value["fees"].items():
+        roles = {"users": ("fees_30d", "fees_90d"), "revenue": ("revenue_30d", "revenue_90d"),
+                 "holders": ("holders_30d", "holders_90d")}[name]
+        fee_rows.append([labels[name]] + [money(fees[k], k not in ("d30", "d90"))
+            for k in ("d30", "d90", "annual", "annual_30d")] +
+            [percent(value["holders_share_percent"]) if name == "holders" else ""])
+        fee_ids.append(role_ids(*roles, *("fees_90d",) if name == "holders" else ()))
+        fee_gaps.append(labels[name] + " — " + words["annualised_gap_words"] % percent(fees["gap_percent"]))
+        fee_gap_ids.append(role_ids(*roles))
+    routes = []
+    for route, fees in value["routes"].items():
+        route_words = rule["holders_fee_routes"][route]
+        fee_rows.append([route_words, money(fees["d30"], False), money(fees["d90"], False), "", "", percent(fees["share_percent"])])
+        fee_ids.append([rule["route_roles"][w]["prefix"] + route for w in rule["route_roles"]] + role_ids("fees_90d"))
+        routes.append(route_words + ": " + percent(fees["share_percent"]))
+    if any(v is not None for v in value["resellable"].values()):
+        fee_rows.append([rule["resellable_words"], *[money(value["resellable"][k], False) for k in ("d30", "d90")], "", "", ""])
+        fee_ids.append(role_ids("resellable_30d", "resellable_90d"))
+    for window, reading in value["second_source"].items():
+        label = "; ".join(rule["second_fee_source_words"]) + " " + words["window_words"][window]
+        flag = rule["fee_sources_disagree_words"] if reading["fee_sources_disagree"] else ""
+        fee_rows.append([label, money(reading["value"], False) if window == "d30" else "",
+                         money(reading["value"], False) if window == "d90" else "", "", "", ""])
+        ids = role_ids("second_" + window[1:], "fees_" + window[1:])
+        fee_ids.append(role_ids("second_" + window[1:]))
+        fee_gaps.append(label + " — " + words["second_source_gap_words"] % percent(reading["gap_percent"]) + " " + flag)
+        fee_gap_ids.append(ids)
+        if flag:
+            unverified.append(label + ": " + flag + "; " + percent(reading["gap_percent"]))
+    fees_line = (rule["scenarios_only_words"] if value["scenarios_only"] else
+                 percent(value["holders_share_percent"]) + "; " + "; ".join(routes))
+    line("- " + rule["fees_lead"] + ": " + fees_line, role_ids("holders_90d", "fees_90d", "route_90d"))
+    table(heads["fees"], columns["fees"], fee_rows,
+          [rule["fee_basis_words"], "; ".join(rule["fee_source_words"]), *fee_gaps],
+          fee_ids, [[], [], *fee_gap_ids])
+    supply_rows = []
+    for window in supply["windows"]:
+        received = "; ".join(_one_line(group) + ": " + amount(n) for group, n in window["gross_by_group"].items())
+        supply_rows.append([window["words"], amount(window["gross"]), percent(window["gross_percent"]),
+            amount(window["offsets"]), percent(window["offsets_percent"]), amount(window["net"]), percent(window["net_percent"]), received])
+        line("- " + rule["supply_lead"] + " " + words["over_words"] + " " + window["words"] + ": " +
+             amount(window["net"]) + "; " + percent(window["net_percent"]), role_ids("supply"))
+    daily = supply["daily"]
+    daily_line = "; ".join(labels[k] + ": " +
+        (percent(n) if k.endswith("percent") else money(n) if k.endswith("usd") else amount(n))
+        for k, n in daily.items()) + "; " + rule["turnover_label_words"]
+    turnover = facts[supply["facts"]["turnover"]]
+    daily_line += "; " + shown(turnover["value"], turnover["unit"], False)
+    daily_ids = role_ids("price", "turnover", "turnover_operand")
+    line("- " + rule["supply_lead"] + " " + words["daily_words"] + ": " + daily_line, daily_ids)
+    below = [daily_line, record_text(supply["offsets_gap"])] if supply.get("offsets_gap") else [daily_line]
+    table(heads["supply"], columns["supply"], supply_rows, below,
+          [role_ids("supply") for _ in supply_rows], [daily_ids, *[[] for _ in below[1:]]])
+    schedule_rows = []
+    for tranche in supply["tranches"]:
+        label = rule["aggregator_label_words"] if tranche["dated_by"] == "aggregator" else words["release_words"][tranche["dated_by"]]
+        schedule_rows.append([_format_date(tranche["date"]), _format_date(tranche["end_date"]) if tranche["end_date"] else "",
+            amount(tranche["amount"], False), _one_line(tranche["receiving_group"]), words["release_words"][tranche["release"]],
+            percent(tranche["share_percent"]), amount(tranche["in_twelve_months"]), label,
+            _one_line(tranche["source"]), _one_line(tranche["rule_source"] or ""), _format_date(tranche["as_of"])])
+        if tranche["dated_by"] == "aggregator":
+            unverified.append(_format_date(tranche["date"]) + ": " + label)
+    table(heads["schedule"], columns["schedule"] + rule["schedule_provenance_heads"], schedule_rows, row_facts=[role_ids("supply") for _ in schedule_rows])
+    table(heads["locked"], columns["locked"], [[_one_line(g["group"]), amount(g["amount"], False), percent(g["share_percent"])]
+          for g in supply["locked"]["groups"]], [labels["total"] + ": " + amount(supply["locked"]["total"], False)])
+    table(heads["sources"], columns["sources"], source_rows, row_facts=source_ids)
+    methods = []
+    comparable_rows = []
+    comparable_ids = []
+    for method, reading in value["methods"].items():
+        name = rule["method_words"][method]
+        text = name + ": " + rule["method_standing_words" if reading["used"] else "method_not_standing_words"]
+        if not reading["used"]:
+            text += " — " + reading["why"]
+        else:
+            levels = [k for k in ("low", "base", "high") if reading[k] is not None]
+            text += "; " + labels["market_value"] + " " + " / ".join(labels[k] for k in levels) + ": " + " / ".join(money(reading[k]) for k in levels)
+            for per in ("per_token", "per_token_twelve_months"):
+                text += "; " + labels[per] + ": " + " / ".join(price(reading[per][k]) for k in levels)
+            text += "; " + words["place_words"][reading["place"]] + "; " + labels["market_value_against_base_percent"] + " " + percent(reading["market_value_against_base_percent"])
+            text += "; " + labels["fully_diluted_value_against_base_percent"] + " " + percent(reading["fully_diluted_value_against_base_percent"])
+            for member in reading.get("members", []):
+                multiple = reading.get("multiples", {}).get(member) if isinstance(member, str) else None
+                comparable_rows.append([record_text(member), shown(multiple, "multiple") if multiple is not None else name, rule["method_standing_words"]])
+                comparable_ids.append(member_ids(member, history="today_multiple" in reading) if "parts" not in reading else
+                                      [rule["line_prefix"] + member])
+            if method == "comparables":
+                comparable_rows.append([rule["multiples_range_words"], " / ".join(
+                    shown(reading["multiples_range"][k], "multiple") for k in ("low", "median", "high")),
+                    rule["method_standing_words"]])
+                comparable_ids.append([])
+            if "parts" in reading:
+                text += "; " + record_text(reading["parts"], calculated=True)
+        if method not in rule["opening"]["range_methods"]:
+            text += "; " + rule["discounted_beside_words"]
+        methods.append(text)
+    summary["method_lines"] = methods
+    declaration.extend(methods + [""])
+    changes = (in_force or {}).get("opening_changes", [])
+    method = (in_force or {}).get("range_method", rule["opening"]["no_method"])
+    method_change = next((c for c in reversed(changes) if c["variable"] == "range_method"), None)
+    range_line = (rule["range_method_none_words"] if method == rule["opening"]["no_method"] else
+                  rule["range_method_named_words"] % (rule["method_words"][method], _one_line(method_change["why"]))
+                  if method_change else rule["range_method_opening_line_words"] % (
+                      rule["method_words"][method], words["range_method_opening_words"]))
+    summary["range_line"] = range_line
+    declaration.append(range_line)
+    for excluded in value["excluded"]:
+        comparable_rows.append([_one_line(excluded["slug"]), _one_line(excluded.get("line") or ""), excluded["why"]])
+        comparable_ids.append(member_ids(excluded["slug"], excluded.get("line")))
+        unverified.append(_one_line(excluded["slug"]) + ": " + excluded["why"])
+    for reference in value["references"]:
+        comparable_rows.append([_one_line(reference["slug"]), record_text(reference["measures"]), rule["exclusions"]["listed_reference"]])
+        comparable_ids.append([fid for fid in summary["facts"] if "reference" in value["facts"].get(fid, ())
+                               and fid.endswith("__" + reference["slug"])])
+    table(heads["peers"], columns["peers"], comparable_rows, row_facts=comparable_ids)
+    declaration += ["", heads["peers"], *[" — ".join(r) for r in comparable_rows], ""]
+    if in_force is None:
+        case_line = claim_line = rule["opening_missing_refusal"]
+    else:
+        case = in_force["derate_case"]
+        entry = rule["derate_cases"][case]
+        case_change = next((c for c in reversed(changes) if c["variable"] == "derate_case"), None)
+        basis = (rule["derate_basis_words"]["owner_at_pause"] % _one_line(case_change["from"]) if case_change else
+                 rule["derate_basis_words"]["default" if in_force["derate_case_basis"] == "default" else "owner_at_opening"])
+        summary["case_basis"] = basis
+        case_line = case + ": " + entry["guide_words"] + "; " + basis
+        if comparison:
+            case_line += "; " + rule["derate_statuses"][comparison["status"]]
+            declaration += [case_line, labels["read_on"] + ": " + _format_date(entry["record"]["read_on"]), record_text(comparison["context"])]
+            measures = [[m["words"], record_text(m["case"]), record_text(m["target"], calculated=True), m["gap"] or ""] for m in comparison["measures"]]
+            # The pace carries the trading-volume source on each side.
+            for measure, cells in zip(comparison["measures"], measures):
+                if measure["id"] == rule["derate_measures"][0]["id"]:
+                    cells[1] += "; " + "; ".join(rule["volume_source_words"] % _one_line(m["trading_source"]) for m in measure["case"])
+                    cells[2] += "; " + rule["volume_source_words"] % _one_line(measure["target"]["trading_source"])
+            notes = [rule["derate_statuses"][comparison["status"]], *comparison["gaps"], *comparison["caveats"]]
+            notes += [m["gap"] for m in comparison["measures"] if m["gap"]]
+            if comparison["volume_sources_differ"]:
+                notes.append(comparison["volume_sources_differ_words"])
+            volume_id = rule["comparison_volume"]["id"]
+            pace = comparison["measures"][0]["target"]
+            shape = comparison["measures"][-1]["target"]
+            pace_ids = role_ids("price") + [volume_id] if pace["next_month_percent"] is not None else []
+            shape_ids = role_ids("supply") if shape.get("largest_step") else []
+            if (shape.get("largest_step") or {}).get("days_of_trading") is not None:
+                shape_ids += role_ids("price") + [volume_id]
+            table(heads["derate"], columns["derate"], measures, notes,
+                  [pace_ids, [], role_ids("supply"), shape_ids])
+            unverified.extend(notes[1:])
+            declaration.extend(notes)
+        claim = in_force["claim"]
+        claim_line = (rule["opening"]["no_claim_words"] if claim == rule["opening"]["no_claim"] else
+                      _one_line(claim["words"]) + "; " + labels[claim["measure"]] + ": " +
+                      shown(claim["level"], claim["unit"], False,
+                            kind="price" if claim["measure"] == "price" else "money"))
+    summary["case_line"], summary["claim_line"] = case_line, claim_line
+    for text in (rule["derate_lead"] + ": " + case_line, rule["claim_lead"] + ": " + claim_line,
+                 rule["declaration_pointer_words"], rule["absent_sentence"]):
+        line("- " + text)
+    declaration += ["", claim_line, "", rule["fee_basis_words"], fees_line, rule["supply_basis_words"]]
+    rates = []
+    for variable in rule["opening"]["rate_variables"]:
+        rate = (in_force or {}).get(variable, rule["opening"]["no_rate"])
+        if rate != rule["opening"]["no_rate"]:
+            rates.append(labels[variable] + ": " + shown(rate, rule["opening"]["rate_unit"], False) + " — " + rule["chair"]["judgment_words"])
+    summary["rate_lines"] = rates or [rule["rates_none_words"]]
+    declaration.extend(summary["rate_lines"])
+    history_rows, history_ids, history_note, history_note_ids = [], [], [], []
+    for role in ("history", "volatility_window"):
+        fact = facts[supply["facts"][role]]
+        if gate._decimal_or_none(fact["value"]) < rule["full_window_days"]:
+            history_rows.append([labels[role], shown(fact["value"], fact["unit"], False), _format_date(fact["as_of"])])
+            history_ids.append([fact["id"]])
+            if role == "volatility_window":
+                summary["short_history_line"] = rule["short_history_words"] % shown(fact["value"], None, False)
+            if not history_note:
+                history_note.append(rule["short_history_words"] % shown(fact["value"], None, False))
+                history_note_ids.append([fact["id"]])
+    if history_rows:
+        table(heads["short_history"], columns["short_history"], history_rows, history_note, history_ids, history_note_ids)
+    summary["unverified"] = unverified
+    declaration += ["", "### " + rule["unverified_lead"], *(unverified or [rule["unverified_none_words"]]),
+                    words["gaps_pointer_words"], ""]
+    change_lines = [rule["change_words"] % (labels[c["variable"]], record_text(c["from"]), record_text(c["to"]), _one_line(c["why"])) for c in changes]
+    summary["change_lines"] = change_lines or [rule["no_change_words"]]
+    declaration.extend(summary["change_lines"])
+    summary["figures"] = list(figures.values())
+    return summary
+
+
+def protocol_lines(summary):
+    """PG4: one protocol shape block for every evidence reader."""
+    return [_safe(line, plain_amp=True) for line in summary["lines"]]
+
+
+def protocol_tables(summary):
+    """PG4: tables built once in the display reading, never recomputed."""
+    return summary["tables"]
+
+
+def protocol_declaration_lines(summary):
+    """AC81(3): the declaration starts the document the owner approves."""
+    rule = summary["rule"]
+    headings = {rule["declaration_heading"], "### " + rule["unverified_lead"]}
+    return [line if line in headings else _safe(line, plain_amp=True)
+            for line in summary["declaration"]] + [""]
 
 def coin_summary(pack):
     """M3, AC68(3): one display reading of the machine's coin arithmetic."""
@@ -1601,6 +2955,13 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
                      % _fi_capital_words(pack, facts,
                                          frame.get("fi_capital") or {},
                                          bases))
+        if compounder_subject_frame(capture) is frame:
+            readings = float_compounder_readings(pack)
+            lines.append("- " + compounder_rule()["page_words"]["yardstick_line_lead"]
+                         + _safe(" ".join(compounder_lines(pack, readings)[:2])))
+            solvency = compounder_solvency_line(pack, readings)
+            if solvency:
+                lines.append("- " + _safe(solvency))
     elif (archetype == GROWER_ARCHETYPE
           and grower_subject_frame(capture) is frame):
         # Owner rulings AC49(1) and AC50: the kind of growth company, the
@@ -1686,12 +3047,26 @@ def _one_frame_lines(pack, facts, passages, ticker, frame):
     return lines[:FRAME_MAX_LINES]
 
 
-def _business_lines(pack, facts, passages, capture):
+def _business_lines(pack, facts, passages, capture, in_force=None):
     frames = capture.get("business_frame") or {}
     lines = ["## The business, before the numbers", ""]
+    preferred = preferred_summary(pack)
+    if preferred is not None:
+        view=preferred_context(pack); c=view["capture"]; ticker,frame=next(iter(c["business_frame"].items()))
+        card_lines=[line for line in uranium_lines(preferred) if not line.startswith(_floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["casefile_words"]["dividend_words"].split("%s")[0])]
+        return lines + card_lines + _one_frame_lines(view,_facts_by_id(c),_passages_by_id(c),ticker,frame) + [""]
+    treasury = treasury_summary(pack, in_force)
+    if treasury is not None:
+        return lines + uranium_lines(treasury) + [""]
+    protocol = protocol_summary(pack, in_force)
+    if protocol is not None:
+        return lines + protocol_lines(protocol) + [""]
     summary = coin_summary(pack)
     if summary is not None:
         return lines + coin_lines(summary) + [""]
+    uranium = uranium_summary(pack)
+    if uranium is not None and uranium["way"] == "holder":
+        return lines + uranium_lines(uranium) + [""]
     if not frames:
         lines.append("This pack carries no business frame. It is an asset "
                      "with no earnings to frame, or a fund judged on its "
@@ -1708,6 +3083,8 @@ def _business_lines(pack, facts, passages, capture):
             lines.append("")
         lines.extend(_one_frame_lines(pack, facts, passages, ticker,
                                       frames[ticker]))
+    if uranium is not None:
+        lines.extend(uranium_lines(uranium))
     if note is not None:
         lines.append("- %s" % note)
     lines.append("")
@@ -1723,6 +3100,9 @@ def _decisive_lines(pack, facts, passages, capture):
     READ-B2): each metric beside its answering figures, by label, in the
     market form. The bound keeps the table whole or drops it whole."""
     lines = ["## The numbers that decide this question", ""]
+    if capture["subject"]["kind"] == "preferred":
+        view=preferred_context(pack); c=view["capture"]
+        return lines + [_floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["page_words"]["rating_basis_words"],"**"+_safe(c["subject"]["name"])+"**",*_decisive_lines(view,_facts_by_id(c),_passages_by_id(c),c)[2:]]
     stale_ids = gate.stale_reading_ids(capture)
     frames = capture.get("business_frame") or {}
     metrics = []
@@ -1935,8 +3315,13 @@ def _gaps_lines(capture):
     # leads the section, and no section is ever cut below its first row.
     named = []
     if gaps:
+        words = uranium_gap_words(capture)
+        if sufficiency.treasury_frame(_floors(), capture):
+            prefixes = _floors()["archetype_measures"]["holding_rule"]["treasury"]["page_words"]["absent_item_words"]
+            words.update({gap["fact_class"]: text for gap in gaps for prefix,text in prefixes.items()
+                          if gap["fact_class"].startswith(prefix)})
         named.append("declared missing: %s"
-                     % ", ".join(_safe(gap.get("fact_class"))
+                     % ", ".join(_safe(words.get(gap.get("fact_class"), gap.get("fact_class")))
                                  for gap in gaps))
     if unanswered:
         named.append("decisive metrics with no answer: %s"
@@ -2260,9 +3645,25 @@ SHAPE_PREFIXES = ("**", "- Coin: ", "- New supply over ", "- Daily issuance: ",
                   "- Capital beside its requirement: ", "- Cycle: ",
                   "- " + GROWER_MONTHS_LEAD, "- " + GROWER_UNDRAWN_LEAD,
                   "- " + PRODUCER_LIFE_LEAD, "- " + INTEGRATED_BESIDE_LEAD, "- Holding: ")
+SHAPE_PREFIXES += ("- " + compounder_rule()["page_words"]["yardstick_line_lead"],)
 SHAPE_PREFIXES += tuple("- " + row["absent_sentence"] for row in
                         _floors()["asset_classes"]["crypto"]["products"].values()
                         if row.get("absent_sentence"))
+SHAPE_PREFIXES += tuple("- " + _floors()["asset_classes"]["crypto"]["protocol_rule"][key]
+                        for key in ("front_lead", "price_lead", "fees_lead", "supply_lead",
+                                    "derate_lead", "claim_lead", "declaration_pointer_words", "absent_sentence")
+                        if key in _floors()["asset_classes"]["crypto"]["protocol_rule"])
+
+
+SHAPE_PREFIXES += tuple("- " + lead + ": " for lead in
+    _floors()["asset_classes"]["commodity"]["products"][
+        _floors()["archetype_measures"]["uranium_producer_rule"]["product"]].get(
+            "page_words", {}).get("one_page_leads", {}).values())
+
+
+SHAPE_PREFIXES += tuple(words[key+"_lead"]+": " for words in
+    [_floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["page_words"]]
+    for key in words["front_order"])
 
 
 def _rows_to_cut(body, lines_wanted):
@@ -2368,7 +3769,7 @@ def _fit_to_one_page(blocks, in_full=False):
     return out
 
 
-def render(pack, pack_sha256, usage=None, in_full=False):
+def render(pack, pack_sha256, usage=None, in_full=False, in_force=None):
     """The whole brief, as one string. `usage` is the capture stage's own
     cost sidecar, or None where none stands. `in_full` is set by
     render_full, where this page is the summary at the top of the whole
@@ -2383,7 +3784,7 @@ def render(pack, pack_sha256, usage=None, in_full=False):
     blocks = [
         ("head", _head_lines(pack, pack_sha256)),
         ("question", _question_lines(capture)),
-        ("business", _business_lines(pack, facts, passages, capture)),
+        ("business", _business_lines(pack, facts, passages, capture, in_force)),
         ("decisive", _decisive_lines(pack, facts, passages, capture)),
         ("auditor", _auditor_lines(capture)),
         ("gaps", _gaps_lines(capture)),
@@ -2391,7 +3792,7 @@ def render(pack, pack_sha256, usage=None, in_full=False):
         ("cost", _cost_lines(usage)),
         ("closing", _closing_lines()),
     ]
-    return "\n".join(_fit_to_one_page(blocks, in_full)).rstrip("\n") + "\n"
+    return preferred_owner_words("\n".join(_fit_to_one_page(blocks, in_full)).rstrip("\n") + "\n",capture)
 
 
 # ---------------------------------------------------------------------------
@@ -3305,6 +4706,20 @@ def _per_unit_money(per_unit, unit):
     return _format_number(format(per_unit, "f"), unit)
 
 
+def producer_cash_multiple(pack, frame, readings):
+    """U3a: the existing cash cell, shared without a second division."""
+    facts = _facts_by_id(pack["capture"])
+    numerator, roles = _producer_roles(pack["capture"], frame)
+    cash = roles.get("cash_flow")
+    negative = (readings or {}).get("cash_flow_negative")
+    if negative is None and cash in facts:
+        negative = (_number(facts[cash]) or 0) < 0
+    return (_words(NEGATIVE_CASH) if negative
+                else _multiple(facts.get(numerator), facts.get(cash))
+                if numerator in facts and cash in facts
+                else _words(NOT_CALCULABLE))
+
+
 def producer_yardstick_rows(pack, frame, readings):
     """The producer's yardstick (owner rulings AC52(R5), AC53(R10), AC54(R13)):
     enterprise value, the reserves it is divided by and the value per unit
@@ -3324,13 +4739,7 @@ def producer_yardstick_rows(pack, frame, readings):
     value = (_words(_per_unit_money(per_unit, (facts.get(numerator) or {})
                                     .get("unit")))
              if per_unit is not None else _words(NOT_CALCULABLE))
-    negative = (readings or {}).get("cash_flow_negative")
-    if negative is None and cash in facts:
-        negative = (_number(facts[cash]) or 0) < 0
-    multiple = (_words(NEGATIVE_CASH) if negative
-                else _multiple(facts.get(numerator), facts.get(cash))
-                if numerator in facts and cash in facts
-                else _words(NOT_CALCULABLE))
+    multiple = producer_cash_multiple(pack, frame, readings)
     rows = [_named(pack, facts, numerator, RECORDED)]
     if roles.get("reserves"):
         rows.append(_named(pack, facts, roles["reserves"], RECORDED))
@@ -3492,7 +4901,7 @@ def _md_cell(cell, bases):
         return _marked(cell["text"], bases)
     if cell["kind"] == "fact":
         return _safe(_fact_text(cell)) + cell["stale"]
-    return _safe(cell_text(cell))
+    return _safe(cell_text(cell), plain_amp=cell.get("plain_amp", False))
 
 
 def table_lines(table, bases):
@@ -3516,6 +4925,8 @@ CYCLE_DEPENDENCE_WORDS = {
 
 
 def _full_frame_lines(pack, capture):
+    if capture["subject"]["kind"] == "preferred":
+        view=preferred_context(pack); return _full_frame_lines(view,view["capture"])
     facts = _facts_by_id(capture)
     recorded = holding_display_facts(capture, recorded=True)
     passages = _passages_by_id(capture)
@@ -3580,6 +4991,8 @@ def _full_frame_lines(pack, capture):
         if archetype == FI_ARCHETYPE:
             lines.extend(_full_fi_lines(pack, capture, ticker, frame,
                                         facts, bases))
+            if compounder_subject_frame(capture) is frame:
+                lines.extend(_full_compounder_lines(pack, frame, bases))
         elif holding_subject_frame(capture) is frame:
             lines.extend(_full_nav_bridge_lines(pack, frame, facts, bases))
         elif grower_subject_frame(capture) is frame:
@@ -4021,6 +5434,9 @@ def _insider_lines(pack, dealings, order, lead=None):
 
 def _full_fact_lines(pack, capture):
     lines = ["## Every fact, in full", ""]
+    floors = _floors()
+    token = subjects.protocol_token(capture.get("subject") or {}, floors)
+    registry = floors["asset_classes"]["crypto"]
     # Owner ruling AC47(3): where the ownership cannot be established the
     # insider evidence is not considered, and the document says so once.
     insider = sufficiency.insider_depth(pack, _floors())
@@ -4050,8 +5466,15 @@ def _full_fact_lines(pack, capture):
             if fact_id in in_table:
                 continue
         lines.append("### %s" % _fact_heading(fact))
+        value = _value_words(fact)
+        if token and fact.get("unit") == registry["protocols"][token]["unit"]:
+            from council.report.render_report import format_protocol_number
+            shown = _safe(format_protocol_number(fact.get("value"), "amount", unit=fact["unit"], scaled=True,
+                words=registry["protocol_rule"]["page_words"]["figure_not_available_words"]))
+            exact = _exact(fact)
+            value = shown if shown == exact else shown + " — recorded " + exact
         lines.append("- Value: %s (as of %s)%s"
-                     % (_value_words(fact),
+                     % (value,
                         _safe(_format_date(fact.get("as_of"))),
                         _freshness_mark(pack, fact_id)))
         # A bound is not a measurement: a ceiling can only be too high, a
@@ -4082,9 +5505,11 @@ def _full_fact_lines(pack, capture):
 
 def _full_passage_lines(capture):
     lines = ["## Every passage, in full", ""]
+    protocol = subjects.protocol_token(capture.get("subject") or {}, _floors()) is not None
     passages = capture.get("tier2") or []
     if not passages:
-        lines.append("None in this pack.")
+        lines.append(_floors()["asset_classes"]["crypto"]["protocol_rule"]["page_words"]["no_passages_words"]
+                     if protocol else "None in this pack.")
         lines.append("")
         return lines
     for passage in passages:
@@ -4109,7 +5534,9 @@ def _full_gap_lines(capture):
     lines = ["## Every declared gap", ""]
     gaps = capture.get("gaps") or []
     if not gaps:
-        lines.append("None declared.")
+        token = subjects.protocol_token(capture.get("subject") or {}, _floors())
+        lines.append(_floors()["asset_classes"]["crypto"]["protocol_rule"]["page_words"]["no_declared_gaps_words"]
+                     if token is not None else "None declared.")
         lines.append("")
         return lines
     for gap in gaps:
@@ -4230,7 +5657,9 @@ def checklist_description(capture, req, escape):
     words = escape(req.get("description"))
     producer = producer_subject_frame(capture) is not None
     if (grower_subject_frame(capture) is not None or producer
-            or holding_subject_frame(capture) is not None):
+            or holding_subject_frame(capture) is not None
+            or (compounder_subject_frame(capture) is not None
+                and req.get("id") != FREE_CASH_ROW)):
         # Owner ruling AC50(9) as amended: a growth company's three
         # standard tests, each named in the floors' own words; a producer's
         # two in the floors' words and its third, the yardstick, in the
@@ -4300,7 +5729,7 @@ def _full_checklist_lines(capture):
     return lines
 
 
-def render_full(pack, pack_sha256, usage=None):
+def render_full(pack, pack_sha256, usage=None, in_force=None):
     """The full evidence document (owner ruling AC15, P6): the one-page
     brief as its summary at the top, then the WHOLE evidence rendered for
     a reader - the business frame first, then every fact (by its plain
@@ -4312,7 +5741,11 @@ def render_full(pack, pack_sha256, usage=None):
                          "missing - render from the freeze's pack.json, "
                          "never from a raw capture")
     capture = pack["capture"]
-    summary = render(pack, pack_sha256, usage, in_full=True).rstrip("\n")
+    # AC92(1), P4: the approved document records the opening; the report
+    # carries the pause change. Re-reading that document cannot apply it.
+    if in_force and sufficiency.treasury_frame(_floors(), capture):
+        in_force = dict(in_force, preferred_treatment=in_force["opening_treatment"], preferred_changes=[])
+    summary = render(pack, pack_sha256, usage, in_full=True, in_force=in_force).rstrip("\n")
     lines = [summary, "",
              "---", "",
              "# The full evidence - the document approved in reviewed mode",
@@ -4321,14 +5754,34 @@ def render_full(pack, pack_sha256, usage=None):
              "the whole of the evidence the council will sit on, in full and "
              "nothing trimmed. This is the document a reviewer approves.",
              ""]
+    protocol = protocol_summary(pack, in_force)
+    if protocol is not None:
+        heading = lines.index("# The full evidence - the document approved in reviewed mode")
+        lines[heading + 2:heading + 2] = protocol_declaration_lines(protocol)
+        lines += ["## The business - read this before the numbers", "", *protocol_lines(protocol), ""]
+        for lead, table in protocol_tables(protocol):
+            lines += ["**" + _safe(lead) + ".**", "", *table_lines(table, []), ""]
+    uranium = uranium_summary(pack)
+    if uranium is not None and uranium["way"] == "holder":
+        lines += ["## The business - read this before the numbers", "", *uranium_lines(uranium), ""]
+    treasury = treasury_summary(pack, in_force)
+    if treasury is not None:
+        for lead, table in treasury["tables"]:
+            lines += ["**" + _safe(lead, plain_amp=True) + ".**", "", *table_lines(table, []), ""]
+    preferred = preferred_summary(pack)
+    if preferred is not None:
+        for lead, table in preferred["tables"]: lines += ["**" + _safe(lead) + ".**", "", *table_lines(table, []), ""]
     lines.extend(_full_frame_lines(pack, capture))
+    if uranium is not None:
+        for lead, table in uranium["tables"]:
+            lines += ["**" + _safe(lead, plain_amp=True) + ".**", "", *table_lines(table, []), ""]
     lines.extend(_full_cycle_lines(capture))
     lines.extend(_full_fact_lines(pack, capture))
     lines.extend(_full_passage_lines(capture))
     lines.extend(_full_gap_lines(capture))
     lines.extend(_full_auditor_lines(capture))
     lines.extend(_full_checklist_lines(capture))
-    return "\n".join(lines).rstrip("\n") + "\n"
+    return preferred_owner_words("\n".join(lines).rstrip("\n") + "\n",capture)
 
 
 _USAGE = ("usage: python -m council.evidence.brief <pack.json> "
@@ -4375,7 +5828,11 @@ def main(argv=None):
         if os.path.exists(usage_path):
             usage = canonical.read_json(usage_path)
         renderer = render_full if full else render
-        text = renderer(pack, canonical.sha256_file(pack_path), usage)
+        from council.engine import host
+        capture = pack["capture"]
+        in_force = host.pause_in_force(os.path.dirname(os.path.abspath(out_path)),
+                                      capture["captured_at"], capture["subject"], _floors(), capture=capture)
+        text = renderer(pack, canonical.sha256_file(pack_path), usage, in_force=in_force)
         data = text.encode("utf-8")
         page_path = page = None
         if full:

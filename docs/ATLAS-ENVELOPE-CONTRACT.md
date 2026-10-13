@@ -49,6 +49,8 @@ can appear. Fields marked **[1.3.0]** are new in this contract.
   the kind alone, to tell one coin from another. No Zcash verdict is handed to Atlas until Atlas's architect
   confirms this in writing.** No schema change: the field's type and requiredness are as in 1.3.0; the
   version bump for its widened meaning follows with that confirmation (register item P-COINb-10).
+  Held in software from floors 1.25.0 (unit ATLAS-HANDOFF-GATE, AC78(6)): a verdict whose product Atlas has
+  not confirmed is published and ledgered but its envelope is withheld (`atlas-handoff-withheld.json`).
 - **`constituents`**, **`vehicle`**, **`thesis_proportions`** — the members, the traded wrapper and
   the thesis emphasis of a basket or theme; null for a single subject.
 - **`scenario_rating`** — for an anchorless subject, the full ladder with the published arithmetic,

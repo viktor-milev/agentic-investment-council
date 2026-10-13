@@ -1,5 +1,5 @@
 {
- "capture_version": "1.13.0",
+ "capture_version": "1.17.0",
  "subject": {
   "kind": "single_stock",
   "asset_class": "equity",
@@ -757,8 +757,8 @@
   "resolutions": {},
   "failure_reason": null,
   "nonce": "a1b2c3d4e5f607186161706c2d706173",
-  "evidence_sha256": "c9e59ca5e67da68f700162acf79f39d50a42b5a8876f20c5dd822ba14b7b2177",
+  "evidence_sha256": "62a3cc85676e478e67b76ce8a5ffef848a9a0d9c9184f25cf86ebc3c088902ef",
   "post_audit_changes": [],
-  "post_audit_sha256": "c9e59ca5e67da68f700162acf79f39d50a42b5a8876f20c5dd822ba14b7b2177"
+  "post_audit_sha256": "62a3cc85676e478e67b76ce8a5ffef848a9a0d9c9184f25cf86ebc3c088902ef"
  }
 }

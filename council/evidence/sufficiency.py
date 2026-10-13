@@ -63,7 +63,7 @@ import os
 import sys
 import math
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from council.evidence import gate
 from council.lib import canonical, subjects
@@ -815,11 +815,635 @@ def _declared_archetype(floors, capture):
     if not isinstance(row, dict):
         return None
     subtype = None
+    holding = floors.get("archetype_measures", {}).get("holding_rule", {})
+    treasury = holding.get("treasury", {})
+    if archetype == holding.get("holding_archetype") and treasury.get("frame_field") in frame:
+        subtype = treasury["subtype"]
     if row.get("subtypes"):
         subtype = frame.get(row.get("subtype_field"))
         if not isinstance(subtype, str) or subtype not in row["subtypes"]:
             subtype = None
     return archetype, subtype
+
+
+def treasury_frame(floors, capture):
+    """AC89(2), M1: the one reader of a declared treasury block."""
+    rule = floors.get("archetype_measures", {}).get("holding_rule", {})
+    treasury = rule.get("treasury", {})
+    if _declared_archetype(floors, capture) != (rule.get("holding_archetype"), treasury.get("subtype")) or not treasury:
+        return None
+    frame = capture["business_frame"][capture["subject"]["ticker"]]
+    return frame, frame[treasury["frame_field"]]
+
+
+def _treasury_periods(capture, block, rule):
+    """AC46(2), M7: financial periods end on the company's month end."""
+    import calendar
+    fiscal = next((f["value"] for f in capture["tier1"] if f["id"] == "fiscal_year_end"), "")
+    try:
+        month, day = map(int, fiscal.split("-"))
+        first, latest = (int(block[rule["history"][k]][2:]) for k in ("first_field", "latest_field"))
+        def end(year, quarter=4):
+            months = (year - 1) * 12 + month - 1 + quarter * 3
+            y, m = divmod(months, 12)
+            return date(y, m + 1, calendar.monthrange(y, m + 1)[1])
+        if day != calendar.monthrange(latest, month)[1]:
+            return {}, None
+        periods = {"fy%s" % y: (end(y), True) for y in range(first, latest + 1)}
+        captured = _as_of_moment(capture["captured_at"]).date()
+        quarters = [("q%s_fy%s" % (q, y), end(y, q)) for y in range(captured.year - 2, captured.year + 2)
+                    for q in range(1, 4) if (captured - end(y, q)).days >= rule["history"]["quarter_report_lag_days"]]
+        periods.update({p: (d, False) for p, d in sorted(quarters, key=lambda r: r[1], reverse=True)[:rule["history"]["quarter_ends"]]})
+        return periods, end(latest + 1)
+    except (ValueError, TypeError, StopIteration):
+        return {}, None
+
+
+def treasury_role_set(pack, floors):
+    """M12: every fact read once, tagged by role and block context, never by parsing an id."""
+    capture = (pack or {}).get("capture") or {}
+    pair = treasury_frame(floors, capture) if capture.get("subject") else None
+    if not pair:
+        return {}
+    frame, block = pair
+    rule = floors["archetype_measures"]["holding_rule"]["treasury"]
+    periods, _ = _treasury_periods(capture, block, rule)
+    facts = {f["id"]: f for f in capture["tier1"]}
+    largest = max(block["coins"], key=lambda c: gate._decimal_or_none(
+        facts.get("nav_component_" + c["coin"], {}).get("value")) or decimal.Decimal(0))["coin"]
+    tagged = {}
+    for role, spec in rule["roles"].items():
+        contexts = []
+        binds = spec["binds"]
+        if binds == "all" or binds == "other_coins" and "other_coins" in block or binds == "fund" and subjects.treasury_fund(floors, largest):
+            contexts = [(None, None, None)]
+        elif binds == "coins": contexts = [(c["coin"], None, None) for c in block["coins"]]
+        elif binds == "lines": contexts = [(c["coin"], l["key"], None) for c in block["coins"] for l in c["lines"]]
+        elif binds in ("line_starts", "history_lines", "raise_lines"):
+            dates = [None] if binds == "line_starts" else list(periods) if binds == "history_lines" else [r["key"] for r in block["raises"] if r["instrument"] == "shares"]
+            contexts = [(c["coin"], l["key"], p) for c in block["coins"] if binds != "raise_lines" or c["coin"] == largest for l in c["lines"] for p in dates]
+        elif binds == "preferred_history":
+            contexts = [(None, row["key"], p) for row in block["preferreds"] for p, (_, annual) in periods.items() if annual]
+        elif binds == "history":
+            for p, (_, annual) in periods.items():
+                if not annual and role not in ("history_coins", "history_shares"): continue
+                contexts += [(c["coin"], None, p) for c in block["coins"]] if "{c}" in spec["pattern"] else [(None, None, p)]
+        elif binds in block and isinstance(block[binds], list):
+            for row in block[binds]:
+                if role == "convertible_put_date" and not row["holder_put"]: continue
+                if binds == "raises" and role != "raise_proceeds" and row["instrument"] != "shares": continue
+                contexts.append((largest if binds == "raises" else None, row["key"], None))
+        for c, k, p in contexts:
+            fid = spec["pattern"].format(c=c, k=k, p=p)
+            tagged.setdefault(fid, set()).add((role, c, k, p))
+    for fid in ("price_last", "market_cap", "nav_total", "fiscal_year_end", frame["nav_bridge"]["discount_fact"]):
+        tagged.setdefault(fid, set()).add(("holding", None, None, None))
+    return tagged
+
+
+def _treasury_net_count(number, rule, coin, role="count", k=None, p=None, day=None, fact=None, errors=None):
+    """AC94(1), fix round four: only the token figure at the count's own date."""
+    values = [number(role, coin["coin"], k, p)]
+    for line in coin["lines"]:
+        if line["kind"] not in rule["line_kinds_not_counted"]: continue
+        if role == "count": values.append(number("line", coin["coin"], line["key"])); continue
+        start = fact("line_start", coin["coin"], line["key"])
+        try:
+            if start and not start.get("derived") and date.fromisoformat(day) < date.fromisoformat(start["value"]): continue
+        except (KeyError, TypeError, ValueError): pass
+        token_role, token_date = ("history_line", p) if role == "history_coins" else ("raise_line", k)
+        token = fact(token_role, coin["coin"], line["key"], token_date)
+        value = number(token_role, coin["coin"], line["key"], token_date) if str(token.get("as_of", ""))[:10] == day and not token.get("derived") else None
+        if value is None:
+            errors[p if role == "history_coins" else k + "_premium"] = rule["past_token_gap_words"].format(date=day)
+            return None
+        values.append(value)
+    return None if None in values else values[0] - sum(values[1:], decimal.Decimal(0))
+
+
+def _treasury_failures(pack, floors, captured_day, fresh, *, lifted=()):
+    """AC89, AC91-AC93: per-fact properties over ONE role set, then relationships."""
+    capture = pack["capture"]
+    pair = treasury_frame(floors, capture)
+    rule = floors["archetype_measures"]["holding_rule"].get("treasury", {})
+    if not pair or captured_day < date.fromisoformat(rule["applies_from"]): return []
+    frame, block = pair
+    tagged = treasury_role_set(pack, floors)
+    facts = {f["id"]: f for f in capture["tier1"]}
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(f.get("value"))) for f in facts.values())
+        failures = []
+        def broken(name, detail, explain=False, spec=None):
+            words = spec or rule[name + "_refusal"]
+            failures.append((words["what"] + ": " + detail,
+                words["why"] + (": " + detail if explain else ""), words["where"]))
+        def amount(fid): return gate._decimal_or_none(facts.get(fid, {}).get("value"))
+        swings = rule["swings"]
+        history, window = (amount(swings[k]) for k in ("history_id", "window_id"))
+        if "swings" not in lifted and history is not None and history < swings["min_history_days"]:
+            failures.append((swings["history_id"], swings["short_history_refusal"], swings["why"]))
+        if "swings" not in lifted and (history is None or window != min(history, swings["full_window_days"])):
+            failures.append((swings["window_id"], swings["window_refusal"], swings["why"]))
+        def stamp(fid):
+            try: return _as_of_moment(facts[fid]["as_of"]).date()
+            except (KeyError, TypeError, ValueError): return None
+        periods, following = _treasury_periods(capture, block, rule)
+        counts = [stamp("treasury_coins_" + c["coin"]) for c in block["coins"]]
+        count_day = max((d for d in counts if d), default=captured_day)
+        readings = treasury_readings(pack, floors)
+        value = readings.get("true_debt_value")
+        if value is not None and value <= 0:
+            words = rule["zero_yardstick"]
+            failures.append((words["what"], words["words"], words["where"]))
+        coin_values = {c["coin"]: c["value"] for c in readings.get("coins", [])}
+        largest = max(block["coins"], key=lambda c: coin_values.get(c["coin"], decimal.Decimal(0)))["coin"]
+        fund = subjects.treasury_fund(floors, largest)
+        crypto = floors["asset_classes"]["crypto"]
+        source_rule = crypto[rule["price_source"]["rule"]]
+        gaps = {g["fact_class"]: g for g in capture["gaps"]}
+        money = facts.get("market_cap", {}).get("unit")
+        for fid, tags in tagged.items():
+            fact = facts.get(fid)
+            for role, c, k, p in tags:
+                if role == "holding": continue
+                spec = rule["roles"][role]
+                if spec["binds"] in lifted: continue
+                ground = ("raise" if role.startswith("raise_") else "history" if p else "coin_sale" if role == "sale" else "terms" if k and spec["binds"] in ("convertibles", "loans", "preferreds") else "fund" if spec["binds"] == "fund" else "bridge")
+                gap = gaps.get(fid)
+                optional = spec.get("optional") or p in periods and not periods[p][1]
+                if optional and gap and (fact or gap.get("reason_kind") != "absent_by_design" or rule["history"]["quarter_gap_words"] not in gap.get("reason", "").casefold()): broken("history", fid + " and its gap disagree")
+                if not fact:
+                    if not spec.get("optional") and (not optional or not gap): broken(ground, fid + " missing", True, dict(spec, what=spec.get("missing_what", spec["what"])))
+                    continue
+                if spec.get("sourced") and fact.get("derived"): broken(ground, fid + " requires the company's sourced figure", True, spec)
+                admitted = subjects.admitted_coin(floors, c) if c else None
+                row = admitted[1] if admitted else {}
+                selector = spec["unit"]
+                unit = {"coin_unit": row.get("unit"), "coin_price_unit": row.get("price_unit"),
+                    "money": money, "share_price_unit": facts.get("price_last", {}).get("unit"),
+                    "fund_unit": facts.get("spot_fund_nav_per_share", {}).get("unit")}.get(selector, selector)
+                if selector == "allowed": valid_unit = fact.get("unit") in floors["allowed_units"]
+                else: valid_unit = unit is not None and fact.get("unit") == unit
+                if not valid_unit: broken(ground, fid + " unit " + str(fact.get("unit")) + "; expected " + str(unit), True, spec)
+                if spec["numeric"] and amount(fid) is None: broken(ground, fid + " needs a number", True, spec)
+                if not spec["numeric"]:
+                    try: date.fromisoformat(fact["value"])
+                    except (ValueError, TypeError): broken(ground, fid + " needs an ISO date", True, spec)
+                day, policy = stamp(fid), spec["date"]
+                age = (captured_day - day).days if day else None
+                date_ok = day is not None and age >= 0
+                if policy == "count": date_ok = date_ok and age <= rule["count_max_age_days"]
+                elif policy == "filing": date_ok = date_ok and age <= rule["filing_max_age_days"]
+                elif policy == "same_day": date_ok = date_ok and day == stamp("price_last")
+                elif policy == "on_or_after_count": date_ok = date_ok and all(d and day >= d for d in counts)
+                elif policy == "in_window": date_ok = date_ok and age <= rule["window_days"]
+                elif policy == "raise_day":
+                    raise_id = next((name for name, tags in tagged.items() if ("raise_proceeds", c, p, None) in tags), None)
+                    date_ok = date_ok and day == stamp(raise_id)
+                elif policy.startswith("period_end"):
+                    delta = (periods[p][0] - day).days if day else None
+                    date_ok = date_ok and delta is not None and 0 <= delta <= (rule["history"]["share_price_days_before_period_end"] if policy == "period_end_share_price" else 0)
+                if not date_ok:
+                    broken("count_stale" if policy == "count" else "coin_price" if role == "coin_price" else "shares_date" if role == "shares" else "history_price" if role == "history_coin_price" else ground, fid + " " + ("filing is stale or undated" if policy == "filing" else policy + " date fails its required day") + ": " + str(day) + "; age " + str(age) + " days", True, spec if policy == "filing" else None)
+                source = fact.get("source", "").casefold()
+                policy = spec["source"]
+                if policy == "not_a_dashboard" and any(w.casefold() in source for w in rule["undated_count_words"]): broken("dashboard", fid)
+                elif policy in ("today_price_words", "history_price_words"):
+                    words = source_rule[rule["price_source"]["today" if policy == "today_price_words" else "history"]]
+                    if not any(w.casefold() in source for w in words): broken("coin_price" if policy == "today_price_words" else "history_price", fid)
+                elif policy == "fund_ticker" and fund["ticker"].casefold() not in source: broken("fund", fid)
+        for c in block["coins"]:
+            if not subjects.admitted_coin(floors, c["coin"]): broken("not_admitted", c["coin"] + " share of treasury " + str(coin_values.get(c["coin"])) + "/" + str(sum(coin_values.values()) + (amount("treasury_other_coins") or 0)), True)
+            if c["count_basis"] not in rule["count_bases"]: broken("dashboard", c["coin"])
+        coins = [coin_values.get(c["coin"]) for c in block["coins"]]
+        if "other_coins" in block: coins.append(amount("treasury_other_coins"))
+        total, reported = amount("treasury_total_assets"), amount("treasury_coin_assets_reported")
+        if not stamp("treasury_total_assets") or not stamp("treasury_coin_assets_reported") or stamp("treasury_total_assets") != stamp("treasury_coin_assets_reported"): broken("bridge", "balance-sheet dates missing or differ", True)
+        value = sum(coins) if None not in coins else None
+        if None not in coins and None not in (total, reported):
+            a, b = map(decimal.Decimal, rule["coins_above_share_of_assets"].split("/"))
+            if stamp("treasury_total_assets") and stamp("treasury_total_assets") == stamp("treasury_coin_assets_reported") and value * b <= (total - reported + value) * a: broken("under_half", "assets at today's price")
+        if value is not None:
+            a, b = map(decimal.Decimal, rule["admitted_above_share_of_treasury"].split("/"))
+            if "other_coins" in block and coins[-1] * b > value * a: broken("not_admitted", "other_coins share of treasury " + str(coins[-1]) + "/" + str(value), True)
+        def exact(fid, operation, refs):
+            arithmetic = facts.get(fid, {}).get("derived") or {}
+            actual = [o.get("fact_id") for o in arithmetic.get("operands", ())]
+            return (arithmetic.get("operation") == operation and len(actual) == len(refs)
+                    and all(isinstance(r, str) for r in actual)
+                    and (actual == refs if operation == "subtract" else sorted(actual) == sorted(refs)))
+        expected = [("nav_component_"+c["coin"], "coin_at_today_price") for c in block["coins"]]
+        if "other_coins" in block: expected.append(("treasury_other_coins", "company_reported_value"))
+        bridge = frame["nav_bridge"]
+        if sorted((c["value_fact"],c["method"]) for c in bridge["components"]) != sorted(expected) or bridge["holdco_net_debt_fact"] != "holdco_net_debt": broken("bridge", "components and debt")
+        for c in block["coins"]:
+            if not exact("nav_component_"+c["coin"], "multiply", ["treasury_coins_"+c["coin"], "coin_price_"+c["coin"]]): broken("bridge", c["coin"])
+        # Architect ruling (1), fix round two: one sourced instrument, or a sum.
+        instruments = [fid for fid, roles in tagged.items() if any(
+            role in ("convertible_amount", "loan_amount") for role, _, _, _ in roles)]
+        values = [amount(fid) for fid in instruments]
+        debt = facts.get("treasury_true_debt", {})
+        if None not in values and amount("treasury_true_debt") is not None:
+            if amount("treasury_true_debt") != sum(values, decimal.Decimal(0)):
+                broken("bridge", "treasury_true_debt instruments sum: value drift from "
+                       + (", ".join(instruments) or "recorded zero"), True)
+        if len(instruments) == 1:
+            fid = instruments[0]; instrument = facts.get(fid, {})
+            if debt.get("derived"):
+                broken("bridge", "treasury_true_debt instruments sum: one instrument requires a sourced figure", True)
+            for field in ("source", "as_of"):
+                same = stamp("treasury_true_debt") == stamp(fid) if field == "as_of" else debt.get(field) == instrument.get(field)
+                if not same:
+                    broken("bridge", "treasury_true_debt instruments sum: %s drift from %s" % (field, fid), True)
+        elif len(instruments) > 1:
+            if not exact("treasury_true_debt", "sum", instruments): broken("bridge", "treasury_true_debt instruments sum")
+        elif debt.get("derived") or amount("treasury_true_debt") != 0:
+            broken("bridge", "treasury_true_debt instruments sum: recorded zero required")
+        if not exact("holdco_net_debt", "subtract", ["treasury_true_debt", "treasury_cash"]): broken("bridge", "holdco_net_debt")
+        if not exact("market_cap", "multiply", ["price_last", "shares_in_issue"]): broken("market_value", "market_cap")
+        latest = periods.get(block[rule["history"]["latest_field"]])
+        if not latest or latest[0] >= captured_day or following and (captured_day - following).days >= rule["history"]["annual_report_lag_days"]: broken("history", "latest annual report")
+        for family, ground, prefix in (("raises", "raise", "treasury_raise_"), ("coin_sales", "coin_sale", "treasury_coin_sale_")):
+            gap = gaps.get(prefix)
+            if not block[family] and (not gap or gap.get("reason_kind") != "absent_by_design") or block[family] and gap: broken(ground, prefix + " list and gap")
+            for r in block[family]:
+                dates = {stamp(fid) for fid, tags in tagged.items() if any(t[2] == r["key"] and rule["roles"].get(t[0],{}).get("binds") == family for t in tags)}
+                if len(dates) != 1: broken(ground, r["key"] + " dates differ")
+        if frame["peers"] or not gaps.get("peer_"): broken("peers", "peer_")
+        if "fund" not in lifted and not fund and (not gaps.get("spot_fund_") or gaps["spot_fund_"].get("reason_kind") != "absent_by_design"): broken("fund", rule["fund_gap_words"] + ": declare the gap")
+        for fid in facts:
+            if fid.startswith("treasury_") and fid not in tagged: broken("stray", fid)
+        return failures
+
+
+def _treasury_coin_layer(pack, floors):
+    """AC92(2), M3: rename the coin's own anchors for the existing evaluator."""
+    capture = pack["capture"]
+    pair = treasury_frame(floors, capture)
+    if not pair:
+        return None
+    rule = floors["archetype_measures"]["holding_rule"].get("treasury", {})
+    if _as_of_moment(capture["captured_at"]).date() < date.fromisoformat(rule["applies_from"]):
+        return None
+    readings = treasury_readings(pack, floors)
+    if not readings.get("coins"):
+        return None
+    coin = max(readings["coins"], key=lambda c: c["value"])["coin"]
+    spec = rule["coin_layer"]
+    prefix = spec["prefix_form"].format(c=coin)
+    gap = next((g for g in capture["gaps"] if g["fact_class"] == prefix and g["reason_kind"] == "absent_by_design"), None)
+    admitted = subjects.admitted_coin(floors, coin)
+    if not admitted:
+        return None  # The existing admission rule supplies its own refusal.
+    registry, _ = admitted
+    crypto = floors["asset_classes"]["crypto"]
+    kinds = crypto["monetary_coin_rule"]["coin_kinds"] if registry == "monetary" else crypto["protocol_rule"]["protocol_kinds"]
+    entries = []
+    for entry in subjects.class_anchors(floors, dict(asset_class="crypto", product=coin, kind=kinds[0])):
+        if entry.get("id") in spec["exempt_ids"]:
+            continue
+        renamed = dict(entry)
+        for key in ("id", "prefix"):
+            if key in renamed:
+                renamed[key] = prefix + renamed[key]
+        for key in ("ids", "prefixes"):
+            if key in renamed:
+                renamed[key] = [prefix + value for value in renamed[key] if value not in spec["exempt_ids"]]
+        entries.append(renamed)
+    return coin, prefix, gap, entries
+
+
+def treasury_readings(pack, floors, preferred_treatment=None):
+    """M8-M15: pure Decimal readings over the role set; nothing enters the pack."""
+    capture = (pack or {}).get("capture") or {}
+    pair = treasury_frame(floors, capture) if capture.get("subject") else None
+    rule = floors["archetype_measures"]["holding_rule"].get("treasury", {})
+    if not pair or _as_of_moment(capture["captured_at"]).date() < date.fromisoformat(rule["applies_from"]): return None
+    _, block = pair
+    # AC89(4), AC91(3)-(4), architect fix round 1: reasons are page data.
+    reason = lambda key: rule["reading_reasons"][key]["words"]
+    tagged = treasury_role_set(pack, floors)
+    facts = {f["id"]: f for f in capture["tier1"] if f["id"] in tagged}
+    errors = {}
+    def fid(role, c=None, k=None, p=None):
+        return next((f for f, tags in tagged.items() if (role,c,k,p) in tags), None)
+    def fact(role, c=None, k=None, p=None): return facts.get(fid(role,c,k,p), {})
+    def number(role, c=None, k=None, p=None):
+        name = fid(role,c,k,p)
+        return gate._decimal_or_none(facts.get(name, {}).get("value"))
+    def ratio(a, b, key, percentage=False):
+        if a is None or b is None or b <= 0:
+            errors.setdefault(key, reason("unreadable_ratio"))
+            return None
+        return _discount_ratio(a,b) if percentage else {"numerator":a,"denominator":b}
+    def premium(value, market, key): return ratio(value-market if None not in (value,market) else None,value,key,True)
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(f.get("value"))) for f in facts.values())
+        price = gate._decimal_or_none(facts.get("price_last", {}).get("value"))
+        coins = [dict(c, count=_treasury_net_count(number,rule,c),value=number("coin_value",c["coin"]),price=number("coin_price",c["coin"]),
+            fact=fid("count",c["coin"]),date=facts.get(fid("count",c["coin"]),{}).get("as_of")) for c in block["coins"]]
+        if price is None or any(c["count"] is None or c["value"] is None or c["price"] is None for c in coins) or number("shares") is None:
+            return {"why":{"readings":reason("unreadable_treasury")}}
+        for c in coins: c["value"] = c["count"] * c["price"]
+        largest = max(coins,key=lambda c:c["value"])
+        other = number("other_coins") if "other_coins" in block else decimal.Decimal(0)
+        cash, debt, shares = (number(r) for r in ("cash","true_debt","shares"))
+        if None in (other,cash,debt): return {"why":{"readings":reason("unreadable_cash_debt_other")}}
+        treasury = sum(c["value"] for c in coins)+other
+        for c in coins: c["share_of_treasury"]=ratio(c["value"],treasury,c["coin"])
+        tables={}; converted=decimal.Decimal(0); diluted=shares; interest=decimal.Decimal(0); dividends=decimal.Decimal(0)
+        for family in ("convertible","loan","preferred"):
+            rows=[]
+            for entry in block[family+"s"]:
+                key=entry["key"]; terms={r.removeprefix(family+"_"):number(r,k=key) if spec["numeric"] else facts.get(fid(r,k=key),{}).get("value")
+                    for r,spec in rule["roles"].items() if spec["binds"]==family+"s" and fid(r,k=key)}
+                row=dict(entry,**terms)
+                amount=terms.get("amount"); rate=terms.get("dividend_rate" if family=="preferred" else "rate")
+                charge=amount*rate/100 if None not in (amount,rate) else None
+                row["yearly_charge"]=charge
+                if charge is None: errors[key]=reason("unreadable_instrument")
+                elif family=="preferred": dividends+=charge
+                else: interest+=charge
+                if family=="convertible":
+                    conversion=terms.get("conversion_price")
+                    itm=conversion is not None and 0 < conversion < price and family+"s" in rule["diluted_count_instruments"]
+                    row.update(in_the_money=itm,shares_if_converted=ratio(amount,conversion,key) if itm else None)
+                    if itm and amount is not None:
+                        diluted+=amount/conversion
+                        if rule["converted_bonds_leave_debt"]: converted+=amount
+                    else: errors[key+"_conversion"]=reason("conversion_unreadable" if conversion is None or conversion <= 0
+                        else "conversion_at_price" if conversion == price else "conversion_above_price")
+                rows.append(row)
+            tables[family+"s"]=rows
+        value=treasury+cash-debt; diluted_value=value+converted
+        choice_ok = (isinstance(preferred_treatment,dict) and set(preferred_treatment)=={p["key"] for p in block["preferreds"]}
+                     and all(isinstance(v,dict) and type(v.get("as_debt")) is bool and isinstance(v.get("why"),str) and v["why"].strip() for v in preferred_treatment.values()))
+        deduction=sum(p["amount"] for p in tables["preferreds"] if preferred_treatment[p["key"]]["as_debt"]) if choice_ok and all(p.get("amount") is not None for p in tables["preferreds"]) else None
+        preferred_value=value-deduction if deduction is not None else None
+        preferred_diluted=diluted_value-deduction if deduction is not None else None
+        if not choice_ok: errors["preferred_value"]=errors["preferred_diluted_value"]=rule["no_opening_why"]
+        market, diluted_market=shares*price,diluted*price
+        premiums=dict(issued_true_debt=premium(value,market,"issued_true_debt"),diluted_true_debt=premium(diluted_value,diluted_market,"diluted_true_debt"),
+            issued_preferred=premium(preferred_value,market,"issued_preferred"),diluted_preferred=premium(preferred_diluted,diluted_market,"diluted_preferred"))
+        if not choice_ok:
+            for key in ("issued_preferred", "diluted_preferred"): errors[key]=rule["no_opening_why"]
+        count=sum(c["count"] for c in coins)
+        cps=ratio(count,shares,"coins_per_share"); diluted_cps=ratio(count,diluted,"diluted_coins_per_share")
+        chosen_preferred = [key for key, treatment in preferred_treatment.items() if treatment["as_debt"]] if choice_ok else []
+        history_basis = dict(history_preferred_as_debt=True, history_gaps=[]) if chosen_preferred else {}
+        periods,_=_treasury_periods(capture,block,rule); history=[]; annual=[]
+        for p,(day,is_annual) in sorted(periods.items(),key=lambda r:r[1][0],reverse=True):
+            counts=[_treasury_net_count(number,rule,c,"history_coins",p=p,day=day.isoformat(),fact=fact,errors=errors) for c in coins]; old_shares=number("history_shares",p=p)
+            old_count=sum(counts) if None not in counts else None
+            row=dict(period=p,date=day.isoformat(),annual=is_annual,coins_per_share=ratio(old_count,old_shares,p))
+            if p in errors: row["why"] = errors[p]
+            if is_annual:
+                prices=[number("history_coin_price",c["coin"],p=p) for c in coins]
+                old_cash,old_debt,old_price=(number(r,p=p) for r in ("history_cash","history_true_debt","history_price"))
+                old_value=sum(a*b for a,b in zip(counts,prices))+old_cash-old_debt if None not in counts+prices+[old_cash,old_debt] else None
+                if chosen_preferred:
+                    past = [fact("history_preferred", k=key, p=p) for key in chosen_preferred]
+                    values = [number("history_preferred", k=key, p=p) for key in chosen_preferred]
+                    dated = all(f and not f.get("derived") and f.get("unit") == facts["treasury_cash"]["unit"]
+                        and str(f.get("as_of", ""))[:10] == day.isoformat() for f in past)
+                    if not dated or None in values:
+                        gap = rule["preferred_history"]["gap_words"].format(date=day.isoformat())
+                        history_basis["history_gaps"].append(gap)
+                        row["why"] = row.get("why", "") + ("; " if row.get("why") else "") + gap
+                        errors[p+"_preferred"] = gap
+                        old_value = None
+                    elif old_value is not None:
+                        old_value -= sum(values)
+                row["value"]=old_value
+                if row.get("why"):
+                    for suffix in ("_value", "_premium", "_value_per_share"): errors[p+suffix] = row["why"]
+                row["value_per_share"]=ratio(old_value,old_shares,p+"_value_per_share")
+                row["premium"]=premium(old_value,old_shares*old_price if None not in (old_shares,old_price) else None,p+"_premium")
+                if old_value is not None and old_shares and old_shares>0 and (not chosen_preferred or row["premium"] is not None):
+                    annual.append((p,{"id":fid("history_coins",largest["coin"],p=p),"value":row["value_per_share"]},facts.get(fid("history_price",p=p),{})))
+            history.append(row)
+        today=_as_of_moment(capture["captured_at"]).date(); count_day=max(_as_of_moment(c["date"]).date() for c in coins)
+        candidates=[r for r in history if r["coins_per_share"] and abs((count_day-date.fromisoformat(r["date"])).days-rule["twelve_month"]["days"])<=rule["twelve_month"]["tolerance_days"]]
+        prior=min(candidates,key=lambda r:abs((count_day-date.fromisoformat(r["date"])).days-rule["twelve_month"]["days"])) if candidates else None
+        change=ratio(count*prior["coins_per_share"]["denominator"]-prior["coins_per_share"]["numerator"]*shares,prior["coins_per_share"]["numerator"]*shares,"twelve_month_change",True) if prior else None
+        if not prior: errors["twelve_month_change"]=reason("no_prior_count")
+        raises=[]
+        for r in block["raises"]:
+            key=r["key"]; proceeds=number("raise_proceeds",largest["coin"],key); received=raise_premium=None; effect="rose"
+            if r["instrument"]=="shares":
+                effect=None
+                units,before,old_shares,old_price=(number("raise_"+term,largest["coin"],key) for term in ("units_sold","coins_before","shares_before","coin_price"))
+                before=_treasury_net_count(number,rule,largest,"raise_coins_before",k=key,day=str(fact("raise_proceeds",largest["coin"],key).get("as_of", ""))[:10],fact=fact,errors=errors)
+                received=ratio(proceeds,units,key+"_price")
+                if received and None not in (before,old_shares,old_price):
+                    a,b=proceeds*old_shares,units*before*old_price
+                    raise_premium=ratio(a-b,b,key+"_premium",True); effect="rose" if a>b else "fell" if a<b else "unchanged"
+            else: errors[key+"_price"]=errors[key+"_premium"]=reason("no_common_share_raise")
+            raises.append(dict(r,proceeds=proceeds,price_received=received,premium=raise_premium,effect=effect,coins_before=before if r["instrument"]=="shares" else None,why=errors.get(key+"_premium")))
+        charges=interest+dividends
+        months={"interest":ratio(cash*12,interest,"interest_months"),"all":ratio(cash*12,charges,"all_months")}
+        for key, charge in (("interest",interest),("all",charges)):
+            if charge == 0: errors[key+"_months"]=reason("no_fixed_charges")
+        def zero(extra,key):
+            n=debt+extra-cash-(treasury-largest["value"]) if extra is not None else None
+            if n is None or n<=0:
+                errors[key]=rule["no_opening_why"] if n is None else reason(
+                    "cash_covers_debt" if cash >= debt+extra else "cash_other_cover_debt")
+                return None
+            return ratio(n,largest["count"],key)
+        lines=[dict(line,coin=c["coin"],fact=fid("line",c["coin"],line["key"]),count=number("line",c["coin"],line["key"]),counted=line["kind"] in rule["line_kinds_counted"] and line["kind"] not in rule["line_kinds_not_counted"]) for c in coins for line in c["lines"]]
+        fund=subjects.treasury_fund(floors,largest["coin"])
+        fund_line=dict(fund,premium=premium(number("fund_nav"),number("fund_price"),"fund_premium"),rated_premium=premiums["diluted_preferred"],date=facts["price_last"]["as_of"]) if fund else {"gap":rule["fund_gap_words"]}
+        return dict(coins=coins,other_coins=other,cash=cash,true_debt=debt,**tables,shares_in_issue=shares,diluted_shares=diluted,
+            true_debt_value=value,diluted_true_debt_value=diluted_value,preferred_value=preferred_value,preferred_diluted_value=preferred_diluted,
+            market_value=market,diluted_market_value=diluted_market,premiums=premiums,rated_premium=premiums["diluted_preferred"],comparable_premium=premiums["issued_preferred"] if choice_ok else premiums["issued_true_debt"],
+            coins_per_share=cps,diluted_coins_per_share=diluted_cps,periods=history,twelve_month_change=change,**discount_history(premiums["issued_preferred"] if chosen_preferred else premiums["issued_true_debt"],annual,len(annual)),**history_basis,
+            raises=raises,interest=interest,preferred_dividends=dividends,fixed_charges=charges,months_covered=months,zero_coin_price=zero(decimal.Decimal(0),"zero_coin_price"),preferred_zero_coin_price=zero(deduction,"preferred_zero_coin_price"),
+            margin_loans=[r for r in tables["loans"] if r["secured_on_coins"] and r["lender_may_sell"]],coin_sales=[dict(r,proceeds=number("sale",k=r["key"])) for r in block["coin_sales"]],lines=lines,
+            company_measures=[dict(r,fact=fid("measure",k=r["key"]),value=number("measure",k=r["key"])) for r in block["company_measures"]],fund=fund_line,count_date=count_day.isoformat(),count_age_days=(today-count_day).days,may_sell_without_announcing=block["may_sell_without_announcing"],why=errors)
+
+
+def preferred_frame(floors, capture):
+    """AC92(3), M1: the one reading of the kind, issuer and selected entry."""
+    rule = floors["archetype_measures"]["holding_rule"]["treasury"]
+    subject = capture.get("subject") or {}
+    if subject.get("kind") != rule["listed_preferred"]["kind"] or not subjects.issuer(subject): return None
+    frame = (capture.get("business_frame") or {}).get(subject["issuer"]["ticker"], {})
+    block = frame.get(rule["frame_field"])
+    if frame.get("archetype") != floors["archetype_measures"]["holding_rule"]["holding_archetype"] or not block: return None
+    rows = [r for r in block["preferreds"] if all(str(subject.get(k) or "").strip() for k in ("ticker","listing")) and r.get("ticker") == subject["ticker"]]
+    return frame, block, rows[0] if len(rows) == 1 else None
+
+
+def issuer_pack(pack, floors):
+    """M3: an in-memory issuer view; the preferred's own tape never travels."""
+    from copy import deepcopy
+    capture = pack["capture"]
+    triple = preferred_frame(floors, capture)
+    if not triple: return None
+    issuer = subjects.issuer(capture["subject"])
+    suffix = gate.frame_suffix(capture["subject"], issuer["ticker"])
+    shared = floors["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["issuer_view"]["shared_prefixes"]
+    def strip(value, field=""):
+        reference = field in ("id","fact_class","fact_id","facts","passages","answered_by","evidence","ceo_tenure_years","insider_ownership_pct","guided","delivered","capital_allocation","competitive_position") or field.endswith(("_fact","_facts","_id","_ids","_prefix"))
+        if isinstance(value, str): return value[:-len(suffix)] if reference and value.endswith(suffix) else value
+        if isinstance(value, list): return [strip(v,field) for v in value]
+        if isinstance(value, dict): return {k: strip(v,k) for k, v in value.items()}
+        return value
+    view = strip(deepcopy(capture))
+    view["subject"] = dict(issuer, kind="single_stock", asset_class="equity")
+    view["business_frame"] = {issuer["ticker"]: strip(deepcopy(triple[0]))}
+    for tier, key in (("tier1", "id"), ("tier2", "id"), ("gaps", "fact_class")):
+        view[tier] = [strip(deepcopy(f)) for f in capture[tier] if f[key].endswith(suffix) or f[key].startswith(tuple(shared))]
+    for key in ("price_series", "benchmark_series"): view.pop(key, None)
+    block = view.get("evidence_challenge")
+    if block:
+        for key in ("evidence_sha256", "post_audit_sha256"):
+            if block.get(key): block[key] = gate.evidence_body_sha256(view)
+    from council.evidence import freeze
+    return freeze.build_pack(view)
+
+
+def preferred_role_set(pack, floors):
+    """M4: every own or shared fact is read through this one role set."""
+    capture = pack["capture"]; triple = preferred_frame(floors, capture)
+    if not triple or not triple[2]: return {}
+    rule = floors["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+    suffix = gate.frame_suffix(capture["subject"], capture["subject"]["issuer"]["ticker"])
+    tagged = {}
+    for role, spec in rule["roles"].items():
+        ids = [f["id"] for f in capture["tier1"] if f["id"].startswith(spec["prefix"]) and not f["id"].endswith(suffix)] if "prefix" in spec else [spec.get("id") or spec["pattern"].format(k=triple[2]["key"], suffix=suffix)]
+        if not ids: ids = [spec["prefix"]]
+        for fid in ids: tagged.setdefault(fid, set()).add(role)
+    return tagged
+
+
+def _preferred_failures(pack, floors, captured_day):
+    """AC92(3), M4-M7: properties once per role, then ruled relationships."""
+    capture = pack["capture"]; treasury = floors["archetype_measures"]["holding_rule"]["treasury"]
+    rule = treasury["listed_preferred"]; failures = []
+    def broken(key, detail=""):
+        r = rule[key + "_refusal"]
+        failures.append((r["what"] + (": " + detail if detail else ""), r["why"], r["where"]))
+    if captured_day < date.fromisoformat(rule["applies_from"]): broken("applies_from"); return failures
+    triple = preferred_frame(floors, capture)
+    if not triple: broken("other_issuer"); return failures
+    _, block, entry = triple
+    if not all(str(capture["subject"].get(k) or "").strip() for k in ("ticker","listing")): broken("listing"); return failures
+    if not entry: broken("not_in_table"); return failures
+    if entry.get("converts_into_common") is not False: broken("convertible", entry["name"])
+    facts = {f["id"]: f for f in capture["tier1"]}; values = {}
+    currency = capture["subject"].get("currency")
+    if currency != capture["subject"]["issuer"].get("currency"): broken("currency")
+    for fid, roles in preferred_role_set(pack, floors).items():
+        for role in roles:
+            spec = rule["roles"][role]; fact = facts.get(fid)
+            gap = next((g for g in capture["gaps"] if g["fact_class"] == fid and g["reason_kind"] == "absent_by_design"), None)
+            if not fact and role == "redemption_date" and gap: continue
+            value = gate._decimal_or_none(fact.get("value")) if fact and spec["numeric"] else None
+            try:
+                if not spec["numeric"]: value = date.fromisoformat(fact["value"])
+                day = _as_of_moment(fact["as_of"]).date()
+            except (TypeError, ValueError, KeyError): day = None
+            values[role] = value
+            expected = (currency + "_per_share" if currency else None) if spec["unit"] == "share_price_unit" else currency if spec["unit"] == "money" else spec["unit"]
+            if fact and fact["unit"] != expected:
+                failures.append((rule["unit_words"] % (spec["what"],fact["unit"],expected),spec["why"],spec["where"]))
+                if role in ("price","par","issuer_amount"): broken("currency")
+            limit = treasury["filing_max_age_days"] if spec["date"] == "filing" else floors["classes"][rule["kind"]]["floors"][0]["max_freshness_days"] if spec["date"] == "price" else fact.get("freshness_rule_days") if fact else None
+            if value is None or not day or limit is None or not 0 <= (captured_day-day).days <= limit:
+                failures.append((spec["what"], spec["why"], spec["where"]))
+    listed = values.get("listed_on")
+    if listed and (captured_day - listed).days < rule["min_listed_days"]: broken("young")
+    swings = treasury["swings"]; history, window = values.get("history_days"), values.get("window_days")
+    if history is None or history < swings["min_history_days"]: failures.append((swings["history_id"], swings["short_history_refusal"], swings["why"]))
+    if history is None or window != min(history, swings["full_window_days"]): failures.append((swings["window_id"], swings["window_refusal"], swings["why"]))
+    rows = {r["key"]: r for r in block["preferreds"]}
+    for key, row in rows.items():
+        if not all(field in row for field in ("ranks_ahead_of", "ranks_alongside", "ranking_words")) or not row.get("ranking_words", "").strip(): broken("ranking", key)
+        for field in ("ranks_ahead_of", "ranks_alongside"):
+            if any(k not in rows or k == key for k in row.get(field, [])): broken("ranking", key)
+        for other, peer in rows.items():
+            if key >= other: continue
+            ahead = other in row.get("ranks_ahead_of", []); behind = key in peer.get("ranks_ahead_of", [])
+            along = other in row.get("ranks_alongside", []); reciprocal = key in peer.get("ranks_alongside", [])
+            if along != reciprocal or sum((ahead, behind, along and reciprocal)) != 1: broken("ranking", key + ", " + other)
+    record = entry.get("dividend_record", []); frequency = rule["frequency_days"].get(entry.get("dividend_frequency"))
+    start = max(captured_day - timedelta(days=rule["record_days"]), listed) if listed else None
+    try:
+        dates = [date.fromisoformat(r["date"]) for r in record]
+        endpoints = [start, *dates, captured_day]
+        if not frequency or not dates or not start or any(not start <= d <= captured_day for d in dates) or any(a >= b for a,b in zip(dates,dates[1:])) or any((b-a).days > frequency+rule["record_grace_days"] for a,b in zip(endpoints,endpoints[1:])): broken("record")
+    except (ValueError, TypeError, KeyError): broken("record")
+    for payment in record:
+        status = payment.get("status")
+        if status not in rule["statuses"]: broken("record")
+        if status == rule["statuses"][1] and not entry["cumulative"]: broken("record_word")
+    return failures
+
+
+def preferred_cover(readings, coin_price):
+    """M6: the same exact two halves for the columns and every scenario."""
+    if not readings.get("issuer_readings") or coin_price is None or None in (readings.get("claims_ahead"),readings.get("claims_alongside")): return None
+    issuer = readings["issuer_readings"]; coins = issuer["coins"]; largest = max(coins, key=lambda c:c["value"])
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(v)) for c in coins for v in (c["count"],c["price"])) + len(str(coin_price)) + len(str(readings["claims_ahead"])) + len(str(readings["claims_alongside"]))
+        treasury = sum(c["count"] * (decimal.Decimal(coin_price) if c is largest else c["price"]) for c in coins) + issuer["other_coins"] + issuer["cash"]
+        claims = readings["claims_ahead"] + readings["claims_alongside"]
+        return dict(coin_price=decimal.Decimal(coin_price),treasury=treasury,ahead=readings["claims_ahead"],alongside=readings["claims_alongside"],cover=dict(numerator=treasury,denominator=claims) if claims > 0 else None)
+
+
+def preferred_readings(pack, floors):
+    """M15: one pure reading, no calculated figure ever enters the pack."""
+    capture = pack["capture"]; triple = preferred_frame(floors, capture)
+    rule = floors["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+    today = _as_of_moment(capture["captured_at"]).date()
+    if not triple or today < date.fromisoformat(rule["applies_from"]): return None
+    frame, block, entry = triple
+    if not entry: return {"why":{"entry":rule["not_in_table_refusal"]["why"]}}
+    facts = {f["id"]: f for f in capture["tier1"]}; tagged = preferred_role_set(pack, floors); why = {}
+    def fact(role): return next((facts.get(fid,{}) for fid,tags in tagged.items() if role in tags), {})
+    def number(role):
+        value = gate._decimal_or_none(fact(role).get("value"))
+        if value is None: why[role] = rule["roles"][role]["why"]
+        return value
+    issuer = treasury_readings(issuer_pack(pack, floors), floors, None)
+    price, par, rate, cash = (number(k) for k in ("price", "par", "issuer_dividend_rate", "cash"))
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(f.get("value"))) for f in facts.values())
+        dividend = par*rate/100 if None not in (par,rate) else None
+        yield_ratio = dict(numerator=dividend*100,denominator=price) if dividend is not None and price and price>0 else None
+        gap = dict(numerator=dividend*100-cash*price,denominator=price) if yield_ratio and cash is not None else None
+        ahead = [r["key"] for r in block["preferreds"] if entry["key"] in r.get("ranks_ahead_of", [])]
+        alongside = entry.get("ranks_alongside", []); behind = entry.get("ranks_ahead_of", [])
+        preferreds = (issuer or {}).get("preferreds", [])
+        def claims(keys):
+            amounts = [r["amount"] for r in preferreds if r["key"] in keys]
+            return sum(amounts,decimal.Decimal(0)) if None not in amounts else None
+        debt = (issuer or {}).get("true_debt") if rule["true_debt_ranks_ahead"] else decimal.Decimal(0); senior = claims(ahead); equal = claims([entry["key"],*alongside])
+        r = dict(entry=entry,price=price,par=par,rate=rate,rate_date=fact("issuer_dividend_rate").get("as_of"),cash_date=fact("cash").get("as_of"),dividend=dividend,yield_ratio=yield_ratio,cash=cash,gap=gap,
+            ahead=ahead,alongside=alongside,behind=behind,claims_ahead=debt+senior if None not in (debt,senior) else None,claims_alongside=equal,issuer_readings=issuer,
+            payments=entry.get("dividend_record", []),record=[],cumulative=entry["cumulative"],redemption_words=entry["redemption_words"],
+            redemption_date=fact("redemption_date").get("value"),listed_on=fact("listed_on").get("value"),history_days=number("history_days"),window_days=number("window_days"),why=why,cover=[])
+        r["yield"] = yield_ratio
+        r["currency"] = capture["subject"]["currency"]
+        if not r["redemption_date"]: why["redemption_date"] = next((g["reason"] for g in capture["gaps"] if g["fact_class"] == rule["roles"]["redemption_date"]["id"]), rule["page_words"]["no_redemption_date_words"])
+        quarters = {}
+        for payment in r["payments"]:
+            day = date.fromisoformat(payment["date"]); quarter = "%s Q%s" % (day.year,(day.month-1)//3+1)
+            row = quarters.setdefault(quarter,dict(quarter=quarter,count=0,status=rule["status_order"][-1])); row["count"] += 1
+            if payment["status"] in rule["status_order"] and rule["status_order"].index(payment["status"]) < rule["status_order"].index(row["status"]): row["status"] = payment["status"]
+        r["record"] = [quarters[k] for k in sorted(quarters,reverse=True)]
+        r["issuer"] = dict(name=capture["subject"]["issuer"]["name"],**{k:(issuer or {}).get(k) for k in ("count_date","count_age_days","margin_loans","coin_sales")})
+        if issuer and issuer.get("coins") and None not in (r["claims_ahead"],equal):
+            p = max(issuer["coins"],key=lambda c:c["value"])["price"]
+            r["cover"] = [dict(fall=f,**preferred_cover(r,p*(1-decimal.Decimal(f)/100))) for f in [rule["cover_today"],*rule["cover_falls"]]]
+        else: why["cover"] = (issuer or {}).get("why",{}).get("readings") or rule["page_words"]["cover_missing_words"]
+        dependencies = dict(dividend=("par","issuer_dividend_rate"),yield_ratio=("dividend","price"),gap=("yield_ratio","cash"),rate=("issuer_dividend_rate",),rate_date=("issuer_dividend_rate",),cash_date=("cash",),listed_on=("listed_on",))
+        for key,roles in dependencies.items():
+            if r[key] is None: why[key] = next((why[role] for role in roles if role in why),rule["roles"][roles[-1]]["why"] if roles[-1] in rule["roles"] else why.get("cover"))
+        if r["yield"] is None: why["yield"] = why["yield_ratio"]
+        return r
 
 
 def _archetype_floor_entries(floors, declared):
@@ -832,6 +1456,9 @@ def _archetype_floor_entries(floors, declared):
     block = (floors.get("archetype_floors") or {}).get(declared[0]) or {}
     entries = list(block.get("all_subtypes") or [])
     if declared[1]:
+        lifted = block.get("subtype_floors_lifted", {}).get(declared[1], {})
+        entries = [e for e in entries if (e.get("id") or e.get("prefix")
+                   or (e.get("prefixes") or [None])[0]) not in lifted]
         entries += list(block.get(declared[1]) or [])
     return entries
 
@@ -844,6 +1471,18 @@ def _archetype_lifts(floors, declared):
     lifts = (((floors.get("archetype_floors") or {}).get(declared[0]) or {})
              .get("lifts") or {})
     return lifts if ("subtypes" not in lifts or declared[1] in lifts["subtypes"]) else {}
+
+
+def _product_floor_entries(floors, declared, capture):
+    """AC87(2), P2: floors of a producer's MAIN product only."""
+    if not declared or declared[0] != gate._PRODUCER_ARCHETYPE:
+        return []
+    pair = _producer_frame(floors, capture)
+    if pair is None:
+        return []
+    product = (pair[1].get("resource_base") or {}).get("product")
+    return list(((floors.get("archetype_floors") or {}).get(declared[0]) or {})
+                .get("product_floors", {}).get(product, []))
 
 
 def _merged_floors(floors, subject, capture=None):
@@ -866,6 +1505,7 @@ def _merged_floors(floors, subject, capture=None):
     # of the class and the name - what every business of the declared
     # archetype carries, then what its own sub-type carries.
     entries += _archetype_floor_entries(floors, declared)
+    entries += _product_floor_entries(floors, declared, capture)
     return entries
 
 
@@ -1223,7 +1863,8 @@ def _holding_fact_failures(tagged, pairs, facts_by_id, ruling, holding_context=N
     def broken(fid, why, ground, where):
         failures.append(("a holding reading: '%s'" % fid, ground + ": " + why, where))
 
-    if holding_context and _holding_id(tagged, "published") is None:
+    if (holding_context and "published_nav" not in rule.get("holding_checks_replaced", {})
+            and _holding_id(tagged, "published") is None):
         broken("published_nav_fact", "the bridge must name published_nav_fact", "owner ruling AC60(H5)", "the company's own latest NAV")
     for fid, roles in tagged.items():
         fact = facts_by_id.get(fid) or {}
@@ -1285,6 +1926,8 @@ def _holding_failures(floors, frame, rating, capture, facts_by_id, captured_day,
                 "architect ruling HA8: the discount must rest on both the market value and the bridge total",
                 "the discount fact's declared arithmetic"))
     annual = _holding_history(pairs, capture["gaps"], history)
+    if (treasury_frame(floors, capture) and "year_end_pairs" in rule.get("treasury", {}).get("holding_checks_replaced", {})):
+        return failures
     for suffix in annual["incomplete"]:
         failures.append(("a year-end pair: '%s'" % suffix,
             "owner ruling AC61(H9): NAV per share and the share price that day must both be recorded",
@@ -1294,6 +1937,58 @@ def _holding_failures(floors, frame, rating, capture, facts_by_id, captured_day,
             "owner ruling AC61(H9): %s year-end pairs are required; the pack carries %s, with no absent-by-design gap" % (rule["history_year_ends"], len(annual["complete"])),
             "the last published financial year-end NAV and share prices"))
     return failures
+
+
+def _discount_ratio(numerator, denominator):
+    """AC61(H11): exact halves, display cut toward zero as HA8 ruled."""
+    if numerator is None or denominator is None or denominator <= 0:
+        return None
+    with decimal.localcontext() as exact:
+        exact.prec = max(100, len(numerator.as_tuple().digits)
+                         + len(denominator.as_tuple().digits) + 20)
+        display = (numerator * 1000 // denominator / 10).quantize(decimal.Decimal("0.1"))
+    return {"numerator": numerator, "denominator": denominator, "percent": display}
+
+
+def discount_history(today, year_pairs, keep):
+    """AC61(H9-H11), AC85(3): one pure reading of published annual pairs.
+    Pairs carry the year suffix and the two facts, newest first.
+    Values may already be Decimals; each row keeps its original fact ids."""
+    with decimal.localcontext() as exact:
+        exact.prec = max(exact.prec, 100 + sum(len(str(f.get("value")))
+            for _, nav, price in year_pairs[:keep] for f in (nav, price))
+            + sum(len(str(v)) for v in (today or {}).values()))
+        return _discount_history(today, year_pairs, keep)
+
+
+def _discount_history(today, year_pairs, keep):
+    rows = []
+    for suffix, nav, price in year_pairs[:keep]:
+        # M15: a calculated per-share value keeps its exact halves.
+        if isinstance(nav.get("value"), dict):
+            a, d = (nav["value"].get(k) for k in ("numerator", "denominator"))
+            b = gate._decimal_or_none(price.get("value"))
+            discount = _discount_ratio(a - b*d if None not in (a,b,d) else None, a)
+        else:
+            a, b = (gate._decimal_or_none(f.get("value")) for f in (nav, price))
+            discount = _discount_ratio(a - b if None not in (a,b) else None, a)
+        rows.append({"year": suffix, "nav_fact": nav.get("id"), "price_fact": price.get("id"),
+                     "discount": discount})
+    average = word = None
+    if rows and today and all(r["discount"] for r in rows):
+        with decimal.localcontext() as exact:
+            exact.prec = max(exact.prec, 100 + sum(len(str(v)) for r in rows for v in r["discount"].values()))
+            numerator, denominator = decimal.Decimal(0), decimal.Decimal(1)
+            for row in rows:
+                r = row["discount"]
+                numerator = numerator * r["denominator"] + r["numerator"] * denominator
+                denominator *= r["denominator"]
+            average = _discount_ratio(numerator, denominator * len(rows))
+            comparisons = [today["numerator"] * r["discount"]["denominator"]
+                           - r["discount"]["numerator"] * today["denominator"] for r in rows]
+            word = "wider" if all(c > 0 for c in comparisons) else "narrower" if all(
+                c < 0 for c in comparisons) else "inside"
+    return {"history": rows, "history_average": average, "range_word": word}
 
 
 def holding_readings(pack, floors):
@@ -1328,13 +2023,7 @@ def holding_readings(pack, floors):
         if numerator is None or denominator is None or denominator <= 0:
             errors.append("ratio needs both halves and a denominator above zero")
             return None
-        with decimal.localcontext() as exact:
-            exact.prec = max(100, len(numerator.as_tuple().digits)
-                             + len(denominator.as_tuple().digits) + 20)
-            display = (numerator * 1000 // denominator / 10).quantize(
-                decimal.Decimal("0.1"))
-        return {"numerator": numerator, "denominator": denominator,
-                "percent": display}
+        return _discount_ratio(numerator, denominator)
 
     # All arithmetic shares one precision chosen from the recorded class.
     with decimal.localcontext() as exact:
@@ -1360,27 +2049,18 @@ def holding_readings(pack, floors):
         today = ratio(nav - market if None not in (nav, market) else None, nav)
         company = ratio(published - comparable if None not in (published, comparable)
                         else None, published)
-        rows = []
         annual = _holding_history(pairs, capture["gaps"], history)
         if annual["incomplete"]:
             errors.append("missing year-end members: " + ", ".join(annual["incomplete"]))
-        for suffix, left, right in annual["complete"][:floors["archetype_measures"]["holding_rule"]["history_year_ends"]]:
+        keep = floors["archetype_measures"]["holding_rule"]["history_year_ends"]
+        annual_pairs = []
+        for suffix, left, right in annual["complete"][:keep]:
             a, b = amount(left), amount(right)
-            rows.append({"year": suffix, "nav_fact": left, "price_fact": right,
-                         "discount": ratio(a - b if None not in (a, b) else None, a)})
-        average = word = None
-        if rows and company and all(r["discount"] for r in rows) and not errors:
-            numerator, denominator = decimal.Decimal(0), decimal.Decimal(1)
-            for row in rows:
-                r = row["discount"]
-                numerator = numerator * r["denominator"] + r["numerator"] * denominator
-                denominator *= r["denominator"]
-            average = ratio(numerator, denominator * len(rows))
-            comparisons = [company["numerator"] * r["discount"]["denominator"]
-                           - r["discount"]["numerator"] * company["denominator"]
-                           for r in rows]
-            word = "wider" if all(c > 0 for c in comparisons) else "narrower" if all(
-                c < 0 for c in comparisons) else "inside"
+            if a is None or b is None or a <= 0:
+                errors.append("ratio needs both halves and a denominator above zero")
+            annual_pairs.append((suffix, {"id": left, "value": a}, {"id": right, "value": b}))
+        history_read = discount_history(company, annual_pairs, keep)
+        rows, average, word = (history_read[k] for k in ("history", "history_average", "range_word"))
         result.update(gross_value=gross, private_share=ratio(private, gross),
                       holdings=holdings, largest=holdings[0] if holdings else None,
                       largest_above_half=(holdings[0]["value"] * 2 > gross
@@ -1404,6 +2084,238 @@ def holding_readings(pack, floors):
             result["gross_value"] = result["largest"] = None
             result["largest_above_half"] = result["private_above_half"] = None
         return result
+
+
+def _float_compounder_failures(floors, declared, frame, capture, facts_by_id,
+                               captured_day, gap_kinds):
+    """AC84(1)-(8): one role-tagged reading, including the reverse rule.
+
+    The threshold, families, signs, groups and words are ruled data.
+    History uses the holding's generic annual reader; no displayed figure
+    is worked out here. AC62(H16) binds exact unit equality only.
+    """
+    rule = floors.get("archetype_measures", {}).get("float_compounder_rule")
+    if not rule or not declared or declared[0] != rule["fi_archetype"]:
+        return []
+    compounder = declared[1] == rule["compounder_subtype"]
+    if not compounder and (declared[1] not in rule["plain_subtypes"]
+                          or captured_day < date.fromisoformat(rule["applies_from"])):
+        return []
+    failures, tagged, values, units, pairs, segments = [], {}, {}, {}, {}, {}
+    history = list(rule["history"].values())
+    segment_prefixes = list(rule["segments"].values())
+    holding = floors["archetype_measures"]["holding_rule"]
+
+    def tag(fid, role):
+        tagged.setdefault(fid, set()).add(role)
+
+    def matches(fid, selector):
+        return fid.startswith(selector) if selector.endswith("_") else fid == selector
+
+    def broken(what, word, detail=""):
+        selectors = [s for group in rule["unit_groups"].values() for s in group]
+        selectors += [rule["fiscal_year_end_id"], rule["operating_roe_prefix"]] + holding["marker_prefixes"]
+        families = [s for s in selectors if matches(what, s)]
+        families = families or rule["refusal_families"][word]
+        failures.append((what, rule.get(word, word) + (": " + detail if detail else ""),
+                         "archetype_measures.float_compounder_rule: facts named "
+                         + ", ".join(_dedupe(families))))
+
+    def reading_fault(fid, fault, fact, **parts):
+        words = rule["reading_fault_words"][fault].format(
+            fact_id=fid, value=fact.get("value"), as_of=fact.get("as_of"),
+            rule_days=fact.get("freshness_rule_days"),
+            fault=_FAULT_WORDS.get(fault, ""), **parts)
+        broken(fid, words)
+
+    for role, fid in rule["classification"].items():
+        tag(fid, "classification:" + role)
+        tag(fid, "required")
+    if rule["fiscal_year_end_id"] in facts_by_id:
+        tag(rule["fiscal_year_end_id"], "fiscal_year_end")
+    if compounder:
+        tag(rule["fiscal_year_end_id"], "fiscal_year_end")
+        tag(rule["fiscal_year_end_id"], "required")
+        tag(rule["yardstick_book"], "yardstick")
+        tag(rule["yardstick_book"], "required")
+        row = floors["archetype_measures"]["table"][declared[0]]["subtypes"][declared[1]]
+        tag(row["subject_numerator"], "yardstick")
+    for fid in facts_by_id:
+        # Classification on the plain side may use its annual segment note.
+        for index, prefix in enumerate(history):
+            if fid.startswith(prefix):
+                tag(fid, "history:" + list(rule["history"])[index])
+                pairs.setdefault(fid[len(prefix):], [None] * len(history))[index] = fid
+        for index, prefix in enumerate(segment_prefixes):
+            if fid.startswith(prefix):
+                tag(fid, "segment:" + list(rule["segments"])[index])
+                segments.setdefault(fid[len(prefix):], [None] * len(segment_prefixes))[index] = fid
+        if compounder:
+            if fid.startswith(rule["adjusted_book"]["prefix"]):
+                tag(fid, "adjusted_book")
+            if fid.startswith(rule["operating_roe_prefix"]):
+                tag(fid, "operating_roe")
+            for role, prefix in rule["solvency"].items():
+                if fid.startswith(prefix):
+                    tag(fid, "solvency:" + role)
+            if any(fid.startswith(prefix) for prefix in holding["marker_prefixes"]):
+                tag(fid, "holding_marker")
+        for group, selectors in rule["unit_groups"].items():
+            if fid in tagged and any(matches(fid, s) for s in selectors):
+                tag(fid, "unit:" + group)
+        for sign, selectors in rule["signs"].items():
+            if fid in tagged and any(matches(fid, s) for s in selectors):
+                tag(fid, "sign:" + sign)
+    # Missing required ids receive their properties through the same loop.
+    if _ROLE_SINK is not None:
+        _ROLE_SINK.update(tagged)
+    for fid, roles in tagged.items():
+        fact = facts_by_id.get(fid)
+        if not fact:
+            if "required" in roles:
+                broken(fid, "classification_missing_refusal" if any(
+                    r.startswith("classification:") for r in roles) else "history_order_refusal")
+            continue
+        if "fiscal_year_end" in roles:
+            try:
+                if not re.fullmatch(r"\d{2}-\d{2}", fact["value"]):
+                    raise ValueError
+                date.fromisoformat("2000-" + fact["value"])
+            except (ValueError, TypeError):
+                broken(fid, "history_order_refusal", "fiscal year-end must be MM-DD")
+            continue
+        value = gate._decimal_or_none(fact.get("value"))
+        values[fid] = value
+        if value is None:
+            reading_fault(fid, "nan", fact)
+        elif "sign:above_zero" in roles and value <= 0:
+            reading_fault(fid, "above_zero", fact)
+        elif "sign:zero_or_above" in roles and value < 0:
+            reading_fault(fid, "zero_or_above", fact)
+        for role in roles:
+            if role.startswith("unit:"):
+                group = role.split(":", 1)[1]
+                unit = fact.get("unit", "")
+                if group in units and units[group][1] != unit:
+                    other, other_unit = units[group]
+                    broken(fid, "one_unit_refusal",
+                           "'%s' in %s beside '%s' in %s (%s)"
+                           % (fid, unit, other, other_unit, group))
+                units.setdefault(group, (fid, unit))
+                if group == "per_share" and not unit.endswith(rule["per_share_unit_suffix"]):
+                    broken(fid, "one_unit_refusal", group)
+        if "adjusted_book" in roles and not rule["adjusted_book"]["derived_allowed"] and fact.get("derived") is not None:
+            broken(fid, "constructed_value_refusal")
+        if "adjusted_book" in roles:
+            if fid not in rule["adjusted_book"]["members"]:
+                broken(fid, "constructed_value_refusal", "this member is not admitted")
+            if not str(fact.get("label") or "").strip() or not str(fact.get("source") or "").strip():
+                broken(fid, "adjusted_label_refusal")
+        if any(r.startswith("history:") for r in roles):
+            ceiling = floors["freshness_ceiling"]["closed_period_record_rule_days"]
+            if fact.get("freshness_rule_days", 0) > ceiling:
+                reading_fault(fid, "ceiling", fact, ceiling=ceiling)
+        as_of = date.fromisoformat(fact["as_of"][:10])
+        if as_of > captured_day or (captured_day - as_of).days > fact["freshness_rule_days"]:
+            reading_fault(fid, "stale", fact, age=(captured_day - as_of).days)
+
+    annual = _holding_history(pairs, capture["gaps"], history)
+    # P2, fix round 1: one fiscal-year reference and predicate on both sides.
+    fye = (facts_by_id.get(rule["fiscal_year_end_id"]) or {}).get("value")
+    ended = None
+    try:
+        month, day = map(int, fye.split("-"))
+        closing = date(captured_day.year, month, day)
+        ended = captured_day.year - (closing > captured_day)
+    except (AttributeError, ValueError, TypeError):
+        pass
+    def segment_year_is_current(suffix):
+        matched = re.fullmatch(r".+_fy(\d{4})", suffix)
+        return (matched is not None and ended is not None
+                and int(matched[1]) in (ended, ended - 1))
+
+    segment_route = False
+    for suffix, ids in segments.items():
+        if not segment_year_is_current(suffix):
+            for fid in ids:
+                if fid is not None:
+                    broken(fid, "segment_year_refusal")
+        elif None not in ids:
+            segment_route = True
+    asset_ids = list(rule["classification"].values())
+    amounts = [values.get(fid) for fid in asset_ids]
+    ratio_route = False
+    if all(v is not None for v in amounts):
+        share, owned, total = amounts
+        asset_dates = {facts_by_id[fid]["as_of"] for fid in asset_ids}
+        if len(asset_dates) != 1:
+            broken("the classification date", "classification_missing_refusal")
+        if share + owned > total:
+            broken("the classification total", "classification_missing_refusal", "the parts exceed the total")
+        numerator, denominator = map(decimal.Decimal, rule["asset_share_threshold"].split("/"))
+        with decimal.localcontext() as context:
+            context.prec = gate._EXACT_PRECISION
+            context.traps[decimal.Inexact] = True
+            ratio_route = (share + owned) * denominator > total * numerator
+    if compounder and not (ratio_route or segment_route):
+        broken("the declared float-compounder kind", "not_a_compounder_refusal")
+    if not compounder:
+        if ratio_route or segment_route:
+            broken("the declared insurer kind", "is_a_compounder_refusal")
+        return failures
+
+    if any("holding_marker" in roles for roles in tagged.values()):
+        # Read both holding kinds from their authoritative rows.
+        holding_subtype = next(k for k, r in floors["archetype_measures"]["table"][declared[0]]["subtypes"].items() if r.get("requires_nav_bridge"))
+        broken("a holding cannot be a float compounder", "holding_refusal",
+               holding_subtype + " / " + holding["holding_archetype"])
+    for suffix in pairs:
+        if not re.fullmatch(r"fy\d{4}", suffix):
+            broken(suffix, "history_member_refusal")
+    complete = annual["complete"]
+    years = [int(row[0][2:]) for row in complete]
+    if len(years) < rule["history_min_year_ends"]:
+        broken("the annual record", "history_short_refusal")
+    if len(years) < rule["history_year_ends"] and not annual["gap"]:
+        broken("the younger record gap", "history_short_refusal")
+    if len(years) >= rule["history_year_ends"] and annual["gap"]:
+        broken("the younger record gap", "history_gap_contradiction_refusal")
+    if (annual["incomplete"] or any(a - b != 1 for a, b in zip(years, years[1:]))
+            or not years or ended is None or years[0] not in (ended, ended - 1)):
+        broken("the financial year sequence", "history_order_refusal")
+    tickers = {t for k, row in rule["compounder_peers"].items() for t in row["tickers"]}
+    subject = capture["subject"].get("ticker")
+    subject_aliases = next((set(row["tickers"]) for row in rule["compounder_peers"].values() if subject in row["tickers"]), {subject})
+    peers = frame.get("peers") or []
+    for peer in peers:
+        if peer["ticker"] not in tickers and not str(peer.get(rule["peer_reason_field"]) or "").strip():
+            broken(peer["ticker"], "peer_refusal")
+    if not any(p["ticker"] in tickers - subject_aliases for p in peers) and not gap_kinds.get(rule["peer_gap_class"]):
+        broken("another compounder peer", "peer_no_compounder_refusal")
+    if segments and not segment_route:
+        broken("the segment financial year", "segment_year_refusal")
+    capital = frame.get("fi_capital") or {}
+    for fid, roles in tagged.items():
+        if "solvency:target_prefix" in roles:
+            ratio = rule["solvency"]["ratio_prefix"] + fid[len(rule["solvency"]["target_prefix"]):]
+            if capital.get("target_fact") != fid or ratio not in (capital.get("ratio_facts") or []) or ratio not in facts_by_id:
+                broken(fid, "target_pair_refusal")
+    return failures
+
+
+def float_compounder_role_set(pack, floors):
+    """AC84: every fact read by the rule, captured through its one check."""
+    rule = floors.get("archetype_measures", {}).get("float_compounder_rule")
+    declared = _declared_archetype(floors, pack["capture"])
+    if not rule or not declared or declared[0] != rule["fi_archetype"] or declared[1] not in [rule["compounder_subtype"]] + rule["plain_subtypes"]:
+        return {}
+    global _ROLE_SINK
+    _ROLE_SINK = {}
+    try:
+        check(pack, floors)
+        return _ROLE_SINK
+    finally:
+        _ROLE_SINK = None
 
 
 def _fi_failures(floors, declared, row, frame, rating, changing, gap_kinds,
@@ -1867,6 +2779,7 @@ def _canonical_test_terms(floors, declared):
     terms = dict(block.get("canonical_tests") or {})
     terms.update(_archetype_lifts(floors, declared).get("canonical_tests")
                  or {})
+    terms.update(block.get("subtype_canonical_tests", {}).get(declared[1]) or {})
     return terms
 
 
@@ -2616,6 +3529,15 @@ def _producer_frame(floors, capture):
     return (declared, frame) if isinstance(frame, dict) else None
 
 
+def uranium_producer_frame(floors, capture):
+    """AC85(2), P1: the single admission test for the uranium producer."""
+    pair = _producer_frame(floors, capture)
+    rule = floors.get("archetype_measures", {}).get("uranium_producer_rule", {})
+    if rule and pair and (pair[1].get("resource_base") or {}).get("product") == rule.get("product"):
+        return pair
+    return None
+
+
 def resource_readings(pack, floors):
     """The producer's worked-out figures (owner rulings AC52(R5), AC53(R9)
     and AC54(R13); architect ruling B7), or None for any other subject, a
@@ -2783,6 +3705,8 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
     families = dict(rule.get("block_families") or {})
     families.update((rule.get("block_families_by_subtype") or {}).get(
         declared[1]) or {})
+    if uranium_producer_frame(floors, capture):
+        families.update((rule.get("block_families_by_product") or {}).get(product) or {})
     words = {"reserve_facts": "the reserves",
              "reserve_price_facts": "the price the reserves were counted at",
              "reference_price_fact": "today's price of the main commodity",
@@ -2944,9 +3868,15 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
     if units is not None:
         money = (facts_by_id.get(row.get("subject_numerator")) or {}).get(
             "unit")
+        peer_products = _uranium_peer_products(floors, capture, facts_by_id)
         for peer in frame.get("peers") or ():
             slug = subjects.slug(peer["ticker"])
-            for metric, unit in ((peer_roles.get("reserves"), units["unit"]),
+            peer_units = units
+            if slug in peer_products:
+                peer_units = _producer_units(floors, declared, {
+                    "resource_base": {"product": peer_products[slug]}}) or units
+            peer_unit = peer_units["unit"]
+            for metric, unit in ((peer_roles.get("reserves"), peer_unit),
                                  (row.get("peer_numerator_metric"), money),
                                  (peer_roles.get("cash_flow"), money)):
                 pid = "peer_%s__%s" % (metric, slug)
@@ -3392,6 +4322,196 @@ def _producer_failures(floors, declared, row, frame, rating, capture,
     # The yardstick's halves in one unit (sub-charge a's check, its units
     # read through the same function).
     failures += _producer_unit_failures(row, rating, units, facts_by_id)
+    failures += _uranium_producer_failures(
+        floors, capture, facts_by_id, freshness, chosen, tagged,
+        stale_words_of, stale_source)
+    return failures
+
+
+def _uranium_peer_products(floors, capture, facts):
+    """AC87(3), P12: empty for every other producer."""
+    pair = uranium_producer_frame(floors, capture)
+    if pair is None:
+        return {}
+    rule = floors["archetype_measures"]["uranium_producer_rule"]
+    return {subjects.slug(peer["ticker"]): (facts.get("peer_%s__%s" % (
+        rule["peer_product_metric"], subjects.slug(peer["ticker"]))) or {}).get("value")
+        for peer in pair[1].get("peers") or ()}
+
+
+def _uranium_producer_failures(floors, capture, facts, freshness, chosen,
+                              producer_roles, stale_words_of, stale_source):
+    """AC85-AC87, P14: one uranium set, one loop for every fact's properties."""
+    pair = uranium_producer_frame(floors, capture)
+    if pair is None:
+        return []
+    declared, frame = pair
+    measures = floors["archetype_measures"]
+    rule = measures["uranium_producer_rule"]
+    units = _producer_units(floors, declared, frame)
+    if units is None:
+        return []
+    registry = floors["asset_classes"]["commodity"]["products"][rule["product"]]
+    day = _as_of_moment(capture["captured_at"]).date()
+    failures, tagged = [], {}
+    book, beside = rule["contract_book"], rule["price_received_beside"]
+    # All admitted book ids share the prefix of the explicit statement id.
+    book_prefix = os.path.commonprefix([value for key, value in book.items()
+                                       if key != "statement_unit"])
+    volumes, unpublished = [], book["not_published_id"] in facts
+
+    def broken(what, why, where="the company's latest quarterly or annual report"):
+        failures.append((what, why, where))
+
+    def tag(fid, role):
+        if fid in facts:
+            tagged.setdefault(fid, set()).add("uranium:" + role)
+
+    reference = registry["rule"]["roles"]["term_month_end"]["id"]
+    if (frame.get("resource_base") or {}).get("reference_price_fact") != reference:
+        broken("the term price as the producer's today's price",
+               "owner ruling AC86(1): the resource block cites " + reference,
+               "resource_base.reference_price_fact naming " + reference)
+
+    for fid in facts:
+        if fid.startswith(rule["bought_prefix"]):
+            tag(fid, "bought")
+            companion = rule["bought_companion_prefix"] + fid[len(rule["bought_prefix"]):]
+            if companion not in facts:
+                broken(fid + " beside " + companion,
+                       "owner ruling AC85(4): bought pounds stand beside mined output of the same period; missing " + companion)
+        if fid.startswith(rule["segment_prefix"]):
+            tag(fid, "segment")
+        if fid.startswith(rule["mine_country_prefix"]):
+            tag(fid, "mine_country")
+        if fid.startswith(book_prefix):
+            role, valid = "contract_book", False
+            for key in ("per_year_prefix", "average_prefix", "total_prefix", "share_prefix"):
+                if not fid.startswith(book[key]):
+                    continue
+                suffix = fid[len(book[key]):]
+                valid = bool(re.fullmatch(r"\d{4}" if key == "per_year_prefix"
+                                          else r"\d{4}_\d{4}", suffix))
+                years = suffix.split("_")
+                valid = valid and (len(years) == 1 or years[0] <= years[1])
+                if key == "share_prefix":
+                    role = "contract_book_share"
+                elif valid:
+                    volumes.append(fid)
+                break
+            if fid in (book["not_published_id"], book["pricing_id"]):
+                role, valid = "contract_book_words", True
+            tag(fid, role)
+            if not valid:
+                broken(fid, "owner ruling AC87(2): a contract book fact must name one published year, an ordered year range, or the explicit statement; no admitted shape: " + fid)
+    for key, role in (("spot", "price_received_spot"), ("term", "price_received_term")):
+        tag(beside[key], role)
+    for peer in frame.get("peers") or ():
+        slug = subjects.slug(peer["ticker"])
+        fid = "peer_%s__%s" % (rule["peer_product_metric"], slug)
+        tag(fid, "peer_product")
+        if fid not in facts:
+            broken(fid, "owner ruling AC87(3): every uranium producer peer names its main product",
+                   fid + " in the peer's metrics, from its own report")
+        elif fid not in peer.get("metrics", []):
+            broken(fid, "owner ruling AC87(3): the peer's main product is listed among its metrics")
+    # The converted figure cites its original tonnes; follow operands once.
+    market_roles = _holder_product_roles({"capture": capture}, floors, rule["producer_roles"])
+    pending, visited = list(set(producer_roles) | set(tagged) | set(market_roles)), set()
+    conversion = registry["rule"]["tonnes_to_pounds"]
+    while pending:
+        fid = pending.pop()
+        if fid in visited:
+            continue
+        visited.add(fid)
+        for operand in (facts.get(fid, {}).get("derived") or {}).get("operands", []):
+            source = operand.get("fact_id")
+            if source in facts:
+                pending.append(source)
+                if facts[source].get("unit") == conversion["from_unit"]:
+                    tag(source, "tonnes")
+    ev_unit = (facts.get(measures["table"][declared[0]]["subtypes"][declared[1]]
+                         ["subject_numerator"]) or {}).get("unit")
+    expected = {
+        "bought": units["unit"], "segment": ev_unit,
+        "contract_book": units["unit"], "contract_book_share": "percent",
+        "contract_book_words": book["statement_unit"],
+        "price_received_spot": units["price_unit"],
+        "price_received_term": units["price_unit"],
+        "mine_country": rule["country_unit"],
+        "peer_product": rule["country_unit"], "tonnes": conversion["from_unit"]}
+    text_roles = {"contract_book_words", "mine_country", "peer_product"}
+    for fid, roles in tagged.items():
+        fact = facts[fid]
+        value = gate._decimal_or_none(fact["value"])
+        for tagged_role in sorted(roles):
+            role = tagged_role.split(":", 1)[1]
+            ruling = "AC85(1)" if role == "tonnes" else "AC85(4)" if role in ("bought", "segment") else "AC87(3)" if role == "peer_product" else "AC87(2)"
+            why = "owner ruling %s: '%s'" % (ruling, fid)
+            if role in text_roles:
+                if not isinstance(fact["value"], str) or not fact["value"].strip():
+                    broken(fid, why + " requires non-empty words")
+            elif value is None:
+                broken(fid, why + " requires a finite number")
+            elif ((role == "bought" and value < 0)
+                  or (role in ("contract_book", "price_received_spot",
+                               "price_received_term") and value <= 0)):
+                broken(fid, why + " requires a number " + ("at or above zero" if role == "bought" else "above zero"))
+            if fact.get("unit") != expected[role]:
+                broken(fid, why + " requires unit %s; recorded %s" % (expected[role], fact.get("unit")))
+            dated = _as_of_moment(fact["as_of"]).date()
+            stale = stale_words_of(fid)
+            if stale is not None or dated > day:
+                broken(fid, why + ": " + (stale or "dated after the capture"),
+                       "a fresher reading of " + (stale_source(fid) or fid))
+            if role == "segment" and not str(fact.get("label") or "").strip():
+                broken(fid, why + " requires the business's name in its label")
+            prefix = rule["mine_country_prefix"] if role == "mine_country" else rule["segment_prefix"] if role == "segment" else None
+            if prefix and fid == prefix:
+                broken(fid, why + " requires the mine or business name after its prefix")
+            if role == "contract_book_share" and fact.get("derived"):
+                broken(fid, why + " requires the company's published share, never a council calculation")
+            if role == "peer_product":
+                allowed = [rule["product"]] + rule["outside_peer_products"]
+                if fact["value"] not in allowed or fact["value"] not in measures["resource_products"]:
+                    broken(fid, why + " admits only " + ", ".join(allowed))
+    if _ROLE_SINK is not None:
+        for fid, roles in tagged.items():
+            _ROLE_SINK.setdefault(fid, set()).update(roles)
+    gaps = {gap["fact_class"]: gap for gap in capture["gaps"]}
+    for prefix in (rule["bought_prefix"], rule["segment_prefix"]):
+        if not any(fid.startswith(prefix) for fid in facts):
+            gap = gaps.get(prefix)
+            if gap and gap["reason_kind"] != "absent_by_design":
+                broken(prefix, "owner ruling AC85(4): absence is declared absent_by_design")
+    if book["pricing_id"] not in facts:
+        gap = gaps.get(book["pricing_id"])
+        if gap and gap["reason_kind"] != "other":
+            broken(book["pricing_id"], "owner ruling AC87(2): unpublished pricing words require an other gap explaining what is not published")
+    if not volumes and not unpublished:
+        broken(book_prefix, "owner ruling AC87(2): record the company's published volumes or its sourced not-published statement",
+               "the latest sales contracts note; no volume is invented")
+    if volumes and unpublished:
+        broken(book["not_published_id"], "owner ruling AC87(2): published volumes and not published are two readings of one book: " + ", ".join(volumes))
+    output = chosen.get(_PRODUCER_QUARTERS[0][0]) or []
+    if output and all(gate._decimal_or_none(facts[fid]["value"]) == 0 for fid in output):
+        broken("output in at least one of the latest four quarters",
+               "owner ruling AC85(4): no output in the latest year: " + ", ".join(output),
+               "the latest quarter in which the company produced, once output resumes - no figure in this pack can stand in for it")
+    dates = [(fid, _as_of_moment(facts[fid]["as_of"]).date())
+             for fid in beside.values() if fid in facts]
+    if len(dates) == len(beside):
+        apart = (max(d for _, d in dates) - min(d for _, d in dates)).days
+        if apart > rule["same_dates_max_days"]:
+            broken("the price received beside spot and term on the same dates",
+                   "owner ruling AC87(2): %s; %s days apart, at most %s" % (
+                       ", ".join(fid + " " + str(d) for fid, d in dates),
+                       apart, rule["same_dates_max_days"]))
+    if registry.get("sitting_open") is False:
+        broken(rule["product"], registry["sitting_closed"], "the product's sitting_open flag when its pages are built")
+    failures += _uranium_market_failures(
+        {"capture": capture}, floors, day,
+        lambda fid: stale_words_of(fid) is None, rule["producer_roles"])
     return failures
 
 
@@ -3494,6 +4614,185 @@ def coin_role_set(pack, floors):
     return roles
 
 
+def uranium_readings(pack, floors):
+    """AC85-AC88, URANIUM(c): exact measures over the ONE role set.
+    Nothing is written to the pack; no sufficiency decision calls this.
+    Published book shares and the producer yardstick are never rebuilt."""
+    capture = (pack or {}).get("capture") or {}
+    subject = capture.get("subject") or {}
+    row = subjects.holder_product(subject, floors)
+    producer_frame = uranium_producer_frame(floors, capture) if subject else None
+    if row is None and producer_frame is None:
+        return None
+    producer_rule = floors["archetype_measures"]["uranium_producer_rule"]
+    if row is None:
+        row = floors["asset_classes"]["commodity"]["products"][producer_rule["product"]]
+    if not subjects.applies_on(row, _as_of_moment(capture["captured_at"]).date()):
+        return None
+    rule, measures = row["rule"], row["rule"]["measures"]
+    tagged = producer_role_set(pack, floors) if producer_frame else holder_product_role_set(pack, floors)
+    if producer_frame:
+        tagged = {fid: {r.removeprefix("uranium:") for r in roles} for fid, roles in tagged.items()}
+    facts = {f["id"]: f for f in capture["tier1"] if f["id"] in tagged}
+    why = {}
+    result = {"way_in": "producer" if producer_frame else "holder", "spot_term": None,
+              "holder": None, "buying": {"holders": [], "totals": [], "dominant": None},
+              "supply_ratio": None, "producer": None, "swings": None, "why": why}
+
+    def fid_for(role, **context):
+        spec = rule["roles"][role]
+        return (spec.get("id") or spec["id_pattern"]).format(**context)
+
+    def amount(fid, allowed=None):
+        fact = facts.get(fid) or {}
+        number = gate._decimal_or_none(fact.get("value"))
+        if number is None or (allowed is not None and fact.get("unit") not in allowed):
+            why[fid] = "missing or unreadable '%s'" % fid
+            return None
+        return number
+
+    def read(role, **context):
+        fid = fid_for(role, **context)
+        return amount(fid, _uranium_role_units(row, rule["roles"][role], context.get("h")))
+
+    def pounds(role, **context):
+        fid = fid_for(role, **context)
+        f = facts.get(fid) or {}
+        factor = rule["unit_scales_lb"].get(f.get("unit"))
+        conversion = rule["tonnes_to_pounds"]
+        if f.get("unit") == conversion["from_unit"]:
+            factor = conversion["factor"]
+        value = read(role, **context)
+        return value * decimal.Decimal(factor) if value is not None and factor is not None else None
+
+    def percent(numerator, denominator, fid):
+        if numerator is None or denominator is None or denominator <= 0:
+            why[fid] = "ratio needs readable inputs and a denominator above zero: '%s'" % fid
+            return None
+        return numerator * 100 / denominator
+
+    with decimal.localcontext() as exact:
+        exact.prec = 100 + sum(len(str(f["value"])) for f in facts.values())
+        spot, term = read("spot_month_end"), read("term_month_end")
+        if None not in (spot, term):
+            gap = term - spot
+            result["spot_term"] = {"spot": spot, "term": term,
+                "as_of": facts[fid_for("spot_month_end")]["as_of"], "gap": gap,
+                "gap_percent_of_spot": percent(gap, spot, fid_for("spot_month_end")),
+                "sign": measures["gap_sign_words"]["term_above" if gap > 0 else "term_below" if gap < 0 else "level"]}
+        key = subjects.physical_holder(subject, floors)
+        if key:
+            nav_id, price_id = (fid_for(r, h=key) for r in ("nav", "holder_price"))
+            nav, price = (read(role, h=key) for role in ("nav", "holder_price"))
+            today = _discount_ratio(nav - price if None not in (nav, price) else None, nav)
+            if today is None:
+                why["discount_today"] = "unreadable discount inputs: '%s', '%s'" % (nav_id, price_id)
+            pairs = {}
+            for fid, roles in tagged.items():
+                for role, side in (("history_nav", 0), ("history_price", 1)):
+                    if role in roles:
+                        suffix = fid[len(rule["roles"][role]["prefix"]):]
+                        if re.fullmatch(r"fy\d{4}", suffix):
+                            pairs.setdefault(suffix, [None, None])[side] = fid
+            year_pairs = []
+            for suffix in sorted(pairs, key=gate.period_order, reverse=True):
+                left, right = pairs[suffix]
+                if None in (left, right):
+                    missing_role = "history_nav" if left is None else "history_price"
+                    missing_id = fid_for(missing_role, suffix=suffix)
+                    why[missing_id] = "missing or unreadable '%s'" % missing_id
+                    continue
+                year_pairs.append((suffix, {"id": left, "value": read("history_nav", h=key, suffix=suffix)},
+                                   {"id": right, "value": read("history_price", h=key, suffix=suffix)}))
+            keep = floors["archetype_measures"]["holding_rule"]["history_year_ends"]
+            history = discount_history(today, year_pairs, keep)
+            result["holder"] = dict(key=key, nav=nav, price=price, discount_today=today,
+                costs=read("costs", h=key), pounds_now=pounds("pounds_now", h=key), **history)
+            if len(history["history"]) < keep:
+                why["history"] = "fewer annual pairs: '%s', '%s'" % (
+                    rule["roles"]["history_nav"]["prefix"], rule["roles"]["history_price"]["prefix"])
+            result["swings"] = {"history_days": read("history"), "window_days": read("window"),
+                                "series_holder": row["physical_holders"][key]["swings_series_holder"]}
+        buying = result["buying"]
+        for h in row["physical_holders"]:
+            now = pounds("pounds_now", h=h)
+            windows = []
+            for w in rule["pound_windows"]:
+                fid = fid_for("pounds_start", h=h, point=w["point"])
+                start = pounds("pounds_start", h=h, point=w["point"]) if fid in facts else None
+                change = now - start if None not in (now, start) else None
+                windows.append({"point": w["point"], "words": w["words"], "start": start,
+                    "start_as_of": (facts.get(fid) or {}).get("as_of"), "change": change,
+                    "change_percent": percent(change, start, fid) if start is not None else None,
+                    "gap": rule["no_start_words"] if start is None else None})
+                if start is None:
+                    why[fid] = "'%s': %s" % (fid, rule["no_start_words"])
+            buying["holders"].append({"key": h, "now": now, "windows": windows})
+        for index, w in enumerate(rule["pound_windows"]):
+            changes = [h["windows"][index]["change"] for h in buying["holders"]]
+            total = sum(changes) if None not in changes else None
+            buying["totals"].append({"point": w["point"], "words": w["words"], "change": total})
+            if total is None:
+                why[w["point"]] = measures["no_total_words"] + ": " + ", ".join(
+                    fid_for("pounds_start", h=h["key"], point=w["point"])
+                    for h in buying["holders"] if h["windows"][index]["change"] is None)
+        now_values = [h["now"] for h in buying["holders"]]
+        if None not in now_values:
+            total = sum(now_values)
+            buying["dominant"] = next((h["key"] for h in buying["holders"]
+                if h["now"] * 100 > decimal.Decimal(measures["dominance_percent"]) * total), None)
+        year = _as_of_moment(capture["captured_at"]).year
+        ends = rule["roles"]["guidance"]["ends"]
+        supply = {end: [pounds("guidance", p=p, yyyy=year, end=end)
+                       for p in rule["largest_producers"]] for end in ends}
+        change = buying["totals"][-1]["change"]
+        if change is not None and all(None not in values for values in supply.values()):
+            low, high = (sum(supply[end]) for end in ends)
+            if low > 0 and high > 0:
+                result["supply_ratio"] = {"low_percent": change * 100 / high,
+                    "high_percent": change * 100 / low, "supply_low": low, "supply_high": high,
+                    "calculated_words": measures["calculated_words"], "supply_words": measures["supply_words"]}
+        if result["supply_ratio"] is None:
+            why["supply_ratio"] = "; ".join(why.values()) or "unreadable guidance: " + rule["roles"]["guidance"]["prefix"]
+        if producer_frame:
+            # The existing reader receives only the same role-tagged facts.
+            resource_pack = dict(pack, capture=dict(capture, tier1=list(facts.values())))
+            resource = resource_readings(resource_pack, floors) or {}
+            block = producer_frame[1]["resource_base"]
+            if resource.get("reserve_price") is None:
+                why["reserve_price"] = "missing or unreadable inputs: " + ", ".join(block["reserve_price_facts"])
+            if resource.get("today_price") is None:
+                why["today_term"] = "missing or unreadable '%s'" % block["reference_price_fact"]
+            if resource.get("value_per_unit") is None:
+                declared = producer_frame[0]
+                yardstick = floors["archetype_measures"]["table"][declared[0]]["subtypes"][declared[1]]
+                why["value_per_pound"] = "unreadable inputs: '%s'; %s" % (
+                    yardstick["subject_numerator"], ", ".join(block["reserve_facts"]))
+            book, beside = producer_rule["contract_book"], producer_rule["price_received_beside"]
+            share = next((fid for fid in tagged if "contract_book_share" in tagged[fid]), None)
+            ids, shape = [], None
+            for candidate in ("per_year", "average", "total"):
+                members = [fid for fid in tagged if "contract_book" in tagged[fid]
+                           and fid.startswith(book[candidate + "_prefix"])]
+                if members:
+                    ids, shape = members, candidate
+                    break
+            if share:
+                shape = "share"
+            elif not ids and book["not_published_id"] in facts:
+                shape, ids = "not_published", [book["not_published_id"]]
+            if not share:
+                why["contract_share"] = measures["not_published_share_words"] + ": " + book["share_prefix"]
+            result["producer"] = {"value_per_pound": resource.get("value_per_unit"),
+                "reserve_price": resource.get("reserve_price"), "today_term": resource.get("today_price"),
+                "today_spot": read("spot_proxy"), "below_reserve_price": resource.get("today_below_reserve_price"),
+                "received": amount(beside["realized"], [row["price_unit"]]),
+                "received_spot_average": amount(beside["spot"], [row["price_unit"]]),
+                "received_term_average": amount(beside["term"], [row["price_unit"]]),
+                "contract_book": {"shape": shape, "fact_ids": ids, "share_fact_id": share}}
+        return result
+
+
 def coin_readings(pack, floors):
     """Forward new supply, whoever receives it (AC68(3), architect v9).
 
@@ -3539,6 +4838,656 @@ def coin_readings(pack, floors):
             / values["turnover"] * hundred, "facts": refs}
 
 
+
+
+def _protocol_families(pack, floors):
+    """M6, M11: group the tagged facts once by metric, line and member."""
+    rule = _protocol_context(pack, floors)[2]
+    facts = {f["id"]: f for f in pack["capture"]["tier1"]}
+    comparables, history, lines = {}, {}, {}
+    for fid, roles in protocol_role_set(pack, floors).items():
+        if "comparable" in roles:
+            metric, sep, tail = fid[len(rule["comparable_prefix"]):].partition("__")
+            line, sep2, slug = tail.partition("__")
+            line, slug = (line, slug) if sep2 else (None, line)
+            comparables.setdefault((line, slug), {})[metric] = facts[fid]
+        if "history" in roles:
+            for metric, prefix in rule["history_prefixes"].items():
+                if fid.startswith(prefix):
+                    history.setdefault(fid[len(prefix):], {})[metric] = facts[fid]
+        if "line" in roles:
+            lines[fid[len(rule["line_prefix"]):]] = facts[fid]
+    return comparables, history, lines
+
+
+def _protocol_implied(low, base, high, supply_readings, values):
+    """M8: every method's per-token figures and comparisons live here."""
+    per_token = {k: None if v is None else v / supply_readings["circulating"]
+                 for k, v in (("low", low), ("base", base), ("high", high))}
+    forward = {k: None if v is None else v / supply_readings["twelve_month_supply"]
+               for k, v in (("low", low), ("base", base), ("high", high))}
+    gaps = {k + "_against_base_percent": (v - base) * 100 / base if base else None
+            for k, v in values.items()}
+    place = ("inside" if low is None or high is None else
+             "below" if values["market_value"] < low else "above" if values["market_value"] > high else "inside")
+    return dict(per_token=per_token, per_token_twelve_months=forward, place=place, **gaps)
+
+
+def _protocol_multiples_range(multiples):
+    """AC79(3), R9: one exact low, median and high reading."""
+    ordered = sorted(multiples.values())
+    n = len(ordered)
+    return dict(low=ordered[0], median=(ordered[(n - 1) // 2] + ordered[n // 2]) / 2,
+                high=ordered[-1])
+
+
+def _protocol_range(multiples, annual, supply, values):
+    """M8: low, median and high, with no rounding of a comparison."""
+    reading = _protocol_multiples_range(multiples)
+    low, base, high = [reading[k] * annual for k in ("low", "median", "high")]
+    return dict(used=True, low=low, base=base, high=high, members=sorted(multiples),
+                **_protocol_implied(low, base, high, supply, values))
+
+
+def _protocol_comparables(pack, floors, families, facts):
+    """AC79(3), M7: exclude by name; listed equity references stay beside."""
+    key, row, rule = _protocol_context(pack, floors)
+    row = dict(row, _key=key)
+    day = _as_of_moment(pack["capture"]["captured_at"]).date()
+    standing, excluded, references = {}, [], []
+    fresh = lambda fid: pack.get("freshness", {}).get(fid, {}).get("status") == "within_rule"
+    for (line, slug), metrics in sorted(families.items(), key=lambda x: (x[0][0] or "", x[0][1])):
+        reason = None
+        names = {str(f.get("label") or "").strip().casefold() for f in metrics.values()}
+        private_names = {name.casefold() for name in rule["private_venues"]}
+        listed = next((reference for reference, spec in rule["listed_references"].items()
+                       if slug.casefold() == reference.casefold()
+                       or names.intersection(name.casefold() for name in spec["names"])), None)
+        if slug.casefold() in private_names or names.intersection(private_names):
+            reason = "private_venue"
+        elif slug == key:
+            reason = "the_token_itself"
+        elif listed is not None:
+            reason = "listed_reference"
+            if line is None:
+                reference = rule["listed_references"][listed]
+                measures = []
+                for numerator, denominator in reference["measures"]:
+                    a, b = metrics.get(numerator), metrics.get(denominator)
+                    av = gate._decimal_or_none(a["value"]) if a and a["unit"] == reference["unit"] else None
+                    bv = gate._decimal_or_none(b["value"]) if b and b["unit"] == reference["unit"] else None
+                    faults = [metric for metric, value in ((numerator, av), (denominator, bv))
+                              if not _protocol_number_ok(value, False)]
+                    measure = dict(numerator=numerator, denominator=denominator,
+                                   value=av / bv if not faults else None)
+                    if faults:
+                        measure["why"] = rule["listed_reference_not_meaningful_words"].format(figure=", ".join(faults))
+                    measures.append(measure)
+                references.append(dict(slug=slug, measures=measures))
+        else:
+            for metric, spec in rule["comparable_metrics"].items():
+                fact = metrics.get(metric)
+                if fact is None or _protocol_fact_faults(fact, spec, row, rule, day, fresh):
+                    reason = "not_same_way"
+                    break
+                against = facts[rule["roles"][spec["against_role"]]["id"]]
+                if abs((_as_of_moment(fact["as_of"]).date() - _as_of_moment(against["as_of"]).date()).days) > rule["comparable_max_days_apart"]:
+                    reason = "not_same_way"
+                    break
+            if reason is None:
+                fees = gate._decimal_or_none(metrics["holders_fees_90d"]["value"])
+                if fees <= 0:
+                    reason = "no_holders_fees"
+                else:
+                    multiple = gate._decimal_or_none(metrics["market_value"]["value"]) / (fees * rule["year_days"] / rule["fee_basis_days"])
+                    standing.setdefault(line, {})[slug] = multiple
+        if reason:
+            excluded.append(dict(slug=slug, line=line, why=rule["exclusions"][reason]))
+    return standing, excluded, references
+
+
+def protocol_value_readings(pack, floors, in_force=None):
+    """AC79(1)-(3), M5-M10: fee figures and separate fair-value methods."""
+    inputs = _protocol_readable(pack, floors)
+    if inputs is None:
+        return None
+    (key, row, rule), facts, v, refs = inputs
+    supply = protocol_supply_readings(pack, floors)
+    if supply is None:
+        return None
+    values = dict(market_value=v["price"] * v["supply"], fully_diluted_value=v["price"] * v["supply_total"])
+    fees = {}
+    for name, role in (("users", "fees"), ("revenue", "revenue"), ("holders", "holders")):
+        d30, d90 = v[role + "_30d"], v[role + "_90d"]
+        annual, annual30 = d90 * rule["year_days"] / rule["fee_basis_days"], d30 * rule["year_days"] / int(next(iter(rule["route_roles"]))[:-1])
+        fees[name] = dict(d30=d30, d90=d90, annual=annual, annual_30d=annual30,
+                         gap_percent=(annual30 - annual) * 100 / annual if annual else None)
+    def share(value):
+        return value * 100 / v["fees_90d"] if v["fees_90d"] else None
+    routes = {}
+    for window, spec in rule["route_roles"].items():
+        for fid, roles in protocol_role_set(pack, floors).items():
+            if "route_" + window in roles:
+                route = fid[len(spec["prefix"]):]
+                routes.setdefault(route, {})["d" + window[:-1]] = gate._decimal_or_none(facts[fid]["value"])
+    for values_by_route in routes.values():
+        values_by_route["share_percent"] = share(values_by_route["d90"])
+    resellable = {k: v.get("resellable_" + k[1:] + "d") for k in ("d30", "d90")}
+    second = {}
+    for window in rule["route_roles"]:
+        if "second_" + window in v:
+            first, other = v["fees_" + window], v["second_" + window]
+            second["d" + window[:-1]] = dict(value=other, gap_percent=(other - first) * 100 / first if first else None,
+                                            fee_sources_disagree=_cross_check_exceeds(first, other, rule["fee_sources_disagree_percent"]))
+    families, history, lines = _protocol_families(pack, floors)
+    standing, excluded, references = _protocol_comparables(pack, floors, families, facts)
+    methods = {}
+    scenarios_only = v["holders_90d"] == 0
+    annual = fees["holders"]["annual"]
+    methods["comparables"] = dict(used=False, why=rule["comparables_dropped_words"], dropped=True)
+    if len(standing.get(None, {})) >= rule["comparables_min"] and not scenarios_only:
+        multiples = standing[None]
+        methods["comparables"] = dict(_protocol_range(multiples, annual, supply, values), multiples=multiples,
+            multiples_range=_protocol_multiples_range(multiples), dropped=False)
+    methods["own_history"] = dict(used=False, why=rule["own_history_dropped_words"])
+    if len(history) >= rule["own_history_min_members"] and not scenarios_only:
+        multiples = {member: gate._decimal_or_none(pair["market_value"]["value"]) /
+                     (gate._decimal_or_none(pair["holders_fees_90d"]["value"]) * rule["year_days"] / rule["fee_basis_days"])
+                     for member, pair in history.items()}
+        methods["own_history"] = dict(_protocol_range(multiples, annual, supply, values), today_multiple=values["market_value"] / annual)
+    methods["discounted_fees"] = dict(used=False, why=rule["discounted_not_declared_words"])
+    spec = rule["opening"]
+    rates = [(in_force or {}).get(variable, spec["no_rate"]) for variable in spec["rate_variables"]]
+    if rates != [spec["no_rate"], spec["no_rate"]]:
+        g, r = [gate._decimal_or_none(rate) if isinstance(rate, str) else None for rate in rates]
+        if g is None or r is None or g <= -100 or r <= 0:
+            return None
+        if r <= g:
+            methods["discounted_fees"] = dict(used=False, why=rule["discount_not_above_growth_words"])
+        elif not scenarios_only:
+            base = annual * (1 + g / 100) / ((r - g) / 100)
+            methods["discounted_fees"] = dict(used=True, low=None, base=base, high=None, members=[],
+                                             growth_percent=g, discount_percent=r,
+                                             **_protocol_implied(None, base, None, supply, values))
+    missing_lines = sorted(line for line in lines if len(standing.get(line, {})) < rule["comparables_min"])
+    methods["sum_of_parts"] = dict(used=False, why=rule["sum_of_parts_unavailable_words"], lines=missing_lines)
+    if len(lines) >= rule["lines_min"] and not missing_lines and not scenarios_only:
+        parts = {line: _protocol_range(standing[line], gate._decimal_or_none(f["value"]) * rule["year_days"] / rule["fee_basis_days"], supply, values)
+                 for line, f in lines.items()}
+        low, base, high = [sum((part[k] for part in parts.values()), decimal.Decimal(0)) for k in ("low", "base", "high")]
+        methods["sum_of_parts"] = dict(used=True, low=low, base=base, high=high, members=sorted(lines), parts=parts,
+                                      **_protocol_implied(low, base, high, supply, values))
+    if scenarios_only:
+        methods = {method: dict(used=False, why=rule["scenarios_only_words"]) for method in methods}
+    return dict(token=key, **values, fees=fees, holders_share_percent=share(v["holders_90d"]), routes=routes,
+                resellable=resellable, second_source=second, scenarios_only=scenarios_only,
+                methods=methods, excluded=excluded, references=references,
+                facts={fid: sorted(roles) for fid, roles in protocol_role_set(pack, floors).items() if fid in facts})
+
+
+def _cross_check_exceeds(a, b, tolerance):
+    """AC68(1), AC80(4)(a): shared Decimal cross products, no rounded gap."""
+    return abs(a - b) * 100 > decimal.Decimal(tolerance) * a
+
+
+
+def _protocol_offsets_overlap(schedule):
+    """M3: inclusive periods, including every recorded offset route."""
+    spans = sorted((date.fromisoformat(x["period_start"]), date.fromisoformat(x["period_end"]), i)
+                   for i, x in enumerate(schedule["offsets"]))
+    return [(a[2], b[2]) for n, a in enumerate(spans) for b in spans[n + 1:] if b[0] <= a[1]]
+
+
+def _protocol_inputs_present(pack, floors):
+    """P3: anchors own absence; helpers never divide incomplete evidence."""
+    context = _protocol_context(pack, floors)
+    if not context:
+        return False
+    _, row, rule = context
+    present = {f["id"] for f in pack["capture"]["tier1"]}
+    for fid, roles in protocol_role_set(pack, floors).items():
+        for role in roles:
+            if role not in rule["roles"] and role != "turnover_operand":
+                continue
+            spec = _protocol_spec(fid, role, row, rule)
+            flag = spec.get("binds")
+            if (not flag or row[flag]) and fid not in present:
+                return False
+    return True
+
+
+def _protocol_readable(pack, floors):
+    """M1: helpers use the refusal path, never an independent input bar."""
+    context = _protocol_context(pack, floors)
+    if not context or not _protocol_inputs_present(pack, floors):
+        return None
+    facts = {f["id"]: f for f in pack["capture"]["tier1"]}
+    day = _as_of_moment(pack["capture"]["captured_at"]).date()
+    if _protocol_evidence_failures(pack, floors, day, lambda fid: pack.get("freshness", {}).get(fid, {}).get("status") == "within_rule"):
+        return None
+    _, row, rule = context
+    values, refs = {}, {}
+    for fid, roles in protocol_role_set(pack, floors).items():
+        for role in roles:
+            spec = _protocol_spec(fid, role, row, rule)
+            if role in ("comparable", "line") or (role == "history" and fid != rule["roles"][role]["id"]):
+                continue
+            if spec.get("binds") and not row[spec["binds"]]:
+                continue
+            if fid not in facts:
+                return None
+            values[role], refs[role] = gate._decimal_or_none(facts[fid]["value"]), fid
+    return context, facts, values, refs
+
+
+def protocol_supply_readings(pack, floors):
+    """AC67(3), AC80(1), M1-M4: forward supply, never written into evidence."""
+    inputs = _protocol_readable(pack, floors)
+    if inputs is None:
+        return None
+    return _protocol_supply_projection(pack, inputs)
+
+
+def protocol_derate_comparison(pack, floors, case):
+    """AC80(2), architect C2: recorded measures beside one supply reading.
+
+    Like with like uses its own optional volume fact. A gap in that fact
+    removes the pace comparison; it never changes sufficiency.
+    """
+    context = _protocol_context(pack, floors)
+    if context is None:
+        return None
+    _, row, rule = context
+    entry = rule["derate_cases"].get(case)
+    if entry is None:
+        return None
+    supply = protocol_supply_readings(pack, floors)
+    if supply is None:
+        return None
+    record = entry["record"]
+    window = supply["windows"][-1]
+    facts = {f["id"]: f for f in pack["capture"]["tier1"]}
+    spec = rule["comparison_volume"]
+    fact = facts.get(spec["id"])
+    turnover_spec = dict(rule["roles"]["turnover"], source=None)
+    captured = _as_of_moment(pack["capture"]["captured_at"]).date()
+    volume_ok = fact is not None and not _protocol_fact_faults(
+        fact, turnover_spec, row, rule, captured, lambda fid: True)
+    volume_ok = volume_ok and any(w.casefold() in fact["source"].casefold()
+                                 for w in spec["source_words"])
+    volume = gate._decimal_or_none(fact["value"]) if volume_ok else None
+    if volume is not None and volume <= 0:
+        volume = None
+    hundred = decimal.Decimal(100)
+    with decimal.localcontext() as ctx:
+        ctx.prec = 34
+        pace = dict(next_month_percent=supply["daily"]["gross_usd"] * hundred / volume
+                    if volume else None,
+                    twelve_month_percent=window["gross"] / window["days"] * supply["price"] * hundred / volume
+                    if volume else None, trading_source=" / ".join(spec["source_words"]),
+                    gap=None if volume else spec["missing_words"])
+        groups = [dict(group=group, amount=amount,
+                       share_percent=amount * hundred / window["gross"])
+                  for group, amount in window["gross_by_group"].items()] if window["gross"] else []
+        coming = [t for t in supply["tranches"] if t["in_twelve_months"] > 0]
+        cliffs = sorted((t for t in coming if t["release"] == "cliff"),
+                        key=lambda t: (-t["amount"], t["date"]))
+        largest = (dict(date=cliffs[0]["date"], amount=cliffs[0]["amount"],
+                        share_percent=cliffs[0]["share_percent"],
+                        days_of_trading=cliffs[0]["amount"] * supply["price"] / volume if volume else None)
+                   if cliffs else None)
+    emissions = pack["capture"]["supply_schedule"]["emissions"]
+    end = captured + timedelta(days=window["days"])
+    targets = dict(release_pace=pace, holders=groups,
+                   offsets=dict(amount=window["offsets"], percent=window["offsets_percent"]),
+                   shape=dict(cliffs=len(cliffs), linear=sum(t["release"] == "linear" for t in coming),
+                              emissions=sum(date.fromisoformat(e["period_end"]) > captured and
+                                            date.fromisoformat(e["period_start"]) <= end for e in emissions),
+                              largest_step=largest))
+    cases = dict(release_pace=record["release_pace"]["measures"], holders=record["holders"],
+                 offsets=record["buybacks"], shape=dict(shape=record["shape"], largest_step=record["largest_step"]))
+    missing = dict(release_pace=(not record["release_pace"]["established"], not volume),
+                   holders=(not record["holders"].get("in_window"), not groups),
+                   offsets=(not record["buybacks"]["measured"], False),
+                   shape=(record["shape"]["word"] == "not_established", False))
+    measures = []
+    for item in rule["derate_measures"]:
+        key = item["id"]
+        sides = [side for side, absent in zip(("case", "target"), missing[key]) if absent]
+        measures.append(dict(id=key, words=item["words"], case=cases[key], target=targets[key],
+                             both_sides=not sides,
+                             gap=(", ".join(sides) + ": " + rule["derate_gap_words"] +
+                                  ("; " + spec["missing_words"] if key == "release_pace" and not volume else "")) if sides else None))
+    differing = any(line["trading_source"] not in spec["source_words"]
+                    for line in record["release_pace"]["measures"])
+    return dict(context=record["price"], measures=measures, status=record["status"],
+                gaps=record["gaps"], caveats=record["caveats"], volume_sources_differ=differing,
+                volume_sources_differ_words=rule["volume_sources_differ_words"] if differing else None)
+
+
+def _protocol_supply_projection(pack, inputs):
+    """M1-M4: the single supply computation, also checking its denominator."""
+    (key, row, rule), facts, v, refs = inputs
+    schedule = pack["capture"]["supply_schedule"]
+    captured = _as_of_moment(pack["capture"]["captured_at"]).date()
+    zero = decimal.Decimal(0)
+    hundred = decimal.Decimal(100)
+    def amount(item, start, end, days):
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+        overlap = max(0, (min(last, captured + timedelta(days=days)) - max(first, captured + timedelta(days=1))).days + 1)
+        return gate._decimal_or_none(item["amount"]) * overlap / ((last - first).days + 1)
+    offsets = [x for x in schedule["offsets"]
+               if (captured - date.fromisoformat(x["period_end"])).days <= rule["offset_max_age_days"]]
+    stale_offsets = [x for x in schedule["offsets"]
+                     if (captured - date.fromisoformat(x["period_end"])).days > rule["offset_max_age_days"]]
+    gap = (rule["offsets_not_carried_words"].format(date=max(x["period_end"] for x in stale_offsets))
+           if stale_offsets else None)
+    offset_days = ((max(date.fromisoformat(x["period_end"]) for x in offsets)
+                    - min(date.fromisoformat(x["period_start"]) for x in offsets)).days + 1) if offsets else 0
+    pace = sum((gate._decimal_or_none(x["amount"]) for x in offsets), zero) / offset_days if offset_days else zero
+    windows = []
+    for days, words in zip(rule["supply_windows_days"], rule["supply_window_words"]):
+        groups = {}
+        for family in ("tranches", "emissions"):
+            for item in schedule[family]:
+                if family == "emissions":
+                    new = amount(item, item["period_start"], item["period_end"], days)
+                elif item["release"] == "linear":
+                    new = amount(item, item["date"], item["end_date"], days)
+                else:
+                    distance = (date.fromisoformat(item["date"]) - captured).days
+                    new = gate._decimal_or_none(item["amount"]) if 0 < distance <= days else zero
+                group = item["receiving_group"]
+                groups[group] = groups.get(group, zero) + new
+        gross, offset = sum(groups.values(), zero), pace * days
+        net = gross - offset
+        windows.append(dict(days=days, words=words, gross=gross, gross_by_group=groups,
+                            offsets=offset, net=net, gross_percent=gross * hundred / v["supply"],
+                            offsets_percent=offset * hundred / v["supply"], net_percent=net * hundred / v["supply"]))
+    daily = {k: windows[0][k] / windows[0]["days"] for k in ("gross", "net")}
+    for k in ("gross", "net"):
+        daily[k + "_usd"] = daily[k] * v["price"]
+        daily[k + "_vs_turnover_percent"] = daily[k + "_usd"] * hundred / v["turnover"]
+    locked_total = sum((gate._decimal_or_none(x["amount"]) for x in schedule["locked_holders"]), zero)
+    locked = dict(total=locked_total, groups=[dict(group=x["group"], amount=gate._decimal_or_none(x["amount"]),
+                  share_percent=gate._decimal_or_none(x["amount"]) * hundred / locked_total) for x in schedule["locked_holders"]])
+    tranches = []
+    for x in sorted(schedule["tranches"], key=lambda x: x["date"]):
+        new = (amount(x, x["date"], x["end_date"], windows[-1]["days"]) if x["release"] == "linear"
+               else gate._decimal_or_none(x["amount"]) if 0 < (date.fromisoformat(x["date"]) - captured).days <= windows[-1]["days"] else zero)
+        tranches.append(dict((k, x[k]) for k in ("date", "end_date", "receiving_group", "release", "dated_by", "source", "rule_source", "as_of")))
+        tranches[-1].update(amount=gate._decimal_or_none(x["amount"]),
+                            share_percent=gate._decimal_or_none(x["amount"]) * hundred / v["supply"], in_twelve_months=new)
+    beside = (dict(value=v["supply_protocol"], gap_percent=(v["supply_protocol"] - v["supply"]) * hundred / v["supply"])
+              if row["protocol_supply_beside"] else None)
+    return dict(token=key, unit=row["unit"], price=v["price"], circulating=v["supply"], windows=windows,
+                daily=daily, offset_pace=dict(amount=pace, days=offset_days), offsets_gap=gap, tranches=tranches, locked=locked,
+                supply_beside=beside, twelve_month_supply=v["supply"] + windows[-1][rule["twelve_month_supply_basis"]],
+                twelve_month_supply_gross=v["supply"] + windows[-1]["gross"], facts=refs)
+
+
+def _protocol_context(pack, floors):
+    subject = pack["capture"]["subject"]
+    key = subjects.protocol_token(subject, floors)
+    if key is None:
+        return None
+    registry = subjects.class_registry(floors, subject)
+    rule = registry["protocol_rule"]
+    if not subjects.applies_on(rule, _as_of_moment(pack["capture"]["captured_at"]).date()):
+        return None
+    return key, registry["protocols"][key], rule
+
+
+def protocol_role_set(pack, floors):
+    """D1-D8: all protocol inputs tagged once, including optional figures."""
+    context = _protocol_context(pack, floors)
+    if not context:
+        return {}
+    _, row, rule = context
+    result = {spec["id"]: {role} for role, spec in rule["roles"].items()}
+    facts = {f["id"]: f for f in pack["capture"]["tier1"]}
+    captured_day = _as_of_moment(pack["capture"]["captured_at"]).date()
+    for role, spec in rule["optional_roles"].items():
+        if spec["id"] in facts and subjects.applies_on(spec, captured_day):
+            result.setdefault(spec["id"], set()).add(role)
+    for window, spec in rule["route_roles"].items():
+        for fid in facts:
+            if fid.startswith(spec["prefix"]):
+                result.setdefault(fid, set()).add("route_" + window)
+    turnover = facts.get(rule["roles"]["turnover"]["id"]) or {}
+    for operand in (turnover.get("derived") or {}).get("operands") or ():
+        if operand.get("fact_id"):
+            result.setdefault(operand["fact_id"], set()).add("turnover_operand")
+    for fid in facts:
+        for role, prefixes in (("comparable", [rule["comparable_prefix"]]),
+                               ("history", rule["history_prefixes"].values()),
+                               ("line", [rule["line_prefix"]])):
+            if any(fid.startswith(p) for p in prefixes):
+                result.setdefault(fid, set()).add(role)
+    return result
+
+
+def _protocol_spec(fid, role, row, rule):
+    """M11, P1-P2: each role's unit, source and numeric bar are data."""
+    number_role = role
+    if role == "comparable":
+        metric = fid[len(rule["comparable_prefix"]):].split("__", 1)[0]
+        spec = rule["comparable_metrics"].get(metric)
+    elif role == "history" and fid != rule["roles"][role]["id"]:
+        metric = next(m for m, p in rule["history_prefixes"].items() if fid.startswith(p))
+        spec = dict(rule["comparable_metrics"][metric], max_freshness_days=None)
+        number_role = "history_" + metric
+    elif role == "line":
+        spec = rule["comparable_metrics"]["holders_fees_90d"]
+    elif role.startswith("route_"):
+        spec = rule["route_roles"][role[len("route_"):]]
+    elif role == "turnover_operand":
+        spec = dict(rule["roles"]["turnover"], unit=rule["opening"]["claim_unit"], binds=None, arithmetic=None)
+    else:
+        spec = rule["roles"].get(role) or rule["optional_roles"][role]
+    policy = rule["number_roles"]
+    if number_role in policy["positive"]:
+        return dict(spec, allow_zero=False)
+    if number_role in policy["zero_allowed"]:
+        return dict(spec, allow_zero=True)
+    if number_role in policy["zero_with_routes"]:
+        return dict(spec, allow_zero=False, zero_route_window=policy["zero_with_routes"][number_role])
+    return spec
+
+
+def _protocol_number_ok(value, allow_zero):
+    """P1-P2: one predicate for every figure's declared numeric bar."""
+    return value is not None and (value > 0 or (allow_zero and value == 0))
+
+
+def _protocol_fact_faults(fact, spec, row, rule, captured_day, fresh):
+    """AC80, M11: the same fault reader for refusals and exclusions."""
+    if fact is None:
+        return []
+    fid, reasons = fact["id"], []
+    if any(w.casefold() in str(fact.get(field) or "").casefold()
+           for field in ("source", "rule_source") for w in rule["refused_source_words"]):
+        reasons.append(rule["refused_source_refusal"] + ": " + fact["source"])
+    if spec is None:
+        return reasons
+    unit = row.get(spec["unit"], spec["unit"])
+    key = row.get("_key", row["names"][0].casefold())
+    if fact["unit"] != unit:
+        reasons.append("%s is in %s; token %s requires %s (AC80)" % (fid, fact["unit"], key, unit))
+    value = gate._decimal_or_none(fact["value"])
+    number_fault = "allow_zero" in spec and not _protocol_number_ok(value, spec["allow_zero"])
+    if number_fault:
+        words = rule["readings_refusal"] + ": %s = %s" % (fid, fact["value"])
+        if value is None:
+            words += "; %s must be a number (AC79(4))" % fid
+        reasons.append(words)
+    elif value is None:
+        reasons.append("%s must be a number (AC79(4))" % fid)
+    try:
+        day = _as_of_moment(fact["as_of"]).date()
+    except (ValueError, TypeError, AttributeError):
+        day = None
+    ceiling = spec["max_freshness_days"]
+    if day is None or day > captured_day or (ceiling is not None and ((captured_day - day).days > ceiling or not fresh(fid))):
+        reasons.append("%s must be fresh within %s days, dated no later than the capture (AC80)" % (fid, ceiling))
+    selectors = spec.get("source")
+    selectors = [selectors] if isinstance(selectors, str) else selectors or []
+    words = [w for selector in selectors for w in (row.get(selector) if selector in row else rule[selector])]
+    source = fact["source"].casefold()
+    if words and not any(w.casefold() in source for w in words):
+        reasons.append("%s must name %s as its source (AC80(4))" % (fid, " or ".join(words)))
+    if selectors == ["cross_check_source_words"] and any(w.casefold() in source for w in rule["price_source_words"]):
+        reasons.append("%s must come independently of %s (AC80(4)(a))" % (fid, ", ".join(rule["price_source_words"])))
+    arithmetic = spec.get("arithmetic")
+    if arithmetic:
+        derived = fact.get("derived") or {}
+        operands = derived.get("operands") or []
+        if derived.get("operation") != arithmetic["operation"] or len(operands) != 2 or gate._decimal_or_none(operands[-1].get("value")) != decimal.Decimal(arithmetic["divisor"]):
+            reasons.append("%s needs declared arithmetic for the thirty-day average (AC80(4)(a))" % fid)
+    return reasons
+
+
+def _protocol_evidence_failures(pack, floors, captured_day, fresh):
+    """AC67, AC78-AC81: one role set owns every per-fact property."""
+    context = _protocol_context(pack, floors)
+    if not context:
+        return []
+    key, row, rule = context
+    facts = {f["id"]: f for f in pack["capture"]["tier1"]}
+    failures, values, routes = [], {}, {w: {} for w in rule["route_roles"]}
+    where = "asset_classes.crypto.protocols.%s and protocol_rule" % key
+    def fail(what, why):
+        failures.append((what, why, where))
+    def refused_source(item):
+        return any(w.casefold() in str(item.get(field) or "").casefold()
+                   for field in ("source", "rule_source")
+                   for w in rule["refused_source_words"])
+    role_set = protocol_role_set(pack, floors)
+    route_zero = {window: all(gate._decimal_or_none(facts[fid]["value"]) == 0
+                              for fid, roles in role_set.items() if "route_" + window in roles)
+                  for window in rule["route_roles"]}
+    # P2, M11: tagged facts use one reader; untagged facts share its source bar.
+    row = dict(row, _key=key)
+    for fid in sorted(facts.keys() | role_set.keys()):
+        fact = facts.get(fid)
+        roles = sorted(role_set.get(fid, ()))
+        source_reported = False
+        for role in roles or [None]:
+            spec = _protocol_spec(fid, role, row, rule) if role else None
+            if spec and "zero_route_window" in spec:
+                spec = dict(spec, allow_zero=route_zero[spec["zero_route_window"]])
+            flag = (spec or {}).get("binds")
+            if flag and not row[flag]:
+                if fact:
+                    fail(fid, rule["single_source_refusal"] + " (%s: %s)" % (key, flag))
+                spec = None
+            if fact is None:
+                if flag and not row[flag]:
+                    continue
+                if flag or role == "turnover_operand":
+                    fail(fid, "required by %s for token %s" % (flag or role, key))
+                continue
+            for why in _protocol_fact_faults(fact, spec, row, rule, captured_day, fresh):
+                source_fault = why.startswith(rule["refused_source_refusal"])
+                if source_fault and source_reported:
+                    continue
+                if source_fault:
+                    source_reported = True
+                if role != "comparable" or source_fault:
+                    fail(fid, why)
+            if spec is None or (flag and not row[flag]) or role in ("comparable", "line") or (role == "history" and fid != rule["roles"][role]["id"]):
+                continue
+            route_window = role[len("route_"):] if role.startswith("route_") else None
+            value = gate._decimal_or_none(fact["value"])
+            if value is not None:
+                values[role] = value
+            if route_window:
+                route = fid[len(spec["prefix"]):]
+                if route not in rule["holders_fee_routes"]:
+                    fail(fid, "AC78(2), AC79(5): %s is not a holders' fee route; use %s; tokens bought back into a fund the protocol can resell are shown separately, labelled, and not counted" % (route, ", ".join(rule["holders_fee_routes"])))
+                if value is not None:
+                    routes[route_window][route] = value
+    for role, tolerance in rule["cross_check_tolerance_percent"].items():
+        other = role + "_check"
+        if role not in values or other not in values:
+            continue
+        a, b = (facts[rule["roles"][r]["id"]] for r in (role, other))
+        if _cross_check_exceeds(values[role], values[other], tolerance):
+            fail(b["id"], "%s from %s and %s from %s disagree beyond the %s percent tolerance (AC80(4)(a))" % (a["value"], a["source"], b["value"], b["source"], tolerance))
+        if abs((_as_of_moment(a["as_of"]).date() - _as_of_moment(b["as_of"]).date()).days) > rule["cross_check_max_days_apart"]:
+            fail(b["id"], "the cross-check dates %s and %s are more than %s day(s) apart (AC80(4)(a))" % (a["as_of"], b["as_of"], rule["cross_check_max_days_apart"]))
+    windows = list(rule["route_roles"])
+    if set(routes[windows[0]]) != set(routes[windows[1]]):
+        fail("holders' fee routes", "a route present in one window must be present in the other (AC78(2))")
+    for window, spec in rule["route_roles"].items():
+        total = values.get(spec["total_role"])
+        if total is None:
+            continue
+        summed = sum(routes[window].values(), decimal.Decimal(0))
+        if total > 0 and not routes[window]:
+            fail(rule["roles"][spec["total_role"]]["id"], "which route carries these fees (AC78(2))")
+        elif summed != total:
+            fail(rule["roles"][spec["total_role"]]["id"], "the route sum %s does not equal the total %s (AC78(2))" % (summed, total))
+    history, window = values.get("history"), values.get("volatility_window")
+    if history is not None and history < rule["min_history_days"]:
+        fail(rule["roles"]["history"]["id"], rule["short_history_refusal"])
+    if history is not None and window is not None and window != min(history, rule["full_window_days"]):
+        fail(rule["roles"]["volatility_window"]["id"], rule["window_refusal"] + ": history %s, window %s" % (history, window))
+    schedule = pack["capture"].get("supply_schedule")
+    for why in gate._check_supply_schedule(pack["capture"], floors):
+        fail("supply_schedule", why)
+    if schedule and not failures:
+        if (date.fromisoformat(schedule["covers_through"]) - captured_day).days < rule["schedule_horizon_days"]:
+            fail("supply_schedule.covers_through", rule["schedule_short_refusal"])
+        for family in ("tranches", "emissions", "offsets", "locked_holders"):
+            for item in schedule[family]:
+                if item["unit"] != row["unit"]:
+                    fail("supply_schedule." + family, "%s is in %s; token %s requires %s (AC80(1))" % (family, item["unit"], key, row["unit"]))
+                if family == "offsets" and item["route"] not in rule["offset_routes"]:
+                    fail("supply_schedule.offsets", "offset routes are only %s (AC80(1))" % ", ".join(rule["offset_routes"]))
+                if family in ("tranches", "emissions") and not item["receiving_group"].strip():
+                    fail("supply_schedule." + family, "every release names who receives it (AC80(1))")
+                if refused_source(item):
+                    fail("supply_schedule." + family, rule["refused_source_refusal"])
+    if schedule and not failures:
+        for a, b in _protocol_offsets_overlap(schedule):
+            fail("supply_schedule.offsets[%s] and supply_schedule.offsets[%s]" % (a, b), rule["offsets_overlap_refusal"])
+    if "supply_total" in values and "supply" in values and values["supply_total"] < values["supply"]:
+        fail(rule["roles"]["supply_total"]["id"], rule["total_below_circulating_refusal"])
+    for role in ("fees", "revenue", "holders"):
+        if role + "_30d" in values and role + "_90d" in values and values[role + "_30d"] > values[role + "_90d"]:
+            fail(rule["roles"][role + "_30d"]["id"], rule["thirty_above_ninety_refusal"])
+    _, history_pairs, lines = _protocol_families(pack, floors)
+    for member, pair in history_pairs.items():
+        ids = " and ".join(f["id"] for f in pair.values())
+        if set(pair) != set(rule["history_prefixes"]):
+            fail(ids, "each own-history member needs both market value and holders' fees (AC79(1))")
+        elif not failures:
+            if abs((_as_of_moment(pair["market_value"]["as_of"]).date() - _as_of_moment(pair["holders_fees_90d"]["as_of"]).date()).days) > rule["comparable_max_days_apart"]:
+                fail(ids, "the own-history pair dates must be within %s day(s) (AC79(1))" % rule["comparable_max_days_apart"])
+    line_values = [gate._decimal_or_none(f["value"]) for f in lines.values()]
+    if lines and "holders_90d" in values and all(v is not None for v in line_values) and sum(line_values, decimal.Decimal(0)) != values["holders_90d"]:
+        fail(" and ".join(f["id"] for f in lines.values()), rule["lines_sum_refusal"])
+    if not failures and _protocol_inputs_present(pack, floors):
+        supply = _protocol_supply_projection(pack, (context, facts, values, {}))
+        if supply["twelve_month_supply"] <= 0:
+            fail("supply_schedule.offsets and " + rule["roles"]["supply"]["id"], rule["readings_refusal"])
+    return failures
+
+
+def _protocol_failures(pack, floors, captured_day, fresh):
+    """M1: read the same helpers the pages will use, after named faults."""
+    failures = _protocol_evidence_failures(pack, floors, captured_day, fresh)
+    context = _protocol_context(pack, floors)
+    if context and not failures and _protocol_inputs_present(pack, floors):
+        key, _, rule = context
+        supply = protocol_supply_readings(pack, floors)
+        value = protocol_value_readings(pack, floors)
+        if supply is None or value is None:
+            failures.append(("protocol readings", rule["readings_refusal"], "protocol_rule"))
+    return failures
+
+
 def _coin_failures(pack, floors, captured_day, fresh):
     """AC67-AC69: present, fresh facts only; anchors own missing facts.
 
@@ -3570,19 +5519,39 @@ def _coin_failures(pack, floors, captured_day, fresh):
                                and any(fid.startswith(p) for p in prefixes)):
                 failures.append((fid, "the evidence does not exist for this coin: %s" % (
                     lifts.get(fid) or rule["privacy_coin_anchors"][0]["why"]), where))
+    # AC73(1): extend only this validation set; issuance roles stay unchanged.
+    series = pack["capture"].get("price_series")
+    series = series if series and series.get("ticker") == row["series_ticker"] else None
+    role_set = coin_role_set(pack, floors)
+    close_value = None
+    if series:
+        role_set.setdefault(rule["series_close_check"]["id"], set()).add("series_close_check")
     values = {}
-    for fid, roles in coin_role_set(pack, floors).items():
+    for fid, roles in role_set.items():
         fact = facts.get(fid)
-        if fact is None or not fresh(fid):
+        close_role = "series_close_check" in roles
+        if close_role:
+            close_hint = "%s's daily close for the series' last day (its public daily history)" % (
+                ", ".join(rule["series_close_check"]["source_words"]))
+            if fact is None:
+                failures.append((fid, "owner ruling AC73(1): record %s for the series' last day" % fid,
+                                 close_hint))
+            elif _as_of_moment(fact["as_of"]).date() != date.fromisoformat(series["bars"][-1]["date"]):
+                failures.append((fid, "owner ruling AC73(1): %s date %s must equal the last close date %s"
+                                 % (fid, fact["as_of"], series["bars"][-1]["date"]), close_hint))
+        if fact is None or (not close_role and not fresh(fid)):
             continue
         for role in sorted(roles):
-            spec = rule["venue_role"] if role == "venue" else rule["roles"][role]
+            spec = (rule["series_close_check"] if role == "series_close_check" else
+                    rule["venue_role"] if role == "venue" else rule["roles"][role])
             source_hint = ("the venue's own listing page and its licence" if role == "venue"
+                           else close_hint if role == "series_close_check"
                            else ", ".join(rule["cross_check_source_words"])
                            if spec["cross_check_source"] else
                            ", ".join(rule["price_source_words"]) if spec["price_source"]
                            else "the protocol documents or a dated block explorer")
-            ruling = "AC69(3)" if role == "venue" else "AC68(3)"
+            ruling = ("AC73(1)" if role == "series_close_check" else
+                      "AC69(3)" if role == "venue" else "AC68(3)")
             unit = _coin_unit(spec, row)
             if fact["unit"] != unit:
                 failures.append((fid, "owner ruling %s: %s is in %s; coin %s requires %s"
@@ -3596,16 +5565,23 @@ def _coin_failures(pack, floors, captured_day, fresh):
                 continue
             value = gate._decimal_or_none(fact["value"])
             if value is None:
-                failures.append((fid, "owner ruling AC68(3): %s must be a number" % fid, source_hint))
-            elif role == "price" and value <= 0:
+                failures.append((fid, "owner ruling %s: %s must be a number" % (ruling, fid), source_hint))
+            elif role in ("price", "series_close_check") and value <= 0:
                 failures.append((fid, "a price of zero cannot be read" if value == 0
                                  else "a price below zero cannot be read", source_hint))
             elif value < 0 or (role in ("supply", "interval", "turnover") and value == 0):
                 failures.append((fid, "owner ruling AC68(3): %s cannot be used in the forward supply arithmetic: %s"
                                  % (fid, fact["value"]), source_hint))
+            elif role == "series_close_check":
+                close_value = value
             else:
                 values[role] = value
             price_source = any(w.casefold() in source for w in rule["price_source_words"])
+            if role == "series_close_check":
+                if not any(w.casefold() in source for w in spec["source_words"]):
+                    failures.append((fid, "owner ruling AC73(1): %s must name %s as its source"
+                                     % (fid, ", ".join(spec["source_words"])), source_hint))
+                continue
             if spec["price_source"] and not price_source:
                 failures.append((fid, "owner ruling AC68(1): %s must name %s as its source"
                                  % (fid, ", ".join(rule["price_source_words"])), source_hint))
@@ -3629,8 +5605,7 @@ def _coin_failures(pack, floors, captured_day, fresh):
             continue
         a = facts.get(rule["roles"][role]["id"])
         b = facts.get(rule["roles"][other]["id"])
-        if abs(values[role] - values[other]) * 100 > (
-                decimal.Decimal(tolerance) * values[role]):
+        if _cross_check_exceeds(values[role], values[other], tolerance):
             failures.append((b["id"], "owner rulings AC68(1), AC69(2): %s from %s and %s from %s disagree beyond the %s percent tolerance"
                              % (a["value"], a["source"], b["value"], b["source"], tolerance),
                              "same-day readings from %s and %s" % (
@@ -3644,8 +5619,7 @@ def _coin_failures(pack, floors, captured_day, fresh):
                                  ", ".join(rule["price_source_words"]),
                                  ", ".join(rule["cross_check_source_words"]))))
     # AC72, M6: optional history binds once to the registry's own ticker.
-    series = pack["capture"].get("price_series")
-    if series and series.get("ticker") == row["series_ticker"]:
+    if series:
         source_hint = ", ".join(rule["series_source_words"])
         if not any(w.casefold() in series["source"].casefold()
                    for w in rule["series_source_words"]):
@@ -3654,11 +5628,14 @@ def _coin_failures(pack, floors, captured_day, fresh):
         price = facts.get(rule["roles"]["price"]["id"])
         last = series["bars"][-1]
         close = gate._decimal_or_none(last["close"])
-        if price is not None and "price" in values and close is not None:
+        close_fact = facts.get(rule["series_close_check"]["id"])
+        if close_value is not None and close is not None:
             tolerance = rule["cross_check_tolerance_percent"]["price"]
-            if abs(close - values["price"]) * 100 > decimal.Decimal(tolerance) * values["price"]:
-                failures.append(("price_series", "owner ruling AC72(1): last close %s and price_last %s disagree beyond the %s percent tolerance"
-                                 % (last["close"], price["value"], tolerance), source_hint))
+            if _cross_check_exceeds(close_value, close, tolerance):
+                failures.append((close_fact["id"], "owner ruling AC73(1): last close %s from %s and %s from %s disagree beyond the %s percent tolerance"
+                                 % (last["close"], series["source"], close_fact["value"],
+                                    close_fact["source"], tolerance), close_hint))
+        if price is not None and "price" in values and close is not None:
             if abs((date.fromisoformat(last["date"]) - _as_of_moment(price["as_of"]).date()).days
                    ) > rule["cross_check_max_days_apart"]:
                 failures.append(("price_series", "owner ruling AC68(1): the last close date %s and price_last date %s are more than %s day(s) apart"
@@ -3688,7 +5665,286 @@ def _coin_note(pack):
         "; ".join(windows), summary["turnover_share_text"])
 
 
-def check(pack, floors):
+def _holder_listing_matches(left, right, floors):
+    """Architect P1: listing aliases name the same exchange calendar."""
+    if gate._norm_listing(left) == gate._norm_listing(right):
+        return True
+    rules = floors["price_series"]
+    calendar = gate._listing_calendar(left, rules)
+    return calendar is not None and calendar == gate._listing_calendar(right, rules)
+
+
+def _holder_guard_failures(subject, floors):
+    """AC85(2)-(3), D1: a holder cannot enter through another shape."""
+    instrument = (subject.get("vehicle") or {}) if subject.get("kind") == "theme" else subject
+    if subject.get("kind") not in ("etf", "single_stock", "theme"):
+        return []
+    failures = []
+    for ticker, listing, name, product, row in subjects.holder_tickers(floors):
+        if (instrument.get("ticker") == ticker and (not instrument.get("listing")
+                or _holder_listing_matches(instrument["listing"], listing, floors))):
+            failures.append((name + ": " + product, row["rule"]["holder_guard"],
+                             "subject: " + product + " through " + name))
+    return failures
+
+
+def _holder_product_roles(pack, floors, role_names=None):
+    """AC85-AC88: expand each role once from the registry, never a second list."""
+    capture = pack["capture"]
+    row = subjects.holder_product(capture["subject"], floors)
+    if role_names is not None:
+        if uranium_producer_frame(floors, capture) is None:
+            return {}
+        product = floors["archetype_measures"]["uranium_producer_rule"]["product"]
+        row = floors["asset_classes"]["commodity"]["products"][product]
+    if not row or not subjects.applies_on(row, _as_of_moment(capture["captured_at"]).date()):
+        return {}
+    rule, result = row["rule"], {}
+    vehicle = subjects.physical_holder(capture["subject"], floors)
+    facts = {f["id"]: f for f in capture["tier1"]}
+    year = _as_of_moment(capture["captured_at"]).year
+    for role, spec in rule["roles"].items():
+        if role_names is not None and role not in role_names:
+            continue
+        contexts = [{}]
+        if spec["binds"] == "vehicle":
+            contexts = [{"h": vehicle}] if vehicle else []
+        elif spec["binds"] == "every_holder":
+            contexts = [{"h": h} for h in row["physical_holders"]]
+        elif spec["binds"] == "every_producer":
+            contexts = [{"p": p, "yyyy": y, "end": end} for p in rule["largest_producers"]
+                        for y in (year, year + 1) for end in spec["ends"]]
+        elif spec.get("prefix"):
+            contexts = [{"h": vehicle, "suffix": fid[len(spec["prefix"]):]}
+                        for fid in facts if vehicle and fid.startswith(spec["prefix"])]
+        if role == "pounds_start":
+            contexts = [dict(c, point=w["point"], window=w) for c in contexts for w in rule["pound_windows"]]
+        for context in contexts:
+            context = dict(context, daily=rule["daily_value_holder"])
+            fid = (spec.get("id") or spec["id_pattern"]).format(**context)
+            if spec["binds"] != "optional" or fid in facts:
+                result.setdefault(fid, {})[role] = dict(spec, **context)
+    for fid in facts:
+        if fid in row["class_anchors_lifted"]:
+            result.setdefault(fid, {})["lifted"] = {}
+        if fid.startswith(tuple(rule["never_a_council_figure_prefixes"])):
+            result.setdefault(fid, {})["forbidden"] = {}
+        if (fid.startswith(rule["roles"]["guidance"]["prefix"])
+                and any(w in fid.casefold() for w in rule["midpoint_words"])):
+            result.setdefault(fid, {})["midpoint"] = {}
+    return result
+
+
+def holder_product_role_set(pack, floors):
+    """D1-D9: the complete role-tagged set, including optional evidence."""
+    return {fid: set(roles) for fid, roles in _holder_product_roles(pack, floors).items()}
+
+
+def _holder_product_failures(pack, floors, captured_day, fresh):
+    """AC85-AC88: holder admission, then the shared market evidence check."""
+    capture = pack["capture"]
+    subject = capture["subject"]
+    row = subjects.holder_product(subject, floors)
+    if not row or not subjects.applies_on(row, captured_day):
+        return []
+    rule, holders = row["rule"], row["physical_holders"]
+    if (subject.get("kind") != subjects.asset_class(subject)
+            or subject.get("ticker") is not None or subject.get("listing") is not None):
+        return [(subject.get("name", ""), rule["holder_guard"], rule["holder_needed"]["where"])]
+    if subject.get("currency") != holders[rule["daily_value_holder"]]["currency"]:
+        return [(subject.get("currency", ""), rule["unit_pair_refusal"], rule["holder_needed"]["where"])]
+    vehicle = subjects.physical_holder(subject, floors)
+    if not subject.get("vehicle"):
+        words = rule["holder_needed"]
+        return [(words["what"], words["why"], words["where"])]
+    if vehicle is None:
+        return [(str(subject["vehicle"].get("ticker")), rule["holder_unregistered"],
+                 ", ".join(h["vehicle_ticker"] + " / " + h["listing"] for h in holders.values()))]
+    return _uranium_market_failures(pack, floors, captured_day, fresh)
+
+
+def _uranium_role_units(row, spec, holder=None):
+    """AC85-AC88, fix round one: checks and measures resolve ONE role unit."""
+    rule = row["rule"]
+    h = row["physical_holders"].get(holder) or row["physical_holders"][rule["daily_value_holder"]]
+    unit = h.get(spec["unit"], row.get(spec["unit"], rule.get(spec["unit"], spec["unit"])))
+    return unit if isinstance(unit, list) else [unit]
+
+
+def _uranium_market_failures(pack, floors, captured_day, fresh, role_names=None):
+    """AC86, P13: one market role loop; holder relations bind their own roles."""
+    capture, failures = pack["capture"], []
+    row = subjects.holder_product(capture["subject"], floors)
+    if role_names is not None:
+        if uranium_producer_frame(floors, capture) is None:
+            return []
+        product = floors["archetype_measures"]["uranium_producer_rule"]["product"]
+        row = floors["asset_classes"]["commodity"]["products"][product]
+    if not row or not subjects.applies_on(row, captured_day):
+        return []
+    rule, holders = row["rule"], row["physical_holders"]
+    vehicle = subjects.physical_holder(capture["subject"], floors)
+    tagged = _holder_product_roles(pack, floors, role_names)
+    if role_names is not None and _ROLE_SINK is not None:
+        for fid, roles in tagged.items():
+            _ROLE_SINK.setdefault(fid, set()).update(roles)
+    facts = {f["id"]: f for f in capture["tier1"]}
+    gaps = {g["fact_class"]: g for g in capture["gaps"]}
+    values, days, by_role = {}, {}, {}
+    daily = holders[rule["daily_value_holder"]]
+    swings = holders[holders[vehicle]["swings_series_holder"]] if vehicle else {}
+
+    def broken(fid, words, detail=""):
+        failures.append((fid, words + (": " + detail if detail else ""),
+                         "council/RUNBOOK.md §1.0h"))
+
+    def named(source, words):
+        return any(w.casefold() in source.casefold() for w in words)
+
+    for fid, roles in tagged.items():
+        fact, gap = facts.get(fid), gaps.get(fid)
+        for role, spec in roles.items():
+            if role == "lifted":
+                broken(fid, "the evidence does not exist for this product: " + row["class_anchors_lifted"][fid])
+                continue
+            if role in ("forbidden", "midpoint"):
+                broken(fid, rule["never_a_council_figure_refusal"] if role == "forbidden" else rule["guidance_range_refusal"])
+                continue
+            by_role.setdefault(role, []).append(fid)
+            h = holders.get(spec.get("h")) or daily
+            next_year = role == "guidance" and spec["yyyy"] == captured_day.year + 1
+            gap_ok = (gap and gap["reason_kind"] == "absent_by_design" and (
+                (role == "pounds_start" and rule["no_start_words"] in gap["reason"].casefold()) or
+                (next_year and rule["next_year_guidance_gap_allowed"] and
+                 rule["next_year_gap_words"] in gap["reason"].casefold() and
+                 named(gap["reason"], rule["largest_producers"][spec["p"]]["names"]))))
+            fault_words = (rule["window_start_refusal"] if role == "pounds_start" else
+                           rule["next_year_refusal"] if role == "guidance" else
+                           rule["term_refusal"] if role == "term_month_end" else
+                           rule["spot_refusal"] if role in ("spot", "spot_proxy", "holder_value", "spot_check") else spec["why"])
+            if gap and (fact or not gap_ok):
+                broken(fid, fault_words, "fact and gap together" if fact else "gap does not meet this role")
+            if fact is None:
+                if not gap_ok:
+                    broken(fid, fault_words, "missing " + fid)
+                continue
+            value = gate._decimal_or_none(fact["value"])
+            values[fid] = value
+            if value is None:
+                broken(fid, spec["why"], "must be a number")
+            units = _uranium_role_units(row, spec, spec.get("h"))
+            if fact["unit"] not in units:
+                broken(fid, rule["unit_pair_refusal"] if role in ("nav", "holder_price", "history_nav", "history_price") else spec["why"],
+                       "unit %s; requires %s" % (fact["unit"], ", ".join(units)))
+            day = _as_of_moment(fact["as_of"]).date()
+            days[fid] = day
+            limit = h.get(spec["max_freshness_days"], spec["max_freshness_days"])
+            if (day > captured_day or (captured_day - day).days > limit or
+                    fact["freshness_rule_days"] > limit or not fresh(fid)):
+                broken(fid, rule["nav_stale_refusal"] if role == "nav" else fault_words,
+                       "%s; dated %s; limit %s days; declared %s" % (fid, day, limit, fact["freshness_rule_days"]))
+            source = fact["source"]
+            selector = spec["source"]
+            source_words = (daily["source_words"] if selector == "daily_source_words" else
+                            swings["series_source_words"] if selector == "swings_source_words" else
+                            rule["largest_producers"][spec["p"]]["names"] if selector == "producer_names" else
+                            h.get(selector, rule.get(selector, [])))
+            if selector == "paid_company_words":
+                source_ok = named(source, rule["paid_publisher_words"]) and named(source, rule["company_words"])
+            elif selector == "swings_source_words":
+                source_ok = all(w.casefold() in source.casefold() for w in source_words)
+            else:
+                source_ok = not selector or named(source, source_words)
+            if not source_ok or (role == "spot_check" and named(source, daily["source_words"])):
+                broken(fid, rule["swings_source_refusal"] if selector == "swings_source_words" else fault_words, source)
+            if named(source, rule["paid_publisher_words"]) and not named(source, rule["company_words"]):
+                broken(fid, rule["paid_publisher_refusal"], source)
+            if role == "guidance" and not named(source, rule["guidance_basis_words"]):
+                broken(fid, rule["guidance_range_refusal"], source)
+            if role in ("nav", "history_nav") and fact.get("derived"):
+                broken(fid, rule["derived_nav_refusal"])
+            if role in ("history_nav", "history_price"):
+                suffix = spec["suffix"]
+                last_year = captured_day.year - (captured_day.strftime("%m-%d") < h["year_end"])
+                minimum = floors["archetype_measures"]["holding_rule"]["history_year_ends"]
+                if (not re.fullmatch(r"fy\d{4}", suffix) or
+                        not last_year - minimum < int(suffix[2:]) <= last_year or
+                        fact["as_of"] != suffix[2:] + "-" + h["year_end"]):
+                    broken(fid, spec["why"], "record the latest financial year-end pairs, each dated its own year-end")
+            if role == "pounds_start":
+                window = spec["window"]
+                opening = captured_day - timedelta(days=window["days"])
+                earliest = opening - timedelta(days=window["start_tolerance_days"])
+                if not earliest <= day <= opening:
+                    broken(fid, rule["window_start_refusal"], "%s outside %s to %s" % (day, earliest, opening))
+
+    def only(role):
+        return next(iter(by_role.get(role, ())), None)
+
+    for fid in by_role.get("pounds_start", []):
+        if fid not in days:
+            continue
+        spec = tagged[fid]["pounds_start"]
+        opening = captured_day - timedelta(days=spec["window"]["days"])
+        later = [other for other in by_role.get("pounds_now", []) + by_role.get("pounds_start", [])
+                 if other in days and days[fid] < days[other] <= opening
+                 and any(t.get("h") == spec["h"] for t in tagged[other].values())]
+        if later:
+            broken(fid, rule["window_start_refusal"], "a later captured start exists: " + ", ".join(later))
+    spot, proxy, cross = (only(r) for r in ("spot", "spot_proxy", "spot_check"))
+    spec = rule["roles"]["spot_proxy"]
+    derived = (facts.get(proxy) or {}).get("derived") or {}
+    operands = [x.get("fact_id") for x in derived.get("operands", [])]
+    expected = [x.format(daily=rule["daily_value_holder"]) for x in spec["operands"]]
+    if (derived.get("operation") != spec["operation"] or operands != expected
+            or derived.get("rounded_places") != spec["rounded_places"]
+            or (role_names is None and (values.get(spot) is None
+                or values.get(spot) != values.get(proxy)
+                or (facts.get(spot) or {}).get("derived")))):
+        broken(str(spot) + " / " + str(proxy) if role_names is None else str(proxy),
+               rule["spot_refusal"], "recorded price must equal the declared rounded quotient of " + ", ".join(expected))
+    price_days = [days[fid] for fid in [spot, proxy] + expected if fid in days]
+    if price_days and len(set(price_days)) != 1:
+        broken(str(proxy), rule["spot_refusal"], "the daily value, pounds and price must name the same day: " + ", ".join(
+            fid + " " + str(days[fid]) for fid in [spot, proxy] + expected if fid in days))
+    if expected[1] in facts and facts[expected[1]]["unit"] != row["unit"]:
+        broken(str(proxy), rule["spot_refusal"], expected[1] + ": the division's pounds operand must be in " + row["unit"])
+    if values.get(proxy) is not None and values.get(cross) is not None:
+        if (_cross_check_exceeds(values[proxy], values[cross], rule["cross_check_tolerance_percent"])
+                or abs((days[proxy] - days[cross]).days) > rule["cross_check_max_days_apart"]):
+            broken(cross, rule["cross_check_refusal"], "%s %s (%s, %s); %s %s (%s, %s); tolerance %s%%" % (
+                proxy, values[proxy], facts[proxy]["source"], days[proxy], cross, values[cross], facts[cross]["source"], days[cross], rule["cross_check_tolerance_percent"]))
+    month_spot, month_term = only("spot_month_end"), only("term_month_end")
+    if month_spot in days and month_term in days:
+        day = days[month_spot]
+        if day != days[month_term] or (day + timedelta(days=1)).month == day.month:
+            broken(month_spot + " / " + month_term, rule["month_end_pair_refusal"], "%s / %s" % (day, days[month_term]))
+    guidance = by_role.get("guidance", [])
+    ends = rule["roles"]["guidance"]["ends"]
+    for fid in guidance:
+        if tagged[fid]["guidance"]["end"] != ends[0]:
+            continue
+        spec = tagged[fid]["guidance"]
+        partner = rule["roles"]["guidance"]["id_pattern"].format(**dict(spec, end=ends[1]))
+        if (fid in facts) != (partner in facts):
+            broken(fid + " / " + partner, rule["next_year_refusal"] if spec["yyyy"] == captured_day.year + 1 else rule["guidance_range_refusal"])
+        if values.get(fid) is not None and values.get(partner) is not None and values[fid] > values[partner]:
+            broken(fid + " / " + partner, rule["guidance_range_refusal"])
+    history, window = only("history"), only("window")
+    if values.get(history) is not None and values.get(window) is not None:
+        if values[history] < rule["swings"]["min_history_days"]:
+            broken(history, rule["short_history_refusal"], str(values[history]))
+        expected = min(values[history], rule["swings"]["full_window_days"])
+        if values[window] != expected:
+            broken(window, rule["window_refusal"], "history %s; window %s; required %s" % (values[history], values[window], expected))
+    series = capture.get("price_series")
+    if role_names is None and series and (not holders[vehicle]["series_source_words"] or not all(
+            w.casefold() in series["source"].casefold() for w in holders[vehicle]["series_source_words"])):
+        broken("price_series", rule["swings_source_refusal"], series["source"])
+    return failures
+
+
+def check(pack, floors, *, lifted=()):
     """Verify the pack can answer the question before a seat is paid.
 
     Returns {"result", "floors", "requirements_checked", "missing",
@@ -3757,6 +6013,10 @@ def check(pack, floors):
     class_config = floors["classes"][subject["kind"]]
     entries = _merged_floors(floors, subject, capture)
     declared = _declared_archetype(floors, capture)
+    if "swings" in lifted:
+        swings = floors["archetype_measures"]["holding_rule"]["treasury"]["swings"]
+        ids = {swings["history_id"], swings["window_id"], floors["anchorless_rating"]["bar_inputs"]["volatility"]}
+        entries = [e for e in entries if e.get("id") not in ids]
     # Owner ruling AC30(1) (G1): for a bank, insurer, reinsurer or
     # financial holding the free-cash test is answered by distributable
     # capital, and its refusal words come from the lifts data block. The
@@ -3803,12 +6063,15 @@ def check(pack, floors):
                             else coin_rule["roles"][role])["max_freshness_days"]
                            for role in roles) for fid, roles in coin_roles.items()}
     class_anchors = subjects.class_anchors_on(floors, subject, captured_day)
+    treasury_layer = None if "coin_layer" in lifted else _treasury_coin_layer(pack, floors)
+    if treasury_layer and not treasury_layer[2]:
+        class_anchors += treasury_layer[3]
     coin_anchor_ids = {entry["id"] for entry in class_anchors
                        if entry["kind"] == "id" and entry["level"] == "required"
                        and subjects.coin_applies_on(subject, floors, captured_day, entry)} if coin_roles else set()
     holding_kind = (floors["archetype_measures"].get("holding_rule") or {}).get("holding_archetype")
     holding_data = None
-    if declared == (holding_kind, None):
+    if declared and declared[0] == holding_kind:
         holding_frame = capture["business_frame"][subject["ticker"]]
         holding_rows = {r["id"]: r for r in capture["sufficiency"]["requirements"]}
         holding_rating = dict(holding_rows.get("rating_vs_history_or_peers") or {})
@@ -3879,8 +6142,23 @@ def check(pack, floors):
     open_guided = gate.open_guidance_ids(capture)
 
     def refuse(what, why_needed, where):
+        if subject["kind"] == preferred_rule.get("kind"):
+            spec = next((s for s in preferred_rule["roles"].values() if what == (s.get("id") or s.get("prefix"))),None)
+            if spec:
+                if any(row["what"] == spec["what"] for row in missing): return
+                what = spec["what"]
         missing.append({"what": what, "why_needed": why_needed,
                         "where_it_likely_lives": where})
+
+    # AC92(3), M3-M4: one issuer result, with only the three ruled lifts.
+    preferred_rule = floors["archetype_measures"].get("holding_rule", {}).get("treasury", {}).get("listed_preferred", {})
+    if preferred_rule and subject["kind"] == preferred_rule["kind"]:
+        view = issuer_pack(pack, floors)
+        if view:
+            issuer_result = check(view, floors, lifted=tuple(r["key"] for r in preferred_rule["issuer_view"]["lifted"]))
+            for row in issuer_result["missing"]:
+                refuse(preferred_rule["issuer_lead"] % subject["issuer"]["name"] + row["what"], row["why_needed"], row["where_it_likely_lives"])
+        for what, why, where in _preferred_failures(pack, floors, captured_day): refuse(what, why, where)
 
     def refuse_stale_cited(fact_ids, block_words):
         """Every fact a frame block cites is read as the case stands: each
@@ -3919,6 +6197,11 @@ def check(pack, floors):
         # says absent-by-design: one row calling it a gathering failure
         # is enough to keep the floor standing.
         declared = gap_kinds.get(lift_key) or ()
+        if uranium_producer_frame(floors, capture) and level == "conditional":
+            pricing = floors["archetype_measures"]["uranium_producer_rule"]["contract_book"]["pricing_id"]
+            if lift_key == pricing and declared and all(reason == "other" for reason in declared):
+                lifted_by_declared_gap.append(lift_key)
+                return
         if (level == "conditional" and declared
                 and all(reason == "absent_by_design"
                         for reason in declared)):
@@ -4109,6 +6392,12 @@ def check(pack, floors):
         elif floor_kind == "prefix":
             prefix = entry["prefix"]
             matches = [i for i in tier1_order if i.startswith(prefix)]
+            if uranium_producer_frame(floors, capture):
+                families = floors["archetype_measures"]["resource_rule"]["block_families_by_product"]
+                product = floors["archetype_measures"]["uranium_producer_rule"]["product"]
+                price_family = families[product]["reference_price_fact"]
+                if prefix == price_family[0]:
+                    matches = [i for i in tier1_order if i.startswith(tuple(price_family))]
             part = (entry.get("shapes") or {}).get(prefix)
             if part and matches:
                 # Every match is checked and a malformed one refuses;
@@ -4248,6 +6537,11 @@ def check(pack, floors):
                 members |= suffixes[prefix]
             holding_gap = (holding_data is not None and prefixes == holding_data[2]
                            and _holding_history(holding_data[1], capture["gaps"], holding_data[2])["gap"])
+            holder_row = subjects.holder_product(subject, floors)
+            if holder_row and prefixes == [holder_row["rule"]["roles"][r]["prefix"]
+                                           for r in ("history_nav", "history_price")]:
+                holding_gap = holding_gap or any(g["fact_class"] == prefixes[0]
+                    and g["reason_kind"] == "absent_by_design" for g in capture["gaps"])
             if minimum is not None and len(members) < minimum and not holding_gap:
                 refuse("at least %d members of the family named %s"
                        % (minimum,
@@ -4354,7 +6648,17 @@ def check(pack, floors):
     # would make this question sittable, at capture cost.
     named_product = subjects.product(subject)
     coin_key = subjects.coin(subject, floors)
-    if (subjects.asset_class(subject) == "crypto" and named_product
+    if subjects.is_protocol_kind(subject, floors):
+        token = subjects.protocol_token(subject, floors)
+        rule = class_entry["protocol_rule"]
+        if token is None:
+            admission = rule["unadmitted"]
+            refuse(admission["what"], admission["why"], admission["where"])
+        elif subject.get("name") not in class_entry["protocols"][token]["names"]:
+            refuse("the token's name", "the subject names %s but token %s names %s" % (
+                subject.get("name"), token, ", ".join(class_entry["protocols"][token]["names"])),
+                "asset_classes.crypto.protocols")
+    elif (subjects.asset_class(subject) == "crypto" and named_product
             and subject["kind"] not in coin_rule.get("coin_kinds", ())):
         refuse("the coin named by a subject of kind '%s'" % subject["kind"],
                "subject names a coin but its kind is '%s' - only a coin names a coin "
@@ -4385,7 +6689,24 @@ def check(pack, floors):
                "example to follow")
     for entry in class_anchors:
         evaluate(entry)
+    if treasury_layer:
+        coin, prefix, gap, _ = treasury_layer
+        rule = floors["archetype_measures"]["holding_rule"]["treasury"]
+        spec = rule["coin_layer"]
+        if gap and any(fid.startswith(prefix) for fid in facts_by_id):
+            refuse(prefix, spec["layer_both_refusal"], gap["reason"])
+        for registry in rule["admitted_registries"]:
+            for key in floors["asset_classes"]["crypto"][registry]:
+                other = spec["prefix_form"].format(c=key)
+                if key != coin and any(fid.startswith(other) for fid in facts_by_id):
+                    refuse(other, spec["layer_coin_refusal"], spec["why"])
     for what, why, where in _coin_failures(pack, floors, captured_day, fresh):
+        refuse(what, why, where)
+    for what, why, where in _protocol_failures(pack, floors, captured_day, fresh):
+        refuse(what, why, where)
+    for what, why, where in _holder_guard_failures(subject, floors):
+        refuse(what, why, where)
+    for what, why, where in _holder_product_failures(pack, floors, captured_day, fresh):
         refuse(what, why, where)
 
     requirements = capture["sufficiency"]["requirements"]
@@ -4871,6 +7192,8 @@ def check(pack, floors):
                     decisive = {fid for m in frame["decisive_metrics"] for fid in m.get("answered_by") or []}
                     rule = floors["archetype_measures"]["holding_rule"]
                     if captured_day >= date.fromisoformat(rule["applies_from"]):
+                        if treasury_frame(floors, capture):
+                            rule = dict(rule, holding_checks_replaced=rule["treasury"]["holding_checks_replaced"])
                         context = (rule, captured_day, decisive)
                 tagged, pairs, history = holding_data or _holding_roles(floors, frame, rating or {}, facts_by_id)
                 for what, why, where in _nav_bridge_failures(
@@ -4882,6 +7205,8 @@ def check(pack, floors):
                     for what, why, where in _holding_failures(
                             floors, frame, rating, capture, facts_by_id,
                             captured_day, decisive, gap_kinds, tagged, pairs, history):
+                        refuse(what, why, where)
+                    for what, why, where in _treasury_failures(pack, floors, captured_day, fresh, lifted=lifted):
                         refuse(what, why, where)
             # Architect ruling A9 (audit finding r1-2): a row naming the
             # roles its exited business touches rates a changing company
@@ -4947,6 +7272,10 @@ def check(pack, floors):
             for what, why, where in _fi_failures(
                     floors, declared, entry, frame, rating, changing,
                     gap_kinds, decisive_ids, facts_by_id):
+                refuse(what, why, where)
+            for what, why, where in _float_compounder_failures(
+                    floors, declared, frame, capture, facts_by_id,
+                    captured_day, gap_kinds):
                 refuse(what, why, where)
             # Every figure the frame shows as the firm's capital, its cost
             # of risk or its second engine's share is read as the case

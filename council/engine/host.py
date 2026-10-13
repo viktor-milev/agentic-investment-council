@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.abspath(
 
 from council.lib import canonical, prose, subjects, validate  # noqa: E402
 from council.engine import briefs, chair_fields, ladder, publisher  # noqa: E402
-from council.engine import runrecord, seal  # noqa: E402
+from council.engine import runrecord, seal, treasury_chair, preferred_chair  # noqa: E402
 from council.bridge import codex_bridge  # noqa: E402
 from council.evidence import brief, gate  # noqa: E402
 from council.evidence import sufficiency as sufficiency_check  # noqa: E402
@@ -59,6 +59,7 @@ DEFAULT_MINUTES_CAP = 90
 # live beside the capture, the outside audit and its resolution, and the
 # host copies them into the run so the run stands alone.
 MODE_NAME = "mode.json"
+OPENING_NAME = "opening.json"
 APPROVAL_NAME = "approval.json"
 CAPTURE_USAGE_NAME = "capture-usage.json"
 # The one page itself. The run directory is the archive (RUNBOOK 5), so
@@ -208,6 +209,29 @@ def _refuse_a_future_stamp(what, stamp_text, moment, consequence):
         % (what, stamp_text, consequence, _CLOCK_SKEW_SECONDS))
 
 
+def _read_start_stamp(doc, captured_at, label="the mode"):
+    chosen_at = _parse_iso(doc.get("at"))
+    if chosen_at is None:
+        raise HostError("%s carries no readable moment in 'at' (%r): "
+                        "the choice is made at the start of the sitting, so "
+                        "when it was made is what proves it"
+                        % (label, doc.get("at")))
+    captured = _parse_iso(captured_at)
+    if captured is not None and chosen_at > captured:
+        raise HostError(
+            "%s was chosen after the evidence existed: it is dated %s "
+            "and the capture is dated %s. The choice is made at the very "
+            "start of the sitting, before a single figure is gathered - a "
+            "choice made afterwards is a choice made knowing what the "
+            "evidence says" % (label, doc.get("at"), captured_at))
+    # The check above needs the capture's own stamp; a pack that carries
+    # none leaves the mode with no upper bound at all.
+    _refuse_a_future_stamp(
+        label, doc.get("at"), chosen_at,
+        "The mode is chosen at the very start of the sitting, which is "
+        "not a moment that has yet to arrive.")
+
+
 def _read_mode(evidence_dir, captured_at):
     """The mode, chosen at the start (owner ruling AC3)."""
     doc = _stage_json(evidence_dir, MODE_NAME,
@@ -226,29 +250,130 @@ def _read_mode(evidence_dir, captured_at):
         raise HostError("the mode names nobody who chose it: 'chosen_by' is "
                         "the person who was asked, or 'atlas' where the "
                         "portfolio system invoked this sitting")
-    chosen_at = _parse_iso(doc.get("at"))
-    if chosen_at is None:
-        raise HostError("the mode carries no readable moment in 'at' (%r): "
-                        "the choice is made at the start of the sitting, so "
-                        "when it was made is what proves it"
-                        % (doc.get("at"),))
-    captured = _parse_iso(captured_at)
-    if captured is not None and chosen_at > captured:
-        raise HostError(
-            "the mode was chosen after the evidence existed: it is dated %s "
-            "and the capture is dated %s. The choice is made at the very "
-            "start of the sitting, before a single figure is gathered - a "
-            "choice made afterwards is a choice made knowing what the "
-            "evidence says" % (doc.get("at"), captured_at))
-    # The check above needs the capture's own stamp; a pack that carries
-    # none leaves the mode with no upper bound at all.
-    _refuse_a_future_stamp(
-        "the mode", doc.get("at"), chosen_at,
-        "The mode is chosen at the very start of the sitting, which is "
-        "not a moment that has yet to arrive.")
+    _read_start_stamp(doc, captured_at)
     return {"mode": mode,
             "chosen_by": str(doc["chosen_by"]).strip(),
             "at": str(doc["at"]).strip()}
+
+
+
+def _check_opening_value(variable, value, rule):
+    """AC80(2), AC81(2): one validator for opening and pause changes."""
+    if variable == "derate_case":
+        if not isinstance(value, str) or value not in rule["derate_cases"]:
+            raise HostError("the derate_case is not a ruled case")
+        return
+    spec = rule["opening"]
+    if variable == "range_method":
+        if value not in spec["range_methods"] + [spec["no_method"]]:
+            raise HostError(rule["range_method_value_refusal"])
+        return
+    if variable in spec["rate_variables"]:
+        if value == spec["no_rate"]:
+            return
+        number = gate._decimal_or_none(value) if isinstance(value, str) else None
+        growth = variable == spec["rate_variables"][0]
+        if number is None or (growth and number <= -100) or (not growth and number <= 0):
+            raise HostError("%s must be a decimal string: growth above minus one hundred, discount above zero, or %s" % (variable, spec["no_rate"]))
+        return
+    if value == spec["no_claim"]:
+        return
+    if not isinstance(value, dict) or set(value) != {"words", "measure", "level", "unit"}:
+        raise HostError("the claim must be none or the ruled form: words, measure, level, unit")
+    level = gate._decimal_or_none(value.get("level")) if isinstance(value.get("level"), str) else None
+    if (not isinstance(value["words"], str) or not value["words"].strip()
+            or value["measure"] not in spec["claim_measures"]
+            or value["unit"] != spec["claim_unit"] or level is None or level <= 0):
+        raise HostError("the claim must name words, a ruled measure, a decimal level above zero and the ruled unit")
+
+
+def _read_holder_opening(evidence_dir, captured_at, row):
+    """AC87(1): the owner's fall is chosen before evidence, without default."""
+    rule = row["rule"]["opening"]
+    doc = _stage_json(evidence_dir, rule["file"], rule["opening_missing_refusal"])
+    if (not isinstance(doc, dict) or set(doc) != {"past_fall", "chosen_by", "at"}
+            or not isinstance(doc.get("chosen_by"), str) or not doc["chosen_by"].strip()):
+        raise HostError(rule["opening_shape_refusal"])
+    if not isinstance(doc["past_fall"], str) or doc["past_fall"] not in rule["past_falls"]:
+        raise HostError(rule["past_fall_refusal"])
+    _read_start_stamp(doc, captured_at, rule["file"])
+    return doc
+
+
+def _read_treasury_opening(evidence_dir, captured_at, rule, block):
+    """AC92(1), M14: one explicit choice per preferred, before evidence."""
+    doc = _stage_json(evidence_dir, OPENING_NAME, rule["opening_missing_refusal"])
+    if (not isinstance(doc, dict) or set(doc) != {"preferred_treatment", "coin_sitting", "chosen_by", "at"}
+            or not isinstance(doc.get("chosen_by"), str) or not doc["chosen_by"].strip()
+            or doc.get("coin_sitting") is not None and (not isinstance(doc["coin_sitting"], str) or not doc["coin_sitting"].strip())
+            or not isinstance(doc.get("preferred_treatment"), dict)):
+        raise HostError(rule["opening_shape_refusal"])
+    if set(doc["preferred_treatment"]) != {p["key"] for p in block["preferreds"]}:
+        raise HostError(rule["preferred_keys_refusal"])
+    for choice in doc["preferred_treatment"].values():
+        if (not isinstance(choice, dict) or set(choice) != {"as_debt", "why"}
+                or type(choice["as_debt"]) is not bool or not isinstance(choice["why"], str)
+                or not choice["why"].strip()):
+            raise HostError(rule["opening_shape_refusal"])
+    _read_start_stamp(doc, captured_at, OPENING_NAME)
+    return doc
+
+
+def _read_opening(evidence_dir, captured_at, subject, floors, capture=None):
+    """D6: opening choices precede evidence; an alien sidecar refuses."""
+    row = subjects.holder_product(subject, floors)
+    if row:
+        return _read_holder_opening(evidence_dir, captured_at, row)
+    pair = sufficiency_check.treasury_frame(floors, capture) if capture else None
+    if pair:
+        return _read_treasury_opening(evidence_dir, captured_at,
+            floors["archetype_measures"]["holding_rule"]["treasury"], pair[1])
+    if not subjects.is_protocol_kind(subject, floors):
+        if os.path.exists(os.path.join(evidence_dir, OPENING_NAME)):
+            raise HostError("opening.json belongs to the protocol kind only")
+        return None
+    rule = subjects.class_registry(floors, subject)["protocol_rule"]
+    doc = _stage_json(evidence_dir, OPENING_NAME, rule["opening_missing_refusal"])
+    if not isinstance(doc, dict):
+        raise HostError("opening.json must be an object")
+    for variable in rule["opening"]["variables"]:
+        value = doc.get(variable, rule["opening"]["no_rate"]) if variable in rule["opening"]["rate_variables"] else doc.get(variable, rule["opening"]["no_method"]) if variable == "range_method" else doc.get(variable)
+        _check_opening_value(variable, value, rule)
+    _check_rate_pair(doc, rule)
+    basis = doc.get("derate_case_basis")
+    token = subjects.protocol_token(subject, floors)
+    row = subjects.class_registry(floors, subject).get("protocols", {}).get(token)
+    if basis not in ("default", "owner") or not row or (basis == "default" and doc["derate_case"] != row["default_derate_case"]):
+        raise HostError("the default derate_case must be the token's default; an owner's own choice says owner")
+    if not isinstance(doc.get("chosen_by"), str) or not doc["chosen_by"].strip():
+        raise HostError("the opening names nobody who chose it")
+    _read_start_stamp(doc, captured_at, "the opening")
+    return doc
+
+
+def _check_rate_pair(values, rule):
+    """AC79(1), M10: validate the pair at the opening and after all changes."""
+    spec = rule["opening"]
+    declared = [values.get(k, spec["no_rate"]) != spec["no_rate"] for k in spec["rate_variables"]]
+    if any(declared) and not all(declared):
+        raise HostError(rule["rate_pair_refusal"])
+
+
+def opening_in_force(opening, approval, floors=None):
+    """D6: the one reading of the owner's variables after the one pause."""
+    if opening is None:
+        return None
+    spec = (floors or _floors())["asset_classes"]["crypto"]["protocol_rule"]["opening"]
+    result = {k: opening.get(k, spec["no_method"] if k == "range_method" else spec["no_rate"]) for k in spec["variables"]}
+    result["derate_case_basis"] = opening["derate_case_basis"]
+    result["changed"] = []
+    for change in (approval or {}).get("opening_changes") or ():
+        variable = change["variable"]
+        result[variable] = change["to"]
+        if variable == "derate_case":
+            result["derate_case_basis"] = "owner"
+        result["changed"].append(variable)
+    return result
 
 
 def _require_brief(evidence_dir):
@@ -276,7 +401,57 @@ def _require_brief(evidence_dir):
             "<pack.json> --out %s" % (path, path))
 
 
-def _read_approval(evidence_dir, mode, captured_at):
+def _read_opening_changes(doc, opening, subject, floors):
+    """AC81(3): one validation of redirects, before or with the go."""
+    result = {}
+    if "opening_changes" in doc:
+        if not subjects.is_protocol_kind(subject or {}, floors or _floors()) or opening is None:
+            raise HostError("opening_changes belongs to a protocol approval only")
+        changes = doc["opening_changes"]
+        if not isinstance(changes, list):
+            raise HostError("opening_changes must be a list")
+        rule = subjects.class_registry(floors, subject)["protocol_rule"]
+        result["opening_changes"] = []
+        for change in changes:
+            if not isinstance(change, dict) or set(change) != {"variable", "from", "to", "why"} or change["variable"] not in rule["opening"]["variables"]:
+                raise HostError("each opening change names variable, from, to and why")
+            variable = change["variable"]
+            current = opening_in_force(opening, result, floors)
+            if change["from"] != current[variable]:
+                raise HostError("opening change from does not equal the value in force")
+            _check_opening_value(variable, change["to"], rule)
+            if not isinstance(change["why"], str) or not change["why"].strip():
+                raise HostError("each opening change requires a non-empty why")
+            result["opening_changes"].append(change)
+    if opening is not None and subjects.is_protocol_kind(subject or {}, floors or _floors()):
+        rule = subjects.class_registry(floors, subject)["protocol_rule"]
+        _check_rate_pair(opening_in_force(opening, result, floors), rule)
+    return result.get("opening_changes", [])
+
+
+def pause_in_force(evidence_dir, captured_at, subject, floors, capture=None):
+    """AC81(3): the approval document and init read the same pause."""
+    if capture and treasury_chair.declared({"capture": capture}, floors):
+        opening = _read_opening(evidence_dir, captured_at, subject, floors, capture)
+        path = os.path.join(evidence_dir, APPROVAL_NAME)
+        doc = canonical.read_json(path) if os.path.isfile(path) else None
+        try:
+            return treasury_chair.treasury_in_force(opening, doc,
+                floors["archetype_measures"]["holding_rule"]["treasury"], treasury_chair.read_layer(evidence_dir))
+        except ValueError as error:
+            raise HostError(str(error)) from error
+    if not subjects.is_protocol_kind(subject, floors):
+        return None
+    opening = _read_opening(evidence_dir, captured_at, subject, floors)
+    path = os.path.join(evidence_dir, APPROVAL_NAME)
+    doc = canonical.read_json(path) if os.path.isfile(path) else {}
+    changes = _read_opening_changes(doc, opening, subject, floors)
+    result = opening_in_force(opening, {"opening_changes": changes}, floors)
+    result["opening_changes"] = changes
+    return result
+
+
+def _read_approval(evidence_dir, mode, captured_at, subject=None, floors=None, opening=None, *, capture=None):
     """The go, taken on the brief. Required in reviewed mode; a
     contradiction in unattended mode, and a contradiction is never
     resolved silently."""
@@ -322,8 +497,22 @@ def _read_approval(evidence_dir, mode, captured_at):
         "negative time: the budget it is measured against could never be "
         "missed, and the report's front page would print the negative "
         "number to the owner.")
-    return {"by": str(doc["by"]).strip(), "at": str(doc["at"]).strip(),
-            "note": str(doc["note"]).strip()}
+    result = {"by": str(doc["by"]).strip(), "at": str(doc["at"]).strip(),
+              "note": str(doc["note"]).strip()}
+    changes = _read_opening_changes(doc, opening, subject, floors)
+    if "opening_changes" in doc:
+        result["opening_changes"] = changes
+    if "preferred_changes" in doc:
+        ruled = floors or _floors()
+        rule = ruled["archetype_measures"]["holding_rule"]["treasury"]
+        if not capture or not treasury_chair.declared({"capture": capture}, ruled):
+            raise HostError(rule["pause"]["changes_on_other_refusal"])
+        try:
+            treasury_chair.treasury_in_force(opening, doc, rule)
+        except ValueError as error:
+            raise HostError(str(error)) from error
+        result["preferred_changes"] = doc["preferred_changes"]
+    return result
 
 
 def _rendered_full_sha256(evidence_dir, pack_doc, pack_sha256):
@@ -339,7 +528,10 @@ def _rendered_full_sha256(evidence_dir, pack_doc, pack_sha256):
             usage = canonical.read_json(usage_path)
         except ValueError:
             usage = None
-    rendered = brief.render_full(pack_doc, given, usage).encode("utf-8")
+    capture = pack_doc["capture"]
+    in_force = pause_in_force(evidence_dir, capture["captured_at"],
+                              capture["subject"], _floors(), capture=capture)
+    rendered = brief.render_full(pack_doc, given, usage, in_force=in_force).encode("utf-8")
     return canonical.sha256_bytes(rendered)
 
 
@@ -773,12 +965,30 @@ def _read_evidence_stage(evidence_dir, captured_at, pack_sha256, pack_doc):
         raise HostError("the evidence folder %s is not a directory"
                         % evidence_dir)
     mode = _read_mode(evidence_dir, captured_at)
+    floors = _floors()
+    subject = pack_doc["capture"]["subject"]
+    protocol = subjects.is_protocol_kind(subject, floors)
+    if protocol and mode["mode"] == "unattended":
+        raise HostError(subjects.class_registry(floors, subject)["protocol_rule"]["forced_review_refusal"])
+    opening = _read_opening(evidence_dir, captured_at, subject, floors, pack_doc["capture"])
     _require_brief(evidence_dir)
-    approval = _read_approval(evidence_dir, mode["mode"], captured_at)
+    approval = _read_approval(evidence_dir, mode["mode"], captured_at, subject, floors, opening, capture=pack_doc["capture"])
+    if protocol:
+        from council.engine import protocol_chair
+        in_force = opening_in_force(opening, approval, floors)
+        refusal = protocol_chair.derate_refusal(floors, in_force["derate_case"])
+        if refusal:
+            raise HostError(refusal)
+        range_read = protocol_chair.declared_range(pack_doc, floors, in_force)
+        if isinstance(range_read, str):
+            raise HostError(range_read)
     _require_full_document(evidence_dir, mode["mode"], captured_at,
                            pack_sha256, pack_doc)
     usage = _read_capture_usage(evidence_dir)
-    return {"mode": mode, "approval": approval, "usage": usage}
+    result = {"mode": mode, "approval": approval, "usage": usage}
+    if opening is not None:
+        result["opening"] = opening
+    return result
 
 
 # ---------------------------------------------------------------- init
@@ -812,12 +1022,23 @@ def init(runs_root, run_id, pack, pack_sha256, sufficiency, question_file,
     errors = validate.validate(subject, subject_schema)
     if errors:
         raise HostError("the subject is not valid:\n  " + "\n  ".join(errors))
+    preferred_rule = _floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+    if subject["kind"] == preferred_rule["kind"] and preferred_rule["sitting_open"] is False:
+        raise HostError(preferred_rule["sitting_closed"])
+    holder_row = subjects.holder_product(subject, canonical.read_json(FLOORS_PATH))
+    if holder_row and holder_row.get("sitting_open") is False:
+        raise HostError(holder_row["sitting_closed"])
     pack_doc = json.loads(pack_bytes.decode("utf-8"))
     if "capture" not in pack_doc:
         raise HostError("the pack file is not a frozen pack: the capture "
                         "wrapper is missing - hand the host the freeze's "
                         "pack.json, never a raw capture")
     capture_doc = pack_doc["capture"]
+    treasury_floors = canonical.read_json(FLOORS_PATH)
+    if sufficiency_check.treasury_frame(treasury_floors, capture_doc):
+        rule = treasury_floors["archetype_measures"]["holding_rule"]["treasury"]
+        if rule["sitting_open"] is False:
+            raise HostError(rule["sitting_closed"])
     if "subject" in capture_doc and capture_doc["subject"] != subject:
         raise HostError("the subject given to init does not match the "
                         "pack's own subject")
@@ -839,6 +1060,23 @@ def init(runs_root, run_id, pack, pack_sha256, sufficiency, question_file,
     stage = _read_evidence_stage(evidence_dir,
                                  capture_doc.get("captured_at"), actual,
                                  pack_doc)
+    # AC92(2), M9: all layer checks precede creation and payment.
+    coin_layer = None
+    if treasury_chair.declared(pack_doc, _floors()):
+        rule = _floors()["archetype_measures"]["holding_rule"]["treasury"]
+        in_force = treasury_chair.treasury_in_force(stage["opening"], stage["approval"], rule)
+        readings = sufficiency_check.treasury_readings(pack_doc, _floors(), in_force["preferred_treatment"])
+        if readings.get("true_debt_value", 0) > 0 and readings.get("preferred_value") is not None and readings["preferred_value"] <= 0:
+            raise HostError(treasury_chair.zero_yardstick_words(readings, rule))
+        coin, prefix, gap, _ = sufficiency_check._treasury_coin_layer(pack_doc, _floors())
+        latest = treasury_chair.coin_on_record(runs_root, coin, _floors())
+        coin_layer = treasury_chair.layer_for(pack_doc, _floors(), latest)
+        cited = coin_layer["source"] == "on_record"
+        expected = latest["run_id"] if cited else None
+        if stage["opening"]["coin_sitting"] != expected:
+            raise HostError(rule["coin_layer"]["opening_coin_refusal"])
+        if bool(gap) != cited or cited and expected not in gap["reason"]:
+            raise HostError(rule["coin_layer"]["layer_mismatch_refusal"])
     run_dir = os.path.join(runs_root, run_id)
     if os.path.exists(run_dir):
         raise HostError("run directory already exists: %s (a dead run is "
@@ -859,18 +1097,31 @@ def init(runs_root, run_id, pack, pack_sha256, sufficiency, question_file,
                                    invocation)
     runrecord.append_event(run_dir, "run_created",
                            {"run_id": run_id, "pack_sha256": actual})
+    if coin_layer is not None:
+        canonical.write_canonical_json(os.path.join(run_dir, "pack", rule["coin_layer"]["file"]), coin_layer)
+        runrecord.append_event(run_dir, "coin_layer_read", coin_layer)
     # What the sitting decided and spent BEFORE this run existed, copied
     # into the record so the run stands alone (owner ruling AC3). The two
     # provenance files ride into the pack folder beside the evidence they
     # are about; neither is inside the pack's hash, because the pack IS
     # the evidence and who chose and who approved is provenance.
-    for name in (MODE_NAME, CAPTURE_USAGE_NAME, APPROVAL_NAME, BRIEF_NAME,
+    for name in (MODE_NAME, CAPTURE_USAGE_NAME, APPROVAL_NAME, BRIEF_NAME, OPENING_NAME,
                  FULL_DOCUMENT_NAME, FULL_PAGE_NAME):
         source = os.path.join(evidence_dir, name)
         if os.path.isfile(source):
             with open(source, "rb") as handle:
                 canonical.write_bytes_atomic(
                     os.path.join(run_dir, "pack", name), handle.read())
+    if stage.get("opening") is not None:
+        runrecord.append_event(run_dir, "opening_variables", dict(stage["opening"]))
+        if coin_layer is not None:
+            effective = treasury_chair.treasury_in_force(stage["opening"], stage["approval"], rule, coin_layer)
+            if effective["preferred_changes"]:
+                runrecord.append_event(run_dir, "opening_changed", effective)
+        if subjects.is_protocol_kind(pack_doc["capture"]["subject"], _floors()):
+            effective = opening_in_force(stage["opening"], stage["approval"])
+            if effective["changed"]:
+                runrecord.append_event(run_dir, "opening_changed", effective)
     runrecord.append_event(run_dir, "evidence_mode", dict(stage["mode"]))
     if stage["approval"] is not None:
         runrecord.append_event(run_dir, "evidence_approved",
@@ -994,7 +1245,10 @@ class _Ctx(object):
         return briefs.render_casefile(self.pack, self.sufficiency,
                                       frame["question_for_council"],
                                       self.invocation["subject"],
-                                      seat_kind=seat_kind)
+                                      seat_kind=seat_kind,
+                                      in_force=pause_in_force(os.path.join(self.run_dir, "pack"),
+                                          self.pack["capture"]["captured_at"],
+                                          self.invocation["subject"], _floors(), capture=self.pack["capture"]) or _holder_in_force(self))
 
     def advisor_markdowns(self):
         return {seat: self.answer(seat)["markdown"]
@@ -1258,7 +1512,7 @@ def _price_units(pack, subject):
     return rows
 
 
-def check_draft_verdict(draft, pack, schemas):
+def check_draft_verdict(draft, pack, schemas, in_force=None):
     """Every reason this draft verdict is refused, in plain words.
     Empty list = the draft stands."""
     reasons = validate.validate(draft, schemas["draft_verdict"])
@@ -1625,11 +1879,37 @@ def check_draft_verdict(draft, pack, schemas):
                     "a falsifier row carries theme_falsifier_id %r but "
                     "the subject declares no theme block"
                     % row.get("theme_falsifier_id"))
-    reasons.extend(check_scenario_rating(draft, subject, tier1_by_id))
+    floors = _floors()
+    treasury = treasury_chair.declared(pack, floors) is not None
+    treasury = treasury or preferred_chair.declared(pack, floors) is not None
+    reasons.extend(preferred_chair.fill_dividends(draft.get("scenario_rating"), pack, floors))
+    treasury_chair.fill_premium_cases(draft.get("scenario_rating"), pack, floors, in_force)
+    reasons.extend(check_scenario_rating(draft, subject, tier1_by_id,
+        earned=treasury_chair.ladder_rated(subject, pack, floors), zero_floor=treasury))
+    from council.engine import protocol_chair
+    floors = _floors()
+    if subjects.is_protocol_kind(subject, floors) and "protocol_read" in draft:
+        read_errors = validate.validate(draft["protocol_read"],
+                                        _verdict_schema()["properties"]["protocol_read"])
+        if read_errors:
+            return reasons + read_errors
+    reasons.extend(protocol_chair.problems(draft, pack, floors, in_force))
+    from council.engine import uranium_chair
+    if subjects.holder_product(subject, floors) and "uranium_read" in draft:
+        read_errors = validate.validate(draft["uranium_read"], _verdict_schema()["properties"]["uranium_read"])
+        if read_errors:
+            return reasons + read_errors
+    reasons.extend(uranium_chair.problems(draft, pack, floors, in_force))
+    if treasury_chair.declared(pack, floors) and "treasury_read" in draft:
+        read_errors = validate.validate(draft["treasury_read"], _verdict_schema()["properties"]["treasury_read"])
+        if read_errors:
+            return reasons + read_errors
+    reasons.extend(treasury_chair.problems(draft, pack, floors, in_force))
+    reasons.extend(preferred_chair.problems(draft, pack, floors))
     return reasons
 
 
-def check_scenario_rating(draft, subject, tier1_by_id):
+def check_scenario_rating(draft, subject, tier1_by_id, *, earned=None, zero_floor=False):
     """The scenario-earned rating (ANCHORLESS-SPEC section 3). For an
     asset with no earnings the ladder is not decoration: the rating is
     computed from it, and a chairman who states a rating his own ladder
@@ -1639,7 +1919,7 @@ def check_scenario_rating(draft, subject, tier1_by_id):
     Empty list = the block stands."""
     reasons = []
     block = draft.get("scenario_rating")
-    anchorless = subjects.is_anchorless(subject)
+    anchorless = subjects.is_anchorless(subject) if earned is None else earned
     if not anchorless:
         if block is None:
             return reasons
@@ -1721,14 +2001,14 @@ def check_scenario_rating(draft, subject, tier1_by_id):
                 % (fact_id, what, expected))
     if reasons:
         return reasons
-    reasons.extend(ladder.check_shape(block, tier1_by_id))
+    reasons.extend(ladder.check_shape(block, tier1_by_id, zero_floor=zero_floor))
     reason = _coin_delisting_reason(block, subject)
     if reason is not None:
         reasons.append(reason)
     if reasons:
         return reasons
     try:
-        computed = ladder.compute(block, tier1_by_id, _floors())
+        computed = ladder.compute(block, tier1_by_id, _floors(), zero_floor=zero_floor)
     except ladder.LadderError as failure:
         return ["the scenario ladder cannot produce a rating: %s" % failure]
     if computed["rating"] != draft["rating"]:
@@ -1819,7 +2099,7 @@ def _coin_delisting_reason(block, subject):
         return None
     rule = registry["monetary_coin_rule"]
     return ladder.delisting_reason(block, rule["delisting_scenario_words"],
-                                  rule["delisting_refusal"])
+                                  rule["delisting_refusal"], rule["delisting_zero_refusal"])
 
 
 def _check_advisor(payload, ctx):
@@ -1833,19 +2113,29 @@ def _check_advisor(payload, ctx):
     # subject, only what the case file says it costs.
     subject = (ctx.pack.get("capture") or {}).get("subject") or {}
     seat_ladder = payload.get("scenario_ladder")
-    if subjects.is_anchorless(subject):
+    treasury = treasury_chair.declared(ctx.pack, _floors()) is not None or preferred_chair.declared(ctx.pack, _floors()) is not None
+    if treasury_chair.ladder_rated(subject, ctx.pack, _floors()):
         if seat_ladder is None:
             return ["this asset has no earnings, so every seat states a "
                     "scenario ladder: at least three named outcomes, each "
                     "with a price, a probability and one sentence of "
                     "reasoning, the probabilities adding to 1"]
-        shape = ladder.check_shape(seat_ladder, {})
+        treasury_chair.fill_premium_cases(seat_ladder, ctx.pack, _floors(), _treasury_in_force(ctx))
+        shape = preferred_chair.fill_dividends(seat_ladder, ctx.pack, _floors())
+        shape.extend(ladder.check_shape(seat_ladder, {}, zero_floor=treasury))
+        shape.extend(preferred_chair.ladder_reasons(seat_ladder, ctx.pack, _floors()))
         reason = _coin_delisting_reason(seat_ladder, subject)
         if reason is not None:
             shape.append(reason)
+        from council.engine import uranium_chair
+        shape.extend(uranium_chair.ladder_reasons(seat_ladder, subject, _floors()))
+        shape.extend(treasury_chair.ladder_reasons(seat_ladder, ctx.pack, _floors(), _treasury_in_force(ctx)))
         if shape:
             return ["your scenario ladder: " + reason for reason in shape]
     elif seat_ladder is not None:
+        cell_reasons = treasury_chair.ladder_reasons(seat_ladder, ctx.pack, _floors(), None) + preferred_chair.ladder_reasons(seat_ladder, ctx.pack, _floors())
+        if cell_reasons:
+            return cell_reasons
         # This subject is rated on the anchor basis, so no seat was
         # asked for a ladder and neither the reviewer nor the chairman
         # is shown one. An unasked-for ladder would publish in the
@@ -1885,12 +2175,35 @@ def _check_reviewer(payload, ctx):
     return [], words > 180
 
 
+def _protocol_in_force(ctx):
+    if not subjects.is_protocol_kind(ctx.pack["capture"]["subject"], _floors()):
+        return None
+    folder = os.path.join(ctx.run_dir, "pack")
+    return opening_in_force(canonical.read_json(os.path.join(folder, OPENING_NAME)),
+                            canonical.read_json(os.path.join(folder, APPROVAL_NAME)))
+
+
+def _treasury_in_force(ctx):
+    if not treasury_chair.declared(ctx.pack, _floors()):
+        return None
+    capture = ctx.pack["capture"]
+    return pause_in_force(os.path.join(ctx.run_dir, "pack"), capture["captured_at"], capture["subject"], _floors(), capture=capture)
+
+
+def _holder_in_force(ctx):
+    row = subjects.holder_product(ctx.pack["capture"]["subject"], _floors())
+    if not row:
+        return None
+    doc = canonical.read_json(os.path.join(ctx.run_dir, "pack", row["rule"]["opening"]["file"]))
+    return {k: doc[k] for k in row["rule"]["opening"]["variables"]}
+
+
 def _check_chair_draft(payload, ctx):
     errors = validate.validate(payload, ctx.schemas["chair_draft"])
     if errors:
         return errors
     reasons = check_draft_verdict(payload["draft_verdict"], ctx.pack,
-                                  ctx.schemas)
+                                  ctx.schemas, _protocol_in_force(ctx) or _holder_in_force(ctx) or _treasury_in_force(ctx))
     reaches = seal.reach_scan(json.dumps(payload), ctx.pack)
     if reaches:
         reasons.append(seal.violation_reason([], reaches))
@@ -1924,7 +2237,7 @@ def _check_chair_resolve(payload, ctx):
             reasons.append("disposition names %r, which is not a finding "
                            "the challenger returned" % fid)
     reasons.extend("final_verdict: %s" % r for r in check_draft_verdict(
-        payload["final_verdict"], ctx.pack, ctx.schemas))
+        payload["final_verdict"], ctx.pack, ctx.schemas, _protocol_in_force(ctx) or _holder_in_force(ctx) or _treasury_in_force(ctx)))
     reaches = seal.reach_scan(json.dumps(payload), ctx.pack)
     if reaches:
         reasons.append(seal.violation_reason([], reaches))
@@ -1969,6 +2282,8 @@ def _write_request(ctx, seat, retry_of=None, reason=None):
         # ladder, and re-asked from a brief that still showed them the
         # wrong contract (audit finding ANCHORLESS-A1 r1-6).
         kwargs["subject"] = ctx.invocation["subject"]
+        if treasury_chair.declared(ctx.pack, _floors()):
+            kwargs["treasury"] = dict(_floors()["archetype_measures"]["holding_rule"]["treasury"], pack=ctx.pack)
         if seat in briefs.ADVISOR_SEATS or seat == "reviewer":
             # The method paragraphs and the reviewer's table line name the
             # business frame's tables: only where the capture carries one.
@@ -2837,6 +3152,10 @@ def _ingest_answers(ctx):
         elif seat == "chair_resolve":
             _record_advisory_prose(ctx, number, "chair_resolve_synthesis",
                                    payload.get("final_markdown") or "")
+        # Architect fix round 8: persist the same filled copy that passed.
+        if (treasury_chair.declared(ctx.pack, _floors())
+                and (seat in ADVISOR_SEATS or seat in ("chair_draft", "chair_resolve"))):
+            canonical.write_canonical_json(path, payload)
         runrecord.append_event(ctx.run_dir, "answer_accepted",
                                {"number": number, "seat": seat,
                                 "path": "rpc/" + ctx.answer_name(number,
@@ -3066,8 +3385,13 @@ def _advance(ctx):
         _write_state(ctx.run_dir, "DONE", "published")
         runrecord.append_event(ctx.run_dir, "run_finished",
                                {"state": "DONE"})
-        ctx.say("published verdict.json (sha256 %s) and "
-                "atlas-envelope.json" % verdict_hash)
+        # Owner ruling AC78(6): name the hand-off file actually written -
+        # the envelope, or the withheld notice standing in its place.
+        handoff = "atlas-envelope.json"
+        if not os.path.exists(os.path.join(ctx.run_dir, handoff)):
+            handoff = "atlas-handoff-withheld.json"
+        ctx.say("published verdict.json (sha256 %s) and %s"
+                % (verdict_hash, handoff))
         ctx.say("state: DONE")
         return True
     return False

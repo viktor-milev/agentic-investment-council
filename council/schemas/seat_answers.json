@@ -1,6 +1,6 @@
 {
   "$schema": "council-validator-subset",
-  "title": "Seat answer contracts 1.4.0",
+  "title": "Seat answer contracts 1.8.0",
   "required_headings": [
     "Why the headline numbers moved",
     "The decisive metrics, read",
@@ -25,7 +25,7 @@
     }
   ],
   "price_level_tolerance": "0.01",
-  "description": "One member per seat kind; the host validates each answer file against its member. The members named chair_draft and chair_resolve declare their verdict payloads shallowly ('type': 'object'); the host validates those payloads against the draft_verdict member, so the chair's field set has one source of truth. Beyond these shapes the host also checks by code: the frame halves are verbatim substrings of the owner's question; the synopsis is at most 180 words; every finding is disposed of by name. required_headings (1.2.0, UPGRADE-2 U5, owner ruling AC5) is data, not a member: the three headings every advisor answer's markdown carries, named in every advisor brief and checked for presence by the host. chair_fields (1.3.0, UPGRADE-2 U5(b), owner rulings AC5 and AC35(3)) is data too: the chairman's three fields, each a key and the plain label the report and the chair's brief print, in the order they are read; in draft_verdict the three keys are optional and of any shape, because the host checks them softly - a missing or malformed field is asked for once and then stands, never refused. answer_line (1.4.0, UPGRADE-2 READ-C1, owner ruling AC44(1)) joins chair_fields first, as it is read first: the chairman's one line answering the owner's question, checked softly like the other three. price_level_tolerance (1.4.0, owner ruling AC44(4)) is data too, a string the member loaders skip: how near, as a share of the turning point's own value, a price tripwire may sit to a past turning point of the price history - the year's lowest or highest close, or a moving average - and count as supported. In the three tripwire lists each entry may carry measure (1.4.0, owner ruling AC44(2)): a short name for what it tests, so the page reads the three lists as one scorecard.",
+  "description": "Since 1.7.0 (UPGRADE-2 TREASURY(b1), AC92(1)-(2)) treasury ladders carry cells and the draft carries treasury_read, checked against the verdict's one shape. Since 1.6.0 (UPGRADE-2 URANIUM(c), AC87(1)) a physical holder draft carries uranium_read, checked against the verdict's one shape. Since 1.5.0 (PROTOCOL(c), AC78-AC81) a protocol draft carries protocol_read and its ladder may name catalysts. One member per seat kind; the host validates each answer file against its member. The members named chair_draft and chair_resolve declare their verdict payloads shallowly ('type': 'object'); the host validates those payloads against the draft_verdict member, so the chair's field set has one source of truth. Beyond these shapes the host also checks by code: the frame halves are verbatim substrings of the owner's question; the synopsis is at most 180 words; every finding is disposed of by name. required_headings (1.2.0, UPGRADE-2 U5, owner ruling AC5) is data, not a member: the three headings every advisor answer's markdown carries, named in every advisor brief and checked for presence by the host. chair_fields (1.3.0, UPGRADE-2 U5(b), owner rulings AC5 and AC35(3)) is data too: the chairman's three fields, each a key and the plain label the report and the chair's brief print, in the order they are read; in draft_verdict the three keys are optional and of any shape, because the host checks them softly - a missing or malformed field is asked for once and then stands, never refused. answer_line (1.4.0, UPGRADE-2 READ-C1, owner ruling AC44(1)) joins chair_fields first, as it is read first: the chairman's one line answering the owner's question, checked softly like the other three. price_level_tolerance (1.4.0, owner ruling AC44(4)) is data too, a string the member loaders skip: how near, as a share of the turning point's own value, a price tripwire may sit to a past turning point of the price history - the year's lowest or highest close, or a moving average - and count as supported. In the three tripwire lists each entry may carry measure (1.4.0, owner ruling AC44(2)): a short name for what it tests, so the page reads the three lists as one scorecard. Since 1.8.0 (UPGRADE-2 TREASURY(c), owner ruling AC92(3)), the listed preferred kind carries its issuer, ranking, dividend record, dividend cells and chairman cover line; migration changes the version alone and invents no field.",
   "frame": {
     "type": "object",
     "additionalProperties": false,
@@ -105,10 +105,35 @@
                   "minLength": 1,
                   "pattern": "[\\s\\S]*\\S[\\s\\S]*"
                 },
+                "cell": {"type": "object", "additionalProperties": false, "required": ["coin_scenario", "coin_price", "premium"], "properties": {"coin_scenario": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "coin_price": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "premium": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}},
                 "rationale": {
                   "type": "string",
                   "minLength": 1,
                   "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "dividend_cell": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "dividend",
+                    "coin_price",
+                    "price"
+                  ],
+                  "properties": {
+                    "dividend": {
+                      "enum": [
+                        "paid_in_full",
+                        "deferred",
+                        "missed"
+                      ]
+                    },
+                    "coin_price": {
+                      "type": "string"
+                    },
+                    "price": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -484,6 +509,9 @@
           }
         }
       },
+      "uranium_read": {},
+      "treasury_read": {},
+      "protocol_read": {},
       "scenario_rating": {
         "type": [
           "object",
@@ -541,10 +569,36 @@
                   "minLength": 1,
                   "pattern": "[\\s\\S]*\\S[\\s\\S]*"
                 },
-                "rationale": {
+                "cell": {"type": "object", "additionalProperties": false, "required": ["coin_scenario", "coin_price", "premium"], "properties": {"coin_scenario": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "coin_price": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}, "premium": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"}}},
+                "catalyst": {"type": "string", "minLength": 1, "pattern": "[\\s\\S]*\\S[\\s\\S]*"},
+              "rationale": {
                   "type": "string",
                   "minLength": 1,
                   "pattern": "[\\s\\S]*\\S[\\s\\S]*"
+                },
+                "dividend_cell": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "dividend",
+                    "coin_price",
+                    "price"
+                  ],
+                  "properties": {
+                    "dividend": {
+                      "enum": [
+                        "paid_in_full",
+                        "deferred",
+                        "missed"
+                      ]
+                    },
+                    "coin_price": {
+                      "type": "string"
+                    },
+                    "price": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
@@ -611,7 +665,20 @@
       "answer_line": {},
       "decisive_argument": {},
       "business_read": {},
-      "decisive_metrics_read": {}
+      "decisive_metrics_read": {},
+      "cover_read": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "cover"
+        ],
+        "properties": {
+          "cover": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     }
   },
   "chair_draft": {

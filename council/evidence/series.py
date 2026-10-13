@@ -32,6 +32,11 @@ contract. Its data rows carry a date and a string PriceUSD; the close is
 kept exactly and no volume is invented. One calendar day separates each
 row, and enough rows remain after --last-date for every tape window.
 The code fetches nothing. The gate checks the operator's source words.
+
+AC87(1), AC88(2), URANIUM(c): --sprott reads the exact named daily
+value series from a saved public page. --swings-days measures the last
+calendar-day window with the tape's arithmetic; the operator records
+the printed yearly percent, history days and window days as evidence.
 """
 
 import argparse
@@ -39,7 +44,7 @@ import json
 import re
 import sys
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 from council.lib import canonical
 from council.evidence import gate, tape
@@ -197,6 +202,71 @@ def bars_from_coinmetrics(text, asset, last_date=None, *, calendar="CRYPTO_24_7"
     return bars
 
 
+def bars_from_sprott(text, label, last_date=None):
+    """AC87(1), S1: whole quoted label, zero-based month, exact strings."""
+    names = list(re.finditer(r"\bname\s*:\s*(['\"])" + re.escape(label) + r"\1\s*,", text))
+    if len(names) != 1:
+        raise Refusal("series label %r must occur exactly once; found %d" % (label, len(names)))
+    header = re.match(r"\s*color\s*:\s*['\"][^'\"]+['\"]\s*,\s*lineWidth\s*:\s*\d+\s*,"
+                      r"\s*marker\s*:\s*\{\s*radius\s*:\s*\d+\s*\}\s*,\s*data\s*:\s*\[",
+                      text[names[0].end():])
+    if header is None:
+        raise Refusal("series label %r has no daily-pair array in the saved format" % label)
+    start = names[0].end() + header.end()
+    cursor, bars, previous = start, [], None
+    pattern = gate.load_capture_schema()["properties"]["price_series"][
+        "properties"]["bars"]["items"]["properties"]["close"]["pattern"]
+    pair = re.compile(r"\s*\[Date\.UTC\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*,\s*([^\]]+)\]")
+    while True:
+        match = pair.match(text, cursor)
+        hint = "pair %d" % (len(bars) + 1)
+        if match is None:
+            raise Refusal("%s in series %r is not a daily date and decimal pair" % (hint, label))
+        try:
+            day = date(int(match[1]), int(match[2]) + 1, int(match[3])).isoformat()
+        except ValueError:
+            raise Refusal("%s has no real date: %s" % (hint, match.group(0)))
+        close = match[4].strip()
+        if re.fullmatch(pattern, close) is None or Decimal(close) <= 0:
+            raise Refusal("%s (%s) has no decimal close above zero: %r" % (hint, day, close))
+        if previous is not None and day <= previous:
+            raise Refusal("%s (%s) does not follow %s in strictly rising dates" % (hint, day, previous))
+        previous = day
+        bars.append({"date": day, "close": close})
+        cursor = match.end()
+        tail = re.match(r"\s*([,\]])", text[cursor:])
+        if tail is None:
+            raise Refusal("%s (%s) has no next pair or array end" % (hint, day))
+        cursor += tail.end()
+        if tail[1] == "]":
+            break
+    return [b for b in bars if last_date is None or b["date"] <= last_date]
+
+
+def swings_line(bars, days, calendar, floors):
+    """AC87(1): calendar span, tape log returns and its calendar year."""
+    if days <= 0:
+        raise Refusal("--swings-days must be above zero")
+    last = date.fromisoformat(bars[-1]["date"])
+    history_days = (last - date.fromisoformat(bars[0]["date"])).days
+    window_days = min(days, history_days)
+    first = (last - timedelta(days=window_days)).isoformat()
+    selected = [b for b in bars if b["date"] >= first]
+    if len(selected) < 3:
+        raise Refusal("the swings window needs at least three closes for sample daily returns")
+    year = tape.series_year_bars({"price_series": {"calendar": calendar}}, floors)
+    product = floors["archetype_measures"]["uranium_producer_rule"]["product"]
+    rule = floors["asset_classes"]["commodity"]["products"][product]["rule"]
+    with localcontext() as context:
+        context.prec = tape.WORKING_PRECISION
+        value = tape._realized_volatility(tape._Series({"ticker": "", "bars": selected}, year), len(selected) - 1)
+        percent = Decimal(value[1]) * 100
+    return ("swings: %s %s; %s %d; %s %d; %s to %s; %d bars; %s" % (
+             percent, rule["roles"]["volatility"]["unit"], rule["swings"]["history_id"], history_days,
+             rule["swings"]["window_id"], window_days,
+             selected[0]["date"], selected[-1]["date"], len(selected), value[3]))
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stdout)
@@ -211,6 +281,9 @@ def main(argv=None):
                                  "session transcript.")
     parser.add_argument("transcript", nargs="?")
     parser.add_argument("--coinmetrics")
+    parser.add_argument("--sprott")
+    parser.add_argument("--label")
+    parser.add_argument("--swings-days", type=int)
     parser.add_argument("--asset")
     parser.add_argument("--contract")
     parser.add_argument("--ticker", required=True)
@@ -224,7 +297,10 @@ def main(argv=None):
     except SystemExit as stop:
         return stop.code if isinstance(stop.code, int) else 1
     try:
-        if bool(args.transcript) == bool(args.coinmetrics):
+        if args.sprott:
+            if args.transcript or args.coinmetrics or args.asset or args.contract or not args.label:
+                raise Refusal("--sprott needs --label and no other input")
+        elif bool(args.transcript) == bool(args.coinmetrics):
             raise Refusal("name exactly one input: a transcript or --coinmetrics")
         if args.coinmetrics and (not args.asset or args.contract):
             raise Refusal("--coinmetrics needs --asset and no --contract")
@@ -233,7 +309,10 @@ def main(argv=None):
         if args.last_date is not None and not _is_date(args.last_date):
             raise Refusal("--last-date %r is not a date written YYYY-MM-DD"
                           % args.last_date)
-        if args.coinmetrics:
+        if args.sprott:
+            with open(args.sprott, encoding="utf-8") as handle:
+                bars = bars_from_sprott(handle.read(), args.label, args.last_date)
+        elif args.coinmetrics:
             with open(args.coinmetrics, encoding="utf-8") as handle:
                 bars = bars_from_coinmetrics(handle.read(), args.asset, args.last_date,
                                              calendar=args.calendar)
@@ -247,6 +326,8 @@ def main(argv=None):
             raise Refusal("the reply carries no bar%s" % (
                 "" if args.last_date is None
                 else " dated on or before %s" % args.last_date))
+        swings = swings_line(bars, args.swings_days, args.calendar,
+                             canonical.read_json(gate._FLOORS_PATH)) if args.swings_days is not None else None
     except (Refusal, OSError) as refusal:
         print("series: refused - %s" % refusal)
         return 1
@@ -255,6 +336,8 @@ def main(argv=None):
         "source": args.source, "as_of": args.as_of, "bars": bars})
     print("series: %d bars, %s to %s -> %s"
           % (len(bars), bars[0]["date"], bars[-1]["date"], args.out))
+    if swings is not None:
+        print(swings)
     return 0
 
 

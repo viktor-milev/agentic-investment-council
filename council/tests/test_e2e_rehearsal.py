@@ -327,7 +327,7 @@ class TestEndToEndRehearsal(unittest.TestCase):
         # and the auditor's ceiling, carries the whole warnings list,
         # tags every row for bounds, and flags any sizing id the
         # council's own list does not pin.
-        self.assertEqual(verdict["schema_version"], "1.7.0")
+        self.assertEqual(verdict["schema_version"], "1.11.0")
         subject = verdict["subject"]
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
@@ -419,8 +419,9 @@ class TestKindRehearsals(unittest.TestCase):
                 os.path.join(work, "evidence"), pack_path=pack_path,
                 capture=capture, chosen_by="atlas"))
         self.assertEqual(state, "INIT")
+        lines = []
         for _ in range(40):
-            host.step(run_dir)
+            lines.extend(host.step(run_dir)["lines"])
             status = host.status(run_dir)
             if status["state"] in ("DONE", "REFUSED", "FAILED"):
                 break
@@ -470,6 +471,7 @@ class TestKindRehearsals(unittest.TestCase):
         with open(os.path.join(run_dir, "report.html"), "rb") as handle:
             page = handle.read().decode("utf-8")
         self.last_run_dir = run_dir
+        self.last_lines = lines
         return verdict, page
 
 
@@ -481,7 +483,7 @@ class TestKindRehearsals(unittest.TestCase):
         envelope = canonical.read_json(
             os.path.join(self.last_run_dir, "atlas-envelope.json"))
         subject = verdict["subject"]
-        self.assertEqual(verdict["schema_version"], "1.7.0")
+        self.assertEqual(verdict["schema_version"], "1.11.0")
         self.assertEqual(envelope["subject_name"], subject["name"])
         self.assertEqual(envelope["subject_ticker"], subject["ticker"])
         self.assertEqual(envelope["run_id"], run_id)
@@ -709,6 +711,100 @@ class TestKindRehearsals(unittest.TestCase):
         self.assertIn("earns buy", reason)
         self.assertFalse(os.path.exists(os.path.join(run_dir,
                                                      "verdict.json")))
+
+    def drive_coin(self, coin, run_id):
+        """The canned anchorless bench over the named coin's capture; a
+        privacy coin's ladders carry a delisting rung (AC73(2)), made by
+        renaming the bear rung - the arithmetic is unchanged."""
+        capture = test_evidence.coin_capture(
+            coin, price_last="60000.00", price_last_cross_check="60000.00")
+        facts = {fact["id"]: fact for fact in capture["tier1"]}
+        path = os.path.join(self.base, run_id + "-capture.json")
+        canonical.write_canonical_json(path, capture)
+
+        def fit(name, node):
+            # The chairman quotes this capture's dates and cites only
+            # facts it carries.
+            for value in (node.values() if isinstance(node, dict) else
+                          node if isinstance(node, list) else ()):
+                fit(name, value)
+            if not isinstance(node, dict):
+                return
+            if coin == "zcash" and node.get("name") == "Custody unwind":
+                node["name"] = "Custody unwind and delist"
+            if "key_numbers" in node:
+                node["key_numbers"] = [row for row in node["key_numbers"]
+                                       if row["pack_fact_id"] in facts]
+                node["evidence_dependencies"] = [
+                    fid for fid in node["evidence_dependencies"] if fid in facts]
+                for row in node["key_numbers"] + node["sizing_inputs"]:
+                    if row.get("as_of"):
+                        row["as_of"] = "2026-10-03"
+        return self.drive_canned("anchorless", run_id, path, fit)
+
+    def test_a_zcash_verdict_is_published_but_not_handed_to_atlas(self):
+        """Owner ruling AC78(6), holding AC70(2): the verdict publishes,
+        reads back clean and is ledgered; the hand-off is withheld with
+        its reason, and the page says so in one plain line."""
+        verdict, page = self.drive_coin("zcash", "rehearsal-zcash-withheld")
+        run_dir = self.last_run_dir
+        self.assertFalse(os.path.exists(
+            os.path.join(run_dir, "atlas-envelope.json")))
+        self.assertEqual(verdict["atlas_envelope"]["product"], "zcash")
+        rule = test_evidence.FLOORS["atlas_handoff"]
+        withheld = canonical.read_json(
+            os.path.join(run_dir, "atlas-handoff-withheld.json"))
+        reason = rule["why"] + " " + rule["confirmed_by"]
+        self.assertEqual(withheld, {"withheld": True, "product": "zcash",
+                                    "reason": reason,
+                                    "ruling": "AC70(2), AC78(6)"})
+        self.assertIn("Not handed to Atlas: " + html.escape(reason), page)
+        # The rest of the hand-off section agrees with that line: it never
+        # says Atlas receives this or that the envelope travels as its own
+        # file, since none was written (audit round 3).
+        self.assertNotIn("What the portfolio system receives", page)
+        self.assertNotIn("The envelope also travels as its own file", page)
+        self.assertNotIn("This is what is inside it.", page)
+        self.assertIn("What the portfolio system would have received", page)
+        self.assertIn("no envelope file was written", page)
+        self.assertTrue(any(e["event"] == "ledger_row_appended"
+                            for e in runrecord.read_events(run_dir)))
+        # The host's own line names the file it wrote, never the envelope
+        # it withheld (audit round 1).
+        published = [line for line in self.last_lines
+                     if line.startswith("published verdict.json")]
+        self.assertEqual(len(published), 1, self.last_lines)
+        self.assertNotIn("atlas-envelope.json", published[0])
+        self.assertIn("atlas-handoff-withheld.json", published[0])
+        # Read-back still refuses what disagrees: a withheld file naming
+        # another product, or an envelope standing beside the withheld one.
+        path = os.path.join(run_dir, "atlas-handoff-withheld.json")
+        canonical.write_canonical_json(path, dict(withheld, product="bitcoin"))
+        self.assertEqual(readback.check(run_dir), 1)
+        canonical.write_canonical_json(path, withheld)
+        envelope = dict(verdict["atlas_envelope"], verdict_hash=canonical.sha256_file(
+            os.path.join(run_dir, "verdict.json")))
+        canonical.write_canonical_json(
+            os.path.join(run_dir, "atlas-envelope.json"), envelope)
+        self.assertEqual(readback.check(run_dir), 1)
+
+    def test_a_named_bitcoin_verdict_is_still_handed_to_atlas(self):
+        # Control: Bitcoin named in product is confirmed - the envelope is
+        # written as before and no withheld file or page line appears.
+        verdict, page = self.drive_coin("bitcoin", "rehearsal-bitcoin-named")
+        self.assertEqual(verdict["atlas_envelope"]["product"], "bitcoin")
+        self.assertFalse(os.path.exists(os.path.join(
+            self.last_run_dir, "atlas-handoff-withheld.json")))
+        self.assertNotIn("Not handed to Atlas", page)
+        self.assertIn("What the portfolio system receives", page)
+        self.assertIn("The envelope also travels as its own file", page)
+        self.assertNotIn("would have received", page)
+        published = [line for line in self.last_lines
+                     if line.startswith("published verdict.json")]
+        self.assertEqual(len(published), 1, self.last_lines)
+        self.assertIn("atlas-envelope.json", published[0])
+        self.assertNotIn("withheld", published[0])
+        self.envelope_stands_alone(verdict, page, "rehearsal-bitcoin-named")
 
     def test_a_divergent_endorsement_is_named_on_the_page(self):
         """Owner ruling AB16(5), the whole chain: the challenger endorses

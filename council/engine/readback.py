@@ -15,6 +15,10 @@ against the append-only run record:
      carries a row that hashes to the recorded value and the verdict names
      it - so a run cannot claim a track-record entry it did not write.
 
+Where the hand-off was withheld (owner ruling AC78(6)), checks 3-5 give
+way to one: atlas-handoff-withheld.json names the verdict's own product,
+carries its reason, and no envelope stands beside it.
+
 Exit 0 only when everything holds. A run that cannot pass this check
 published nothing the owner may rely on.
 """
@@ -50,6 +54,26 @@ def _last_step(events):
     steps = [event for event in events
              if event.get("event") != RENDER_EVENT]
     return (steps or events)[-1]
+
+
+def _check_withheld(path, verdict_path, ok, bad):
+    """Owner ruling AC78(6): a hand-off withheld in place of the envelope
+    must name the verdict's own product and carry its reason."""
+    try:
+        withheld = canonical.read_json(path)
+        product = canonical.read_json(verdict_path)["atlas_envelope"]["product"]
+    except (OSError, ValueError, KeyError, TypeError):
+        bad("the withheld hand-off cannot be read against the verdict")
+        return
+    reason = withheld.get("reason") if isinstance(withheld, dict) else None
+    if (isinstance(reason, str) and reason.strip() and withheld == {
+            "withheld": True, "product": product, "reason": reason,
+            "ruling": "AC70(2), AC78(6)"}):
+        ok("the Atlas hand-off is withheld for product %r, with its reason"
+           % product)
+    else:
+        bad("the withheld hand-off does not match the verdict's product "
+            "%r or lacks its reason or ruling" % product)
 
 
 def check(run_dir):
@@ -96,8 +120,14 @@ def check(run_dir):
                 % (actual, recorded_hash))
 
     envelope_path = os.path.join(run_dir, "atlas-envelope.json")
+    withheld_path = os.path.join(run_dir, "atlas-handoff-withheld.json")
+    if os.path.exists(withheld_path):
+        _check_withheld(withheld_path, verdict_path, ok, bad)
+        if os.path.exists(envelope_path):
+            bad("an Atlas envelope stands beside the withheld hand-off")
     if not os.path.exists(envelope_path):
-        bad("atlas-envelope.json is missing")
+        if not os.path.exists(withheld_path):
+            bad("atlas-envelope.json is missing")
     else:
         envelope = canonical.read_json(envelope_path)
         if envelope.get("verdict_hash") == recorded_hash:

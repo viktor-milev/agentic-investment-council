@@ -8,6 +8,9 @@ with its own declared arithmetic, so a derived value must recompute
 EXACTLY from its operand value strings, compared with no rounding and
 no tolerance.
 
+Owner ruling AC85(1) permits one unit conversion: the published tonnes
+factor in the product registry, checked beside the declared arithmetic.
+
 CLI:
     python -m council.evidence.gate <capture.json> [--out <gate-result.json>]
 Exit codes: 0 accepted, 3 refused, 1 crash.
@@ -148,6 +151,7 @@ _FI_HOLDING = "financial_holding"
 _FI_REGIME_WORDS = 12
 _FI_BINDING_CONSTRAINT_WORDS = 25
 _FI_RISK_COST_BECAUSE_WORDS = 25
+_FI_PLAIN_INSURER_BECAUSE_WORDS = 25
 _FI_FIELDS = ("fi_subtype", "fi_secondary_subtype", "fi_secondary_share_facts",
               "fi_capital", "fi_risk_cost")
 _FI_CAPITAL_SHAPE = ("ratio_facts", "requirement_facts", "regime",
@@ -158,6 +162,7 @@ _FI_RISK_COST_KINDS = {
     "bank": ("credit",),
     "insurer": ("underwriting",),
     "reinsurer": ("underwriting",),
+    "float_compounder": ("underwriting",),
     "traditional_asset_manager": _FI_ANY_RISK_COST,
     "alternative_asset_manager": _FI_ANY_RISK_COST,
     _FI_HOLDING: _FI_ANY_RISK_COST,
@@ -403,7 +408,7 @@ def _check_constituent_bound(capture):
     return []
 
 
-def _check_subject_kind(capture):
+def _check_subject_kind(capture, floors=None):
     """Kind-consistency and referential integrity for the subject's
     constituent, vehicle, proportion, theme and asset-class fields
     (THEMES-BASKETS-SPEC section 2; ANCHORLESS-SPEC section 2). The
@@ -414,6 +419,12 @@ def _check_subject_kind(capture):
     reasons = []
     subject = capture["subject"]
     kind = subject["kind"]
+    if kind == "preferred" and not subjects.issuer(subject):
+        reasons.append("a preferred subject requires its issuer")
+    elif kind != "preferred" and "issuer" in subject:
+        reasons.append("subject.issuer belongs to the preferred kind only")
+    if kind == "preferred" and not all(str(subject.get(k) or "").strip() for k in ("ticker","listing")):
+        reasons.append((floors or canonical.read_json(_FLOORS_PATH))["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["listing_refusal"]["what"])
     constituents = subject.get("constituents")
     vehicle = subject.get("vehicle")
     proportions = subject.get("thesis_proportions")
@@ -438,6 +449,10 @@ def _check_subject_kind(capture):
     # keyed by the product's name: without it the conditional anchors
     # cannot be looked up at all.
     named_product = subject.get("product")
+    floors = floors or canonical.read_json(_FLOORS_PATH)
+    if subjects.is_protocol_kind(subject, floors) and not named_product:
+        reasons.append(floors["asset_classes"]["crypto"]["protocol_rule"]["protocol_needs_token"])
+
     if declared_class == "commodity":
         if not named_product:
             reasons.append(
@@ -452,11 +467,14 @@ def _check_subject_kind(capture):
             "'%s' - only a commodity, or a coin, names a product"
             % (named_product, declared_class))
 
-    if kind in ("single_stock", "bitcoin", "gold", "commodity"):
+    if kind in ("single_stock", "bitcoin", "gold", "commodity", "protocol_token"):
         for field, value in (("constituents", constituents),
                              ("vehicle", vehicle),
                              ("thesis_proportions", proportions),
                              ("theme", theme)):
+            if (kind == "commodity" and field == "vehicle"
+                    and subjects.holder_product(subject, floors)):
+                continue
             if value is not None:
                 reasons.append(
                     "the subject's kind is '%s' but the capture carries "
@@ -644,6 +662,9 @@ def frame_tickers(subject):
     is never refused for its absence: a coin has no business to frame,
     and a fund's business is the business of what it holds."""
     kind = subject.get("kind")
+    if kind == "preferred":
+        members = subjects.expression_tickers(subject)
+        return list(members), list(members)
     constituents = [ticker for ticker in subjects.constituent_tickers(subject)
                     if ticker]
     # The SHAPE does not decide this; the asset class does. A basket and
@@ -919,6 +940,60 @@ def _share_carriers(line_facts, facts_by_id, suffix):
     return values, foreign
 
 
+
+def _check_supply_schedule(capture, floors=None):
+    """AC80(1), AC80(4)(c), D5: shape only; floors own units and horizon."""
+    floors = floors or canonical.read_json(_FLOORS_PATH)
+    protocol = subjects.is_protocol_kind(capture["subject"], floors)
+    schedule = capture.get("supply_schedule")
+    if schedule is None:
+        return ["a protocol token requires supply_schedule (owner ruling AC80(1))"] if protocol else []
+    if not protocol:
+        return ["supply_schedule belongs to the protocol kind only (architect D5)"]
+    reasons = []
+    captured = date.fromisoformat(capture["captured_at"][:10])
+    def dated(value, label, trailing=False):
+        try:
+            day = date.fromisoformat(value)
+        except (ValueError, TypeError):
+            reasons.append("supply_schedule %s must be an ISO date" % label)
+            return None
+        if trailing and day > captured:
+            reasons.append("supply_schedule %s is after the capture" % label)
+        return day
+    dated(schedule["covers_through"], "covers_through")
+    for family in ("tranches", "emissions", "offsets", "locked_holders"):
+        if not schedule[family] and family in ("tranches", "locked_holders"):
+            field = "no_tranches_because" if family == "tranches" else "no_locked_supply_because"
+            if not str(schedule.get(field) or "").strip():
+                reasons.append("supply_schedule empty %s requires %s" % (family, field))
+        for item in schedule[family]:
+            amount = _decimal_or_none(item["amount"])
+            if amount is None or amount <= 0:
+                reasons.append("supply_schedule %s amount must be a decimal above zero" % family)
+            if not item["source"].strip():
+                reasons.append("supply_schedule %s source must be non-empty" % family)
+            group = "receiving_group" if family in ("tranches", "emissions") else "group" if family == "locked_holders" else None
+            if group and not item[group].strip():
+                reasons.append("supply_schedule %s %s must be non-empty (AC80(1))" % (family, group))
+            dated(item["as_of"], family + " as_of", True)
+            if family == "tranches":
+                start = dated(item["date"], "tranche date")
+                end = dated(item["end_date"], "tranche end_date") if item["end_date"] is not None else None
+                if item["release"] == "linear" and (end is None or start is None or end <= start):
+                    reasons.append("a linear tranche requires end_date after date")
+                if item["release"] == "cliff" and item["end_date"] is not None:
+                    reasons.append("a cliff tranche carries no end_date")
+                if item["dated_by"] == "aggregator" and not str(item["rule_source"] or "").strip():
+                    reasons.append(floors["asset_classes"]["crypto"]["protocol_rule"]["aggregator_refusal"])
+            elif family in ("emissions", "offsets"):
+                start = dated(item["period_start"], family + " period_start", family == "offsets")
+                end = dated(item["period_end"], family + " period_end", family == "offsets")
+                if start and end and end < start:
+                    reasons.append("supply_schedule %s period_end precedes period_start" % family)
+    return reasons
+
+
 def _check_business_frame(capture):
     """The business frame's own consistency (owner ruling AC1).
 
@@ -1043,7 +1118,7 @@ def _check_business_frame(capture):
         # still word-limited above. The archetype-to-measure MATCH and the
         # cycle block itself are the sufficiency gate's, because they read
         # the ruled table and the class's freshness rule.
-        if subject.get("kind") == "single_stock":
+        if subject.get("kind") in ("single_stock", "preferred"):
             for field in ("archetype", "archetype_because",
                           "cycle_dependence", "cycle_dependence_because"):
                 if not str(frame.get(field) or "").strip():
@@ -1163,7 +1238,7 @@ def _check_business_frame(capture):
 
         # ---- a financial institution's own declarations (owner rulings
         #      AC28 and AC30) - a single name only, as AC15's are ----
-        if subject.get("kind") == "single_stock":
+        if subject.get("kind") in ("single_stock", "preferred"):
             if frame.get("archetype") == _FI_ARCHETYPE:
                 _check_fi_frame(frame, where, reasons, missing_fact,
                                 figures_bind)
@@ -1179,6 +1254,40 @@ def _check_business_frame(capture):
                         % (where, ", ".join(stray), _FI_ARCHETYPE))
             # Owner rulings AC59-AC62, HA3/HA4: the bridge is also the
             # ordinary-business holding's; FI refusals stay in their place.
+            # AC89, contract 1.16.0: shape alone; no floors are read.
+            treasury = frame.get("treasury")
+            if treasury is not None:
+                if frame.get("archetype") != "investment_holding":
+                    reasons.append("%s carries treasury but declares '%s', required investment_holding"
+                                   % (where, frame.get("archetype")))
+                for name in ("coins", "convertibles", "loans", "preferreds", "raises",
+                             "coin_sales", "company_measures"):
+                    rows = treasury[name]
+                    keys = [r["coin" if name == "coins" else "key"] for r in rows]
+                    if len(keys) != len(set(keys)):
+                        reasons.append("%s treasury has duplicate keys in %s" % (where, name))
+                    if name == "coins":
+                        for coin in rows:
+                            keys = [r["key"] for r in coin["lines"]]
+                            if len(keys) != len(set(keys)):
+                                reasons.append("%s treasury has duplicate line keys" % where)
+                if period_order(treasury["first_year_end"]) > period_order(treasury["latest_year_end"]):
+                    reasons.append("%s treasury first_year_end is after latest_year_end" % where)
+                # AC92(3), M2: shape and references only, never a ranking inference.
+                keys = {r["key"] for r in treasury["preferreds"]}
+                for row in treasury["preferreds"]:
+                    for field in ("ranks_ahead_of", "ranks_alongside"):
+                        if len(row.get(field, [])) != len(set(row.get(field, []))):
+                            reasons.append("%s %s has duplicate ranking keys" % (where, row["key"]))
+                        for key in row.get(field, []):
+                            if key not in keys or key == row["key"]:
+                                reasons.append("%s %s %s has invalid ranking key %s" % (where, row["key"], field, key))
+                    dates = [r["date"] for r in row.get("dividend_record", [])]
+                    if any(a >= b for a, b in zip(dates, dates[1:])):
+                        reasons.append("%s %s dividend_record dates must strictly increase" % (where, row["key"]))
+            if treasury is None and any(c["method"] == "coin_at_today_price"
+                    for c in (frame.get("nav_bridge") or {}).get("components", ())):
+                reasons.append("%s uses coin_at_today_price without treasury" % where)
             if frame.get("archetype") == "investment_holding":
                 bridge = frame.get("nav_bridge")
                 if not bridge:
@@ -1473,7 +1582,7 @@ def _check_business_frame(capture):
                 "names, and one comparison is an anecdote; where no "
                 "honest peer set exists, name none and declare the gap "
                 "for the fact class '%s'" % (where, _PEER_GAP_CLASS))
-        elif not peers and _PEER_GAP_CLASS not in gap_classes:
+        elif not peers and (_PEER_GAP_CLASS + (suffix if subject.get("kind") == "preferred" else "")) not in gap_classes:
             reasons.append(
                 "%s names no peer and the capture declares no gap for the "
                 "fact class '%s' - three true peers beat six doubtful "
@@ -1490,6 +1599,20 @@ def _check_business_frame(capture):
             # statement is already refused by the contract shape; these
             # checks are the word limits it cannot state.
             because = peer.get("comparable_because")
+            # AC84(6): the reason belongs only to this whole-company kind.
+            if "plain_insurer_because" in peer:
+                reason = peer["plain_insurer_because"]
+                if frame.get("fi_subtype") != "float_compounder":
+                    reasons.append(
+                        "plain_insurer_because states why a plain insurer is "
+                        "among a float compounder's peers (owner ruling AC84(6)); "
+                        "this frame is not a float compounder, so the reason "
+                        "points at nothing")
+                elif _words(reason) > _FI_PLAIN_INSURER_BECAUSE_WORDS:
+                    reasons.append(
+                        "%s writes %d words for plain_insurer_because; the ruled limit is %d"
+                        % (where, _words(reason), _FI_PLAIN_INSURER_BECAUSE_WORDS))
+                figures_bind("plain_insurer_because", [], reason, [])
             if not str(because or "").strip():
                 reasons.append(
                     "%s names the peer %s with no statement of why it is "
@@ -2712,7 +2835,15 @@ def _series_calendars(subject, series_ticker, rules, floors):
         listing = match[0].get("listing")
     else:
         # Owner ruling AC33: a tickerless crypto series binds to its coin.
-        if (subjects.asset_class(subject) == "crypto"
+        if subjects.is_protocol_kind(subject, floors):
+            entry = subjects.class_registry(floors, subject).get("protocols", {}).get(
+                subjects.protocol_token(subject, floors)) or {}
+            if series_ticker != entry.get("series_ticker"):
+                return None, (
+                    "the series names %s, which is not the subject or one of "
+                    "its members - the tape would be computed from another "
+                    "instrument's history" % series_ticker)
+        elif (subjects.asset_class(subject) == "crypto"
                 and subjects.class_registry(floors, subject).get("monetary_coin_rule")):
             entry = (subjects.class_registry(floors, subject).get("products")
                      or {}).get(subjects.coin(subject, floors)) or {}
@@ -3583,6 +3714,53 @@ def _inexact_division_reason(fact, operation, operands, family,
             "rounded" % (fact["id"], equation))
 
 
+def _check_unit_conversions(capture, floors):
+    """AC85(1): the registry's one published conversion, never another."""
+    reasons = []
+    facts = {fact["id"]: fact for fact in capture["tier1"]}
+    products = floors.get("asset_classes", {}).get("commodity", {}).get("products", {})
+    entries = [row["rule"]["tonnes_to_pounds"] for row in products.values()
+               if (row.get("rule") or {}).get("tonnes_to_pounds")]
+    for fact in facts.values():
+        derived = fact.get("derived") or {}
+        operands = derived.get("operands") or []
+        references = [(operand, facts.get(operand.get("fact_id"))) for operand in operands
+                      if operand.get("fact_id")]
+        for entry in entries:
+            factor = _decimal_or_none(entry["factor"])
+            tonnes = [(operand, source) for operand, source in references
+                      if source and source.get("unit") == entry["from_unit"]]
+            inline = [operand for operand in operands if not operand.get("fact_id")]
+            multiply = derived.get("operation") == "multiply"
+            correct = (multiply and len(operands) == 2 and len(tonnes) == 1
+                       and len(inline) == 1
+                       and _decimal_or_none(inline[0].get("value")) == factor
+                       and fact.get("unit") == entry["to_unit"])
+            if tonnes and not correct:
+                unchanged = (not multiply and fact.get("unit") == entry["from_unit"]
+                             and len(references) == len(operands)
+                             and all(source and source.get("unit") == entry["from_unit"]
+                                     for _, source in references))
+                if not unchanged:
+                    reasons.append(
+                        "owner ruling AC85(1): derived fact '%s', operand '%s', "
+                        "requires multiply with exactly two operands: a %s fact "
+                        "and the inline factor %s, into %s; arithmetic within %s "
+                        "must keep every operand and result in %s"
+                        % (fact["id"], tonnes[0][0]["fact_id"], entry["from_unit"],
+                           entry["factor"], entry["to_unit"], entry["from_unit"],
+                           entry["from_unit"]))
+            elif (not tonnes and multiply and fact.get("unit") == entry["to_unit"]
+                  and any(_decimal_or_none(operand.get("value")) == factor
+                          for operand in inline) and references):
+                reasons.append(
+                    "owner ruling AC85(1): derived fact '%s', operand '%s', "
+                    "applies the factor %s to a figure not recorded in %s"
+                    % (fact["id"], references[0][0]["fact_id"], entry["factor"],
+                       entry["from_unit"]))
+    return reasons
+
+
 def _check_arithmetic(capture, floors):
     reasons = []
     for fact in capture["tier1"]:
@@ -4050,7 +4228,8 @@ def validate_capture(capture, schema, floors=None):
     floors = floors or canonical.read_json(_FLOORS_PATH)
     reasons = []
     reasons.extend(_check_question_line(capture, floors))
-    reasons.extend(_check_subject_kind(capture))
+    reasons.extend(_check_subject_kind(capture, floors))
+    reasons.extend(_check_supply_schedule(capture, floors))
     reasons.extend(_check_business_frame(capture))
     reasons.extend(_check_cycle(capture))
     series_reasons = []
@@ -4069,6 +4248,7 @@ def validate_capture(capture, schema, floors=None):
     reasons.extend(_check_unit_list(capture, floors))
     reasons.extend(_check_period_basis(capture))
     reasons.extend(_check_arithmetic(capture, floors))
+    reasons.extend(_check_unit_conversions(capture, floors))
     reasons.extend(_check_operand_references(capture))
     reasons.extend(_check_figures_literal(capture))
     reasons.extend(_check_vocabulary(capture))

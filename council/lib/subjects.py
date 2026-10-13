@@ -38,7 +38,9 @@ ANCHORLESS_CLASSES = ("crypto", "gold", "commodity")
 # coins is judged as crypto through the fund.
 SHAPE_CLASS = {
     "single_stock": "equity",
+    "preferred": "equity",
     "bitcoin": "crypto",
+    "protocol_token": "crypto",
     "gold": "gold",
     "commodity": "commodity",
 }
@@ -66,6 +68,8 @@ def constituent_tickers(subject):
 def expression_tickers(subject):
     """Every ticker the subject's expression names: the constituents',
     else the vehicle's alone, else none."""
+    if subject.get("kind") == "preferred":
+        return [issuer(subject)["ticker"]] if issuer(subject) else []
     tickers = constituent_tickers(subject)
     if tickers:
         return tickers
@@ -73,6 +77,11 @@ def expression_tickers(subject):
     if vehicle:
         return [vehicle["ticker"]]
     return []
+
+
+def issuer(subject):
+    """AC92(3), M1: the issuer is data, never a second capture."""
+    return subject.get("issuer") or None
 
 
 def theme_block(subject):
@@ -102,9 +111,57 @@ def product(subject):
     return subject.get("product") or None
 
 
+def holder_product(subject, floors):
+    """AC85-AC88, D1: one registry reading for a holder product."""
+    if asset_class(subject) != "commodity" or not product(subject):
+        return None
+    row = (class_registry(floors, subject) or {}).get("products", {}).get(product(subject))
+    return row if row and row.get("physical_holders") else None
+
+
+def physical_holder(subject, floors):
+    """D1: admit the registered vehicle line, name, listing and currency."""
+    row = holder_product(subject, floors)
+    vehicle = subject.get("vehicle") or {}
+    if not row:
+        return None
+    from council.evidence.gate import _norm_listing
+    for key, holder in row["physical_holders"].items():
+        if (vehicle.get("ticker") == holder["vehicle_ticker"]
+                and _norm_listing(vehicle.get("listing")) == _norm_listing(holder["listing"])
+                and vehicle.get("name") in holder["names"]
+                and vehicle.get("currency") == holder["currency"]):
+            return key
+    return None
+
+
+def holder_tickers(floors):
+    """D1 guard: every registered ticker and listing with its rule row."""
+    result = []
+    for key, row in floors.get("asset_classes", {}).get("commodity", {}).get("products", {}).items():
+        for holder in row.get("physical_holders", {}).values():
+            for ticker in [holder["vehicle_ticker"]] + holder["other_tickers"]:
+                result.append((ticker, holder["listing"], holder["names"][0], key, row))
+    return result
+
+
+
+def is_protocol_kind(subject, floors):
+    """AC67(1), D1: the new kind alone selects the protocol rule."""
+    rule = floors.get("asset_classes", {}).get("crypto", {}).get("protocol_rule", {})
+    return subject.get("kind") in rule.get("protocol_kinds", ())
+
+
+def protocol_token(subject, floors):
+    """D1: the one reader of an admitted protocol's registry key."""
+    rows = floors.get("asset_classes", {}).get("crypto", {}).get("protocols", {})
+    key = product(subject)
+    return key if is_protocol_kind(subject, floors) and key in rows else None
+
+
 def coin(subject, floors):
-    """The crypto subject's registry key (owner ruling AC67(4))."""
-    if asset_class(subject) != "crypto":
+    """AC67(1), AC67(4): monetary coins alone read the coin registry."""
+    if asset_class(subject) != "crypto" or is_protocol_kind(subject, floors):
         return None
     rule = (class_registry(floors, subject) or {}).get("monetary_coin_rule") or {}
     return product(subject) or rule.get("unnamed_coin")
@@ -128,6 +185,29 @@ def coin_applies_on(subject, floors, captured_day, entry=None):
         later = entry.get("applies_from", "") > rule.get("applies_from", "")
         return bound and (dated if later else True)
     return dated
+
+
+def admitted_coin(floors, key):
+    """AC89(3), M6: one reading of both existing admission registries."""
+    crypto = floors.get("asset_classes", {}).get("crypto", {})
+    rule = floors.get("archetype_measures", {}).get("holding_rule", {}).get("treasury", {})
+    for registry in rule.get("admitted_registries", ()):
+        row = crypto.get(registry, {}).get(key)
+        if row:
+            return ("monetary" if registry == "products" else "protocol", row)
+    return None
+
+
+def treasury_fund(floors, key):
+    """AC93, C11: explicit empty fields wait for the owner's ruling."""
+    admitted = admitted_coin(floors, key)
+    if not admitted:
+        return None
+    row = admitted[1]
+    if "treasury_fund" in row:
+        return row["treasury_fund"] if row["treasury_fund"].get("ticker") else None
+    funds = row.get("spot_funds") or []
+    return funds[0] if len(funds) == 1 else None
 
 
 def named_coin(subject, floors):
@@ -182,6 +262,10 @@ def class_anchors(floors, subject):
     if is_anchorless(subject):
         common = registry.get("common_anchorless") or {}
         anchors += list(common.get("anchors") or ())
+    if is_protocol_kind(subject, floors):
+        row = entry.get("protocols", {}).get(protocol_token(subject, floors)) or {}
+        return (anchors + list(entry["protocol_rule"].get("anchors") or ())
+                + list(row.get("anchors") or ()))
     anchors += list(entry.get("anchors") or ())
     crypto = asset_class(subject) == "crypto"
     named = coin(subject, floors) if crypto else product(subject)

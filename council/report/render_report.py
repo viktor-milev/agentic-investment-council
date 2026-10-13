@@ -37,7 +37,7 @@ import tempfile
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from council.engine import chair_fields, runrecord  # noqa: E402
+from council.engine import chair_fields, ladder, runrecord  # noqa: E402
 from council.engine.briefs import LENS_TITLES, _source_clauses  # noqa: E402
 from council.evidence import brief, freeze, gate, sufficiency, tape, trace  # noqa: E402
 from council.lib import prose, subjects  # noqa: E402
@@ -557,6 +557,62 @@ def format_number(value, unit=None, currency=None):
     return _fallback_unit(exact, unit, fallback)
 
 
+def format_fact_number(fact, cfg=None):
+    """PAGES-PROFIT-FIX R1: a ruled yield or share reads as a fraction after the date."""
+    cfg = cfg or brief._marks_config()
+    identified = dict(fact, id=fact.get("id") or fact.get("pack_fact_id"))
+    if trace.is_page_fraction(identified, cfg):
+        exact, _fallback = _coerce(fact.get("value"))
+        if exact is not None and (not exact or exact.adjusted() < MAX_FIGURE_DIGITS):
+            return _percent_body(exact * 100, False) + "%"
+    return format_number(fact.get("value"), fact.get("unit"))
+
+
+def format_protocol_number(value, kind, unit=None, currency=None, words=None, scaled=False):
+    """PROTOCOL(d3): one protocol display path; exact tracer readings stay untouched."""
+    if words is None:
+        words = brief._floors()["asset_classes"]["crypto"]["protocol_rule"]["page_words"]["figure_not_available_words"]
+    exact, fallback = _coerce(value)
+    if exact is None or (exact and abs(exact.adjusted()) >= MAX_FIGURE_DIGITS):
+        return words
+    with decimal.localcontext() as context:
+        context.prec = max(context.prec, MAX_FIGURE_DIGITS + 5)
+        def small_body():
+            return _strip_trailing(exact.quantize(decimal.Decimal(1).scaleb(exact.adjusted()), rounding=_HALF_UP))
+        small = exact and abs(exact) < decimal.Decimal("0.01")
+        if kind == "price":
+            prefix = _currency_prefix(currency or unit)
+            if prefix is None:
+                return words
+            if exact and abs(exact) < decimal.Decimal("0.01"):
+                decimals = 2 - abs(exact).adjusted()
+                rounded = abs(exact).quantize(decimal.Decimal(1).scaleb(-decimals), rounding=_HALF_UP)
+                return ("-" if exact < 0 else "") + prefix + format(rounded, "f")
+            return format_price(fallback, currency or unit)
+        if kind == "share":
+            body = _percent_body(exact, False)
+            whole, point, tail = body.partition(".")
+            return ("-" if body.startswith("-") else "") + "{:,}".format(abs(int(whole))) + point + tail + "%"
+        if kind == "amount":
+            body = (small_body() if small else
+                    ("-" if exact < 0 else "") + _scale_money_number(abs(exact))
+                    if scaled and abs(exact) >= _THOUSAND else _plain_count(exact, None))
+            return words if body is None else body + " " + unit
+        if kind == "money":
+            if small:
+                prefix = _currency_prefix(currency or unit)
+                return ("-" if exact < 0 else "") + prefix + small_body().lstrip("-") if prefix else words
+            shown = format_number(fallback, currency or unit)
+            return words if shown == fallback else shown
+        if kind == "chance":
+            return small_body() if small else "{:.2f}".format(exact.quantize(decimal.Decimal("0.01"), rounding=_HALF_UP))
+        # Multiples and periods keep their existing units; a bare count uses the count path.
+        if unit is None:
+            return small_body() if small else _plain_count(exact, None) or words
+        shown = format_number(fallback, unit, currency)
+        return words if shown == fallback else shown
+
+
 # ---------------------------------------------------------------------------------------------
 # THE PROSE REFORMATTER (owner ruling AC16(1), U6b sub-charge a)
 # ---------------------------------------------------------------------------------------------
@@ -762,6 +818,9 @@ MEASURE_WORDS = {
         "price against book, read against the operating return on equity",
     "price_to_book_against_return_on_equity":
         "price against book, read against the return on equity",
+    "price_to_book_against_book_value_per_share_growth":
+        "price against book, read beside the growth of book value per share "
+        "over ten year-ends with dividends added back",
     "price_to_earnings_against_return_on_client_assets":
         "price against earnings, read against the return on client assets",
     "price_to_fee_earnings_against_fee_earning_assets":
@@ -870,6 +929,14 @@ def _kind_words(subject):
     """The subject's kind in plain words (THEMES-BASKETS-SPEC section 7).
     `subject` needs only `kind` and, for a basket, `constituents`."""
     kind = subject.get("kind")
+    if kind == "preferred": return brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["kind_line_words"]
+    row = subjects.holder_product(subject, brief._floors())
+    if row is not None:
+        holder = subjects.physical_holder(subject, brief._floors())
+        return row["report_words"] % row["physical_holders"][holder]["names"][0]
+    token = subjects.protocol_token(subject, brief._floors())
+    if token is not None:
+        return brief._floors()["asset_classes"]["crypto"]["protocols"][token]["report_words"]
     coin = subjects.named_coin(subject, brief._floors())
     if coin is not None:
         return _COIN_REGISTRY[coin]["report_words"]
@@ -1201,16 +1268,32 @@ def load_run(run_dir):
         verdict = json.loads(verdict_bytes.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         raise MissingInputError("verdict.json is not readable JSON")
+    pack = _read_json(os.path.join(run_dir, "pack", "pack.json"))
+    # R1: host imports this renderer through the evidence page; defer the import.
+    from council.engine import host
+    try:
+        protocol_in_force = host.pause_in_force(os.path.join(run_dir, "pack"),
+            pack["capture"]["captured_at"], pack["capture"]["subject"], brief._floors(), capture=pack["capture"])
+    except (host.HostError, OSError, ValueError) as error:
+        raise MissingInputError(str(error)) from error
     return {
+        "protocol_in_force": protocol_in_force,
+        "protocol": brief.protocol_summary(pack, protocol_in_force),
+        "uranium": brief.uranium_summary(pack),
+        "treasury": brief.treasury_summary(pack, protocol_in_force),
+        "preferred": brief.preferred_summary(pack),
+        "float_compounder": brief.float_compounder_readings(pack),
         "verdict": verdict,
         "verdict_sha256": hashlib.sha256(verdict_bytes).hexdigest(),
         "invocation": _read_json(os.path.join(run_dir, "invocation.json")),
-        "pack": _read_json(os.path.join(run_dir, "pack", "pack.json")),
+        "pack": pack,
         "answers": answers,
         "challenge_result": _optional_json(os.path.join(run_dir, "challenge", "result.json")),
         "approved_document": _approved_document(run_dir),
         # The blind draw's letters, so the page can say which response was which advisor.
         "draw": _optional_json(os.path.join(run_dir, "blind", "draw.json")) or {},
+        # Owner ruling AC78(6): the hand-off withheld from Atlas, with its reason, or None.
+        "handoff_withheld": _optional_json(os.path.join(run_dir, "atlas-handoff-withheld.json")),
     }
 
 
@@ -1652,6 +1735,7 @@ class Page(object):
     def __init__(self):
         self.parts = []
         self.nav = []
+        self.figure_cfg = brief._marks_config()
         # Every number the prose reformatter rewrote, in render order (owner ruling AC16(1)):
         # each row is {location, original, replacement}, written beside the report as
         # <report name>.number-substitutions.json so a reader can see exactly what was respelt.
@@ -1801,7 +1885,7 @@ def _head_block(page, run):
     page.add("</div>")
     page.add('<aside class="rail">')
     _rating_box(page, verdict)
-    _front_key_numbers(page, verdict)
+    _front_key_numbers(page, verdict, _atlas_heading(run))
     page.add("</aside>")
     page.add("</header>")
     _warnings_band(page, run)
@@ -1836,7 +1920,7 @@ def _sticky_bar(page, run):
         # as the price. The label wraps with the value as one flex unit; the icon and toggle are
         # pinned to the viewport corners (fixed) and cannot be pushed off the bar.
         label = lead.get("name", "")
-        value = format_number(lead.get("value"), lead.get("unit"))
+        value = format_fact_number(lead, cfg=page.figure_cfg)
         shown = "%s %s" % (label, value) if label else value
         bits.append('<span class="sb-lead">%s</span>' % esc(shown))
         asof = format_date(lead.get("as_of", ""))
@@ -1934,14 +2018,15 @@ def _rating_box(page, verdict):
     page.add('<div class="rating-word">%s</div>' % esc(RATING_WORDS.get(rating, rating)))
     page.add('<div class="rating-scale muted small">The council&#x27;s scale, strongest first: '
              "%s.</div>" % esc(", ".join(RATING_WORDS[word] for word in SCALE_ORDER)))
-    page.add('<div class="muted small">The subject is %s.</div>'
-             % esc(_kind_words(verdict.get("subject") or {})))
+    subject = verdict.get("subject") or {}; kind_words = _kind_words(subject)
+    page.add('<div class="muted small">%s</div>'
+             % esc(kind_words if subject.get("kind") == "preferred" else "The subject is %s." % kind_words))
     lead = _first_key_number(verdict)
     if lead:
         asof = format_date(lead.get("as_of", ""))
         page.add('<dl class="rating-price"><dt>%s</dt><dd>%s%s</dd></dl>'
                  % (_glossed(lead.get("name", "")),
-                    esc(format_number(lead.get("value"), lead.get("unit"))),
+                    esc(format_fact_number(lead, cfg=page.figure_cfg)),
                     (' <span class="asof">%s</span>' % esc(asof)) if asof else ""))
     seats, challenger = _models_line(verdict.get("provenance") or {})
     page.add('<div class="stamp muted small">Advisors and chairman: <strong>%s</strong> '
@@ -1964,7 +2049,7 @@ def _front_rationale(page, verdict):
              "words</span>%s</div>" % markdown(rationale))
 
 
-def _front_key_numbers(page, verdict):
+def _front_key_numbers(page, verdict, appendix_heading):
     """The decisive numbers as a key-data strip (owner ruling AC16(3); audit B11): the envelope's
     headline figures at a glance in the market form, each under the envelope's own plain label.
     The whole list, with its dates and bounds, is in the hand-off appendix at the end."""
@@ -1976,30 +2061,47 @@ def _front_key_numbers(page, verdict):
     shown = key_numbers[:KEY_DATA_STRIP_MAX]
     cells = "".join("<dt>%s</dt><dd>%s</dd>"
                     % (_glossed(number.get("name", "")),
-                       esc(format_number(number.get("value"), number.get("unit"))))
+                       esc(format_fact_number(number, cfg=page.figure_cfg)))
                     for number in shown)
     page.add('<dl class="keydata">%s</dl>' % cells)
     remaining = len(key_numbers) - len(shown)
     if remaining > 0:
         page.add('<div class="muted small">The verdict carries %d more headline number%s. They '
-                 "are listed in full under &#x27;What the portfolio system receives&#x27; at the "
+                 "are listed in full under &#x27;%s&#x27; at the "
                  "end of this report.</div>"
-                 % (remaining, "" if remaining == 1 else "s"))
+                 % (remaining, "" if remaining == 1 else "s", appendix_heading))
 
 
-def _ladder_table(page, scenarios, currency):
+def _ladder_price(rung, currency, calculated):
+    text = esc(format_price(rung.get("price_outcome"), currency))
+    label = calculated(rung) if calculated else None
+    return text + ('<br><span class="muted small">%s</span>' % label if label else "")
+
+
+def _treasury_ladder_note(page, run):
+    if run.get("treasury") is None:
+        return None
+    from council.engine import treasury_chair
+    words = brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]
+    page.add('<p class="muted small">%s</p>' % _glossed(words["machine_cells_sentence"], scope="treasury"))
+    return lambda rung: _glossed(words["machine_cell_words"], scope="treasury") if treasury_chair.case_key(rung, words["premium_cases"]) else None
+
+
+def _ladder_table(page, scenarios, currency, *, catalyst=None, calculated=None):
     """The chairman's ladder: one row per named rung, every rung in full. The price is rounded for
     reading in the subject's own currency; the chance is quoted as he wrote it, because the
     arithmetic block beside this table quotes that same string and the two must read alike."""
     rows = "".join('<tr><td>%s</td><td class="nowrap">%s</td><td class="nowrap">%s</td>'
-                   "<td>%s</td></tr>"
+                   "<td>%s</td>%s</tr>"
                    % (esc(rung.get("name", "")),
-                      esc(format_price(rung.get("price_outcome"), currency)),
+                      _ladder_price(rung, currency, calculated),
                       esc(rung.get("probability", "")),
-                      esc(rung.get("rationale", "")))
+                      esc(rung.get("rationale", "")),
+                       ("<td>%s</td>" % catalyst(rung.get("catalyst", ""))) if catalyst else "")
                    for rung in scenarios)
     page.add('<table><tr><th>the case</th><th class="nowrap">price if it happens</th>'
-             '<th class="nowrap">chance</th><th>why</th></tr>%s</table>' % rows)
+             '<th class="nowrap">chance</th><th>why</th>%s</tr>%s</table>' % (("<th>%s</th>" % esc(brief._floors()["asset_classes"]["crypto"]["protocol_rule"]["ladder_catalyst_head"]))
+                 if catalyst else "", rows))
 
 
 def _ladder_judgment_note(page, block):
@@ -2008,12 +2110,12 @@ def _ladder_judgment_note(page, block):
              % esc(block.get("horizon_months", "")))
 
 
-def _front_earned_rating(page, verdict, block):
+def _front_earned_rating(page, verdict, block, *, catalyst=None, short_history=None, bar_notes=None, calculated=None):
     """An anchorless subject's rating, and the sum that earned it."""
     page.add("<h3>How this rating was earned: the scenario ladder</h3>")
     _ladder_judgment_note(page, block)
     _ladder_table(page, block.get("scenarios") or [],
-                  (verdict.get("subject") or {}).get("currency"))
+                  (verdict.get("subject") or {}).get("currency"), catalyst=catalyst, calculated=calculated)
     sentences = block.get("arithmetic") or []
     if sentences:
         # The machine's own sum, written out. Quoted, never reworded: this IS the arithmetic
@@ -2024,10 +2126,13 @@ def _front_earned_rating(page, verdict, block):
     expected = block.get("expected_annualised_pct")
     if bar is not None and expected is not None:
         page.add('<div class="card"><span class="lead">The bar it had to clear</span>The ladder '
-                 "expects %s%% a year against a bar of %s%% a year%s.</div>"
+                 "expects %s%% a year against a bar of %s%% a year%s."
                  % (esc(expected), esc(bar),
                     (", a difference of %s points" % esc(block["excess_over_bar_pp"]))
-                    if block.get("excess_over_bar_pp") is not None else ""))
+                    if block.get("excess_over_bar_pp") is not None else "")
+                 + ("<p>%s</p>" % _glossed(short_history, scope="protocol") if short_history else "")
+                 + "".join("<p>%s</p>" % note for note in bar_notes or [])
+                 + "</div>")
     _front_sensitivity(page, block)
 
 
@@ -2075,7 +2180,7 @@ def _front_sensitivity(page, block):
                  "<th>the rating then reads</th></tr>%s</table>" % rows)
 
 
-def _front_not_aggregated(page, verdict, block):
+def _front_not_aggregated(page, verdict, block, *, catalyst=None, calculated=None):
     """A ladder the chairman would not add up. There is no earned rating, and the page says so
     in his own reason rather than showing arithmetic nobody stands behind."""
     page.add("<h3>Why no rating was earned from the ladder</h3>")
@@ -2086,10 +2191,10 @@ def _front_not_aggregated(page, verdict, block):
     scenarios = block.get("scenarios") or []
     if scenarios:
         _ladder_judgment_note(page, block)
-        _ladder_table(page, scenarios, (verdict.get("subject") or {}).get("currency"))
+        _ladder_table(page, scenarios, (verdict.get("subject") or {}).get("currency"), catalyst=catalyst, calculated=calculated)
 
 
-def _front_context_ladder(page, verdict, block):
+def _front_context_ladder(page, verdict, block, *, catalyst=None):
     """A ladder offered beside an anchored subject's read. It earned nothing and says so."""
     page.add("<h3>A scenario ladder, as supporting context only</h3>")
     page.add('<div class="muted small">This subject is rated on its own anchors, above. The '
@@ -2097,7 +2202,7 @@ def _front_context_ladder(page, verdict, block):
              "read.</div>")
     _ladder_judgment_note(page, block)
     _ladder_table(page, block.get("scenarios") or [],
-                  (verdict.get("subject") or {}).get("currency"))
+                  (verdict.get("subject") or {}).get("currency"), catalyst=catalyst)
 
 
 def _front_price_read(page, run):
@@ -2118,15 +2223,23 @@ def _detail_basis(page, run):
     scenario ladder and its arithmetic where the subject earns its rating from one, or a context
     ladder offered beside an anchored read. Content unchanged - it moved down from the executive
     summary, where the ladder used to sit."""
+    summary = run.get("protocol")
+    catalyst = _protocol_prose(page, run) if summary and "range_line" in summary else None
     verdict = run["verdict"]
     block = verdict.get("scenario_rating") or {}
     if block and block.get("basis") == "rating":
+        calculated = _treasury_ladder_note(page, run)
         if block.get("aggregated"):
-            _front_earned_rating(page, verdict, block)
+            _front_earned_rating(page, verdict, block, catalyst=catalyst, calculated=calculated,
+                short_history=summary.get("short_history_line") if summary else None,
+                bar_notes=[_glossed(note, scope="uranium") for note in
+                           (run.get("uranium") or {}).get("bar_notes", [])] +
+                          [_glossed(note, scope="treasury") for note in
+                           (run.get("treasury") or {}).get("bar_notes", [])])
         else:
-            _front_not_aggregated(page, verdict, block)
+            _front_not_aggregated(page, verdict, block, catalyst=catalyst, calculated=calculated)
     elif block and block.get("basis") == "context":
-        _front_context_ladder(page, verdict, block)
+        _front_context_ladder(page, verdict, block, catalyst=catalyst)
 
 
 def _below_reference_rungs(block):
@@ -2177,13 +2290,14 @@ def _front_downside(page, run):
         page.add('<table><tr><th class="nowrap">level</th>'
                  "<th>what it means if it is reached</th></tr>%s</table>" % rows)
     if below:
+        calculated = _treasury_ladder_note(page, run)
         currency = (verdict.get("subject") or {}).get("currency")
         page.add('<div class="muted small">The ladder&#x27;s own losing rungs, priced under %s '
                  "&mdash; the price the ladder is measured against.</div>"
                  % esc(format_price(block.get("reference_price", ""), currency)))
         rows = "".join('<tr><td class="nowrap">%s</td><td>%s</td>'
                        '<td class="nowrap">%s</td></tr>'
-                       % (esc(format_price(rung.get("price_outcome"), currency)),
+                       % (_ladder_price(rung, currency, calculated),
                           esc(rung.get("name", "")), esc(rung.get("probability", "")))
                        for rung in below)
         page.add('<table><tr><th class="nowrap">price if it happens</th><th>the case</th>'
@@ -2298,7 +2412,7 @@ def _front_scorecard(page, run):
     date = _scorecard_date(tripwires)
     page.add("<h3>The %sscorecard</h3>" % (("%s " % esc(format_date(date))) if date else ""))
     rows = []
-    for name, lists, numbers in chair_fields.scorecard(tripwires, brief._marks_config()):
+    for name, lists, numbers in chair_fields.scorecard(tripwires, page.figure_cfg):
         flag = ""
         if len(numbers) > 1:
             flag = '<div class="alarmtag small">%s%s.</div>' % (
@@ -2768,6 +2882,312 @@ def _sitting_clocks(page, run, now):
         page.add('<div class="card"><span class="lead">Time</span>%s.</div>' % ", ".join(bits))
 
 
+
+def _protocol_floor(run, summary):
+    """R8: an un-added ladder supplies no chance."""
+    claim = (summary.get("in_force") or {}).get("claim", summary["rule"]["opening"]["no_claim"])
+    rated = run["verdict"].get("scenario_rating") or {}
+    if claim == summary["rule"]["opening"]["no_claim"] or not rated.get("aggregated"):
+        return None
+    from council.engine import protocol_chair
+    if "protocol_claim_floor" not in run:
+        run["protocol_claim_floor"] = protocol_chair.claim_floor(rated, claim, run["pack"], brief._floors())
+    return run["protocol_claim_floor"]
+
+
+def protocol_bases(run, summary):
+    """AC19, R6: recorded facts, displayed readings and the read's own figures."""
+    cfg = trace.capture_config(brief._marks_config(), run["pack"]["capture"])
+    verdict = run["verdict"]
+    bases = chair_fields.answer_line_bases(
+        (verdict.get("atlas_envelope") or {}).get("key_numbers") or [],
+        run["pack"]["capture"], cfg)
+    figures = list(summary["figures"])
+    read = verdict.get("protocol_read") or {}
+    probabilities = []
+    for cell in read.get("near_term") or []:
+        figures.extend(dict(value=cell[k], unit=summary["rule"]["opening"]["claim_unit"])
+                       for k in ("price_low", "price_high"))
+        probabilities.append(cell["probability"])
+    claim = (summary.get("in_force") or {}).get("claim", summary["rule"]["opening"]["no_claim"])
+    if isinstance(claim, dict):
+        figures.append(dict(value=claim["level"], unit=claim["unit"]))
+    if read.get("claim"):
+        probabilities.append(read["claim"]["probability"])
+    floor = _protocol_floor(run, summary)
+    if floor is not None:
+        probabilities.append(str(floor))
+    fraction_unit = brief._floors()["prose_figure_marks"]["fraction_units"][0]
+    for number in probabilities:
+        figures.extend(dict(value=number, unit=unit) for unit in (None, fraction_unit))
+    return bases + trace.facts_bases(figures, cfg)
+
+
+def _protocol_prose(page, run):
+    bases = protocol_bases(run, run["protocol"])
+    def marked(text):
+        shown = reformat_prose(str(text or ""), "protocol chairman read", page.number_subs)
+        return trace.mark(shown, bases, page.figure_cfg,
+                          lambda part: _glossed(part, scope="protocol"))
+    return marked
+
+
+def _protocol_card(page, lead, lines):
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+        _glossed(lead, scope="protocol"), "".join("<p>%s</p>" % line for line in lines)))
+
+
+def _front_protocol(page, run):
+    """AC81(4), R3: one card, six readings in the owner's order."""
+    summary = run.get("protocol")
+    if summary is None:
+        return
+    rule = summary["rule"]
+    gloss = lambda text: _glossed(text, scope="protocol")
+    if "range_line" not in summary:
+        _protocol_card(page, rule["front_lead"], [gloss(x) for x in summary["lines"]])
+        return
+    value, supply, read = summary["value"], summary["supply"], run["verdict"]["protocol_read"]
+    currency = run["verdict"]["subject"].get("currency")
+    def shown(number, kind, unit=None):
+        return format_protocol_number(str(number), kind, unit=unit, currency=currency,
+                                      words=rule["page_words"]["figure_not_available_words"])
+    money = lambda number: shown(number, "money")
+    token_price = lambda number: shown(number, "price")
+    percentage = lambda number: shown(number, "share")
+    lines = [gloss(summary["kind_line"])]
+    def line(key, text):
+        lines.append("<strong>%s:</strong> %s" % (gloss(rule[key]), gloss(text)))
+    reading = summary["range"]
+    if isinstance(reading, str):
+        price = reading
+    elif reading["scenarios_only"]:
+        price = rule["front_price_only_words"] % (token_price(supply["price"]), money(value["market_value"]))
+    else:
+        method = value["methods"][reading["method"]]
+        price = rule["front_price_words"] % (token_price(supply["price"]),
+            *[token_price(method[per][k]) for per in ("per_token", "per_token_twelve_months") for k in ("low", "high", "base")],
+            rule["method_words"][reading["method"]])
+        price += " " + rule["front_market_value_words"] % (money(value["market_value"]),
+            rule["page_words"]["place_words"][method["place"]],
+            *[money(method[k]) for k in ("low", "high", "base")],
+            percentage(method["market_value_against_base_percent"]), percentage(method["fully_diluted_value_against_base_percent"]))
+    if not isinstance(reading, str):
+        for role in ("price", "supply"):
+            if not summary["row"][role + "_cross_check"]:
+                price += " " + rule["front_single_source_words"][role]
+    line("price_lead", price)
+    fees = (rule["scenarios_only_words"] if value["scenarios_only"] else rule["front_fees_words"] % (
+        percentage(value["holders_share_percent"]), "; ".join(rule["front_route_words"] % (
+            rule["holders_fee_routes"][route], percentage(f["share_percent"])) for route, f in value["routes"].items())))
+    if any(x["fee_sources_disagree"] for x in value["second_source"].values()):
+        fees += " " + rule["fee_sources_disagree_words"]
+    if value["methods"]["comparables"].get("dropped"):
+        fees += " " + rule["comparables_dropped_words"]
+    line("fees_lead", fees)
+    line("supply_lead", rule["front_supply_words"] % (rule["supply_words"][read["supply"]["word"]],
+        rule["chair"]["judgment_words"], "; ".join(rule["front_net_supply_words"] % (
+            w["words"], shown(w["net"], "amount", summary["row"]["unit"]), percentage(w["net_percent"]))
+            for w in supply["windows"])))
+    context = summary["comparison"]["context"]
+    deciding = next(m["words"] for m in rule["derate_measures"] if m["id"] == read["comparison"]["deciding_measure"])
+    derate = rule["derate_sentence_words"] % (rule["comparison_words"][read["comparison"]["word"]],
+        summary["in_force"]["derate_case"], percentage(context["fall"][_PERCENT_PREFIX]).removesuffix("%"),
+        shown(context["fall"]["days"], "number"),
+        brief._format_date(context["window"]["start"]), brief._format_date(context["window"]["end"]),
+        deciding, rule["chair"]["judgment_words"])
+    if summary["in_force"]["derate_case_basis"] != "default":
+        derate += " " + rule["front_case_basis_words"] % summary["case_basis"]
+    line("derate_lead", derate)
+    line("near_term_lead", rule["near_term_note_words"])
+    marked = _protocol_prose(page, run)
+    cells = {(c["horizon"], c["side"]): c for c in read["near_term"]}
+    rows = []
+    for horizon, words in rule["near_term"]["horizons"].items():
+        for side, side_words in rule["near_term"]["sides"].items():
+            cell = cells[(horizon, side)]
+            rows.append("<tr>%s</tr>" % "".join("<td>%s</td>" % x for x in (
+                gloss(words + " " + side_words), gloss(rule["near_term_range_words"] % (
+                    token_price(cell["price_low"]), token_price(cell["price_high"]))),
+                gloss(shown(cell["probability"], "chance")), marked(cell["catalyst"]))))
+    lines.append("<table><tr>%s</tr>%s</table>" % (
+        "".join("<th>%s</th>" % gloss(x) for x in rule["near_term_heads"]), "".join(rows)))
+    claim = summary["in_force"]["claim"]
+    if claim == rule["opening"]["no_claim"]:
+        claim_text = rule["opening"]["no_claim_words"]
+    else:
+        args = (claim["words"], shown(read["claim"]["probability"], "chance"), rule["chair"]["judgment_words"])
+        floor = _protocol_floor(run, summary)
+        claim_text = (rule["claim_unaggregated_words"] % args if floor is None else
+                      rule["claim_words"] % (*args, shown(floor, "chance")))
+        if floor == 0:
+            claim_text += " " + rule["chair"]["no_scenario_reaches_words"]
+    line("claim_lead", claim_text)
+    _protocol_card(page, rule["front_lead"], lines)
+
+
+def _protocol_section(page, run):
+    """R5: every shared table, in its existing order."""
+    summary = run.get("protocol")
+    if not summary or "range_line" not in summary:
+        return
+    rule = summary["rule"]
+    gloss = lambda text: _glossed(text, scope="protocol")
+    page.add("<h3>%s</h3>" % gloss(rule["token_section_heading"]))
+    _protocol_card(page, rule["methods_lead"], [gloss(x) for x in summary["method_lines"] + [summary["range_line"]]])
+    for lead, table in brief.protocol_tables(summary):
+        _protocol_card(page, lead, [_business_table(table, _protocol_prose(page, run), names=gloss, terms=gloss, cfg=page.figure_cfg)])
+
+
+def _protocol_read(page, run):
+    """R6: the chairman's reasoning and strongest objection, traced where printed."""
+    summary = run.get("protocol")
+    if not summary or "range_line" not in summary:
+        return
+    rule, read = summary["rule"], run["verdict"]["protocol_read"]
+    marked = _protocol_prose(page, run)
+    comparison, supply = read["comparison"], read["supply"]
+    deciding = next(m["words"] for m in rule["derate_measures"] if m["id"] == comparison["deciding_measure"])
+    lines = [rule["read_comparison_words"] % (rule["comparison_words"][comparison["word"]], deciding, comparison["why"]),
+             rule["read_supply_words"] % (rule["supply_words"][supply["word"]], supply["why"])]
+    if isinstance(summary["in_force"]["claim"], dict):
+        chance = format_protocol_number(read["claim"]["probability"], "chance",
+                                       words=rule["page_words"]["figure_not_available_words"])
+        lines.append(rule["read_claim_words"] % (chance, read["claim"]["reasoning"]))
+    _protocol_card(page, rule["read_lead"], [marked(x) for x in lines])
+    _protocol_card(page, rule["objection_lead"], [marked(rule["objection_words"][key] + ": " + read["objection"][key])
+                                               for key in ("objection", "answer")])
+
+
+def _protocol_opening(page, run):
+    """R7: opening, redirects and unverified evidence inside the question fold."""
+    summary = run.get("protocol")
+    if not summary or "range_line" not in summary:
+        return
+    rule = summary["rule"]
+    lines = [rule["derate_lead"] + ": " + summary["case_line"], rule["claim_lead"] + ": " + summary["claim_line"],
+             summary["range_line"], *summary["rate_lines"], *summary["change_lines"],
+             rule["unverified_lead"], *summary["unverified"]]
+    _protocol_card(page, rule["opening_lead"], [_glossed(x, scope="protocol") for x in lines])
+
+
+def uranium_bases(run, summary):
+    """AC19, U7: the summary is the only source of machine readings."""
+    cfg = trace.capture_config(brief._marks_config(), run["pack"]["capture"])
+    bases = chair_fields.answer_line_bases(
+        (run["verdict"].get("atlas_envelope") or {}).get("key_numbers") or [],
+        run["pack"]["capture"], cfg)
+    figures = list(summary["figures"])
+    block = run["verdict"].get("scenario_rating") or {}
+    if summary["way"] == "holder" and block.get("aggregated"):
+        for case in summary["row"]["rule"]["ladder"]["downside_cases"].values():
+            scenario = ladder.case_scenario(block, case["name_words"])
+            if scenario is None:
+                raise MissingInputError(case["missing_refusal"])
+            figures.append(dict(value=scenario["price_outcome"], unit=summary["row"]["price_unit"]))
+            figures.extend(dict(value=scenario["probability"], unit=unit)
+                           for unit in (None, brief._floors()["prose_figure_marks"]["fraction_units"][0]))
+    return bases + trace.facts_bases(figures, cfg)
+
+
+def _uranium_prose(page, run):
+    bases = uranium_bases(run, run["uranium"])
+    def marked(text):
+        shown = reformat_prose(str(text or ""), "uranium chairman read", page.number_subs)
+        return trace.mark(shown, bases, page.figure_cfg,
+                          lambda part: _glossed(part, scope="uranium"))
+    return marked
+
+
+def _uranium_card(page, lead, lines):
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+        _glossed(lead, scope="uranium"), "".join(
+            line if line.startswith(("<div", "<table")) else "<p>%s</p>" % line for line in lines)))
+
+
+def _front_uranium(page, run):
+    """AC87(4), U5: the owner's order, read from the one display summary."""
+    summary = run.get("uranium")
+    if summary is None:
+        return
+    words = summary["words"]
+    gloss = lambda text: _glossed(text, scope="uranium")
+    if not summary["front"]:
+        _uranium_card(page, words["front_lead"], [gloss(x) for x in summary["lines"]])
+        return
+    front = {key: gloss(text) for key, text in summary["front"]}
+    block = run["verdict"].get("scenario_rating") or {}
+    if summary["way"] == "holder":
+        if block.get("aggregated"):
+            marked = _uranium_prose(page, run)
+            cases = summary["row"]["rule"]["ladder"]
+            downside = []
+            for case in cases["downside_cases"].values():
+                scenario = ladder.case_scenario(block, case["name_words"])
+                if scenario is None:
+                    raise MissingInputError(case["missing_refusal"])
+                chance = format_protocol_number(scenario["probability"], "chance",
+                                                words=words["figure_not_available_words"])
+                downside.append(words["downside_words"] % (
+                    gloss(case["label"]), marked(scenario["name"]), gloss(chance), gloss(cases["judgment_words"])))
+            front["downside"] = "; ".join(downside)
+        if block.get("horizon_line"):
+            front["three_year"] = gloss(words["three_year_words"] % block["horizon_line"])
+    lines = [gloss(summary["kind_line"])]
+    for key in words["front_order"][summary["way"]]:
+        if key not in front:
+            continue
+        line = "<strong>%s:</strong> %s" % (gloss(words[key + "_lead"]), front[key])
+        if key == "reserve_price":
+            line = '<div class="card prominent"><p>%s</p></div>' % line
+        lines.append(line)
+    _uranium_card(page, words["front_lead"], lines)
+
+
+def _uranium_section(page, run):
+    """U6: every summary table, in its order, with scoped terms."""
+    summary = run.get("uranium")
+    if summary is None or not summary["front"]:
+        return
+    gloss = lambda text: _glossed(text, scope="uranium")
+    marked = _uranium_prose(page, run)
+    page.add("<h3>%s</h3>" % gloss(summary["words"]["section_heading"]))
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, and '
+             "those worked out from them marked calculated; nothing here reads them.</div>")
+    for lead, table in summary["tables"]:
+        _uranium_card(page, lead, [_business_table(table, marked, names=gloss, terms=gloss, cfg=page.figure_cfg)])
+
+
+def _uranium_read(page, run):
+    """AC87(1), U6: the chairman's read, traced as his judgment."""
+    summary = run.get("uranium")
+    if summary is None or summary["way"] != "holder" or not summary["front"]:
+        return
+    read = run["verdict"].get("uranium_read")
+    if not read:
+        return
+    words = summary["words"]
+    past = summary["row"]["rule"]["opening"]["past_falls"][read["past_fall"]["case"]]["words"]
+    marked = _uranium_prose(page, run)
+    _uranium_card(page, words["read_lead"], [
+        marked(words["past_fall_read_words"] % (past, read["past_fall"]["comparison"])),
+        marked(words["longer_cycle_words"] % read["longer_cycle"])])
+
+
+def _uranium_opening(page, run):
+    """U6: the verdict carries the opening's checked past-fall case."""
+    summary = run.get("uranium")
+    if summary is None or summary["way"] != "holder" or not summary["front"]:
+        return
+    read = run["verdict"].get("uranium_read")
+    if not read:
+        return
+    words = summary["words"]
+    past = summary["row"]["rule"]["opening"]["past_falls"][read["past_fall"]["case"]]["words"]
+    _uranium_card(page, words["opening_lead"], [
+        _glossed(words["past_fall_named_words"] % past, scope="uranium")])
+
+
 def _front_coin(page, run):
     """M3, M11: named-coin figures, from the evidence page's one summary."""
     summary = brief.coin_summary(run.get("pack") or {})
@@ -2784,11 +3204,239 @@ def _front_coin(page, run):
                          for v in summary["venues"])))
 
 
+def treasury_bases(run, summary):
+    """AC19, P5: the recorded facts, one summary, cells and shared case odds."""
+    from council.engine import treasury_chair
+    cfg = trace.capture_config(brief._marks_config(), run["pack"]["capture"])
+    bases = chair_fields.answer_line_bases(
+        (run["verdict"].get("atlas_envelope") or {}).get("key_numbers") or [], run["pack"]["capture"], cfg)
+    figures = list(summary["figures"])
+    block = run["verdict"].get("scenario_rating") or {}
+    units = (None, brief._floors()["prose_figure_marks"]["fraction_units"][0])
+    price_unit = next(f["unit"] for f in run["pack"]["capture"]["tier1"] if f["id"] == "price_last")
+    for cell in block.get("scenarios") or []:
+        figures.append(dict(value=cell["price_outcome"], unit=price_unit))
+        figures.extend(dict(value=cell["probability"], unit=unit) for unit in units)
+    if block.get("aggregated"):
+        cases = brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["premium_cases"]
+        figures.extend(dict(value=str(value), unit=unit) for value in treasury_chair.case_odds(block,cases).values() for unit in units)
+    return bases + trace.facts_bases(figures, cfg)
+
+
+def _treasury_prose(page, run):
+    bases = treasury_bases(run, run["treasury"])
+    def marked(text):
+        shown = reformat_prose(str(text or ""), "treasury chairman read", page.number_subs)
+        return trace.mark(shown, bases, page.figure_cfg, lambda part: _glossed(part, scope="treasury"))
+    return marked
+
+
+def _treasury_card(page, lead, lines):
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+        _glossed(lead, scope="treasury"), "".join(
+            line if line.startswith(("<div", "<table")) else "<p>%s</p>" % line for line in lines)))
+
+
+def treasury_card_lines(summary, front=None, *, raw=False):
+    """Architect fix round 3: one printer of every ordered figure/reason part."""
+    words = summary["words"]
+    front = summary["front_parts"] if front is None else front
+    joins = words["card_joiners"]
+    lines, readings = [], []
+    for key in words["front_order"]:
+        if key not in front:
+            continue
+        groups = front[key]
+        parts = [part for group in groups for part in group["parts"]]
+        lead = words[key + "_lead"]
+        grouped = (len(parts) > 1 and any(part["reason"] for part in parts)) or any(group.get("part_lead") for group in groups)
+        sentences = []
+        for group in groups:
+            if grouped:
+                values = []
+                for part in group["parts"]:
+                    value = part["text"] if part["reason"] else part["text"] + joins["figure_suffixes"].get(part["key"], "")
+                    label = part["label"][:1].lower() + part["label"][1:]
+                    values.append(label + joins["reason_part_separator" if part["reason"] else "group_part_separator"] + value)
+                sentence = joins["between_parts"].join(values)
+                if group.get("part_lead"):
+                    heading = group["part_lead"][:1].lower() + group["part_lead"][1:]
+                    sentence = heading + joins["group_heading_separator"] + sentence
+            else:
+                texts = tuple(part["text"] for part in group["parts"])
+                sentence = texts[0] if group["joiner"] == "plain" else words[group["joiner"]+"_words"] % texts
+            sentences.append(sentence)
+        template = summary.get("front_templates", {}).get(key)
+        text = words[template] % tuple(sentences) if template else joins["between_parts"].join(sentences)
+        lines.append((lead, text))
+        readings.append((key, text))
+    return readings if raw else lines
+
+
+def _front_preferred(page, run):
+    from council.engine import preferred_chair
+    summary = run.get("preferred")
+    if summary is None: return
+    words = summary["words"]; r = summary["readings"]; gloss = lambda t: _glossed(t,scope="preferred")
+    if not summary["front"]:
+        page.add("<p>%s</p>" % gloss("; ".join(summary["lines"]))); return
+    front = dict(summary["front_parts"]); front["cases"]=[]
+    for case in preferred_chair.case_odds(run["verdict"].get("scenario_rating"),r,brief._floors()):
+        text = words["case_words"] % (case["label"],format_protocol_number(str(case["odds"]*100),"share"),preferred_chair._cover_words(case["cover"],brief._floors(),r["why"].get("cover")))
+        front["cases"].append(dict(joiner="plain",parts=[dict(label=words["cases_lead"],key="cases",text=text,reason=False)]))
+    for lead,text in treasury_card_lines(summary,front):
+        body = _business_table(summary["cover_table"],gloss,terms=gloss,cfg=page.figure_cfg) if lead==words["cover_lead"] else "<p>"+gloss(text)+"</p>"
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (gloss(lead),body))
+
+
+def _preferred_section(page, run):
+    summary = run.get("preferred")
+    if summary is None: return
+    gloss = lambda t: _glossed(t,scope="preferred")
+    page.add("<h3>%s</h3>" % gloss(summary["words"]["section_heading"]))
+    page.add("<p>%s</p>" % gloss(summary["lifted"]))
+    view=brief.preferred_context(run["pack"]); page.add(markdown("\n".join(brief._full_frame_lines(view,view["capture"]))))
+    for lead,table in summary["tables"]: page.add("<p>%s</p>%s" % (gloss(lead),_business_table(table,gloss,terms=gloss,cfg=page.figure_cfg)))
+    from council.engine import preferred_chair
+    for row in (run["verdict"].get("scenario_rating") or {}).get("scenarios",[]):
+        cell = row.get("dividend_cell") or {}; cover = sufficiency.preferred_cover(summary["readings"],gate._decimal_or_none(cell.get("coin_price")))
+        if cover: page.add("<p>%s</p>" % gloss(summary["words"]["case_words"] % (row["name"],format_protocol_number(str(decimal.Decimal(row["probability"])*100),"share"),preferred_chair._cover_words(cover["cover"],brief._floors()))))
+
+
+def _cover_read(page, run):
+    summary = run.get("preferred"); read = run["verdict"].get("cover_read")
+    if summary is None or not read: return
+    cfg = trace.capture_config(brief._marks_config(),run["pack"]["capture"])
+    bases = chair_fields.answer_line_bases([],run["pack"]["capture"],cfg)
+    from council.engine import preferred_chair
+    r = summary["readings"]; cases = preferred_chair.case_odds(run["verdict"].get("scenario_rating"),r,brief._floors())
+    figures = [dict(value=preferred_chair._ratio_words(c["cover"])) for c in [*r["cover"],*cases] if c["cover"]]
+    figures += [dict(value=str(c["odds"]),unit=brief._floors()["prose_figure_marks"]["fraction_units"][0]) for c in cases]
+    rule = brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]
+    figures += [dict(value=f,unit=rule["roles"]["cash"]["unit"]) for f in rule["cover_falls"]]
+    bases += trace.facts_bases(figures,cfg)
+    text = reformat_prose(read["cover"],"preferred chairman read",page.number_subs)
+    def marked(t):
+        shown = _glossed(t,scope="preferred")
+        for fall in rule["cover_falls"]:
+            token = rule["page_words"]["fall_phrase_words"] % format_protocol_number(fall,"share"); shown = shown.replace(token,_note_span(token,rule["page_words"]["falls_note"]))
+        return shown
+    page.add("<p>%s</p>" % trace.mark(text,bases,page.figure_cfg,marked))
+
+
+def _front_treasury(page, run):
+    """AC92(5), AC93, P3: the ruled order, with cases from the shared reader."""
+    from council.engine import treasury_chair
+    summary = run.get("treasury")
+    if summary is None:
+        return
+    words = summary["words"]
+    gloss = lambda text: _glossed(text, scope="treasury")
+    if not summary["front"]:
+        _treasury_card(page,words["front_lead"],[gloss(line) for line in summary["lines"]])
+        return
+    front = dict(summary["front_parts"])
+    block = run["verdict"].get("scenario_rating") or {}
+    rule = brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]
+    if block.get("aggregated"):
+        cases = rule["premium_cases"]
+        odds = treasury_chair.case_odds(block,cases)
+        for key,case in cases.items():
+            if not odds.get(key):
+                raise MissingInputError(case["missing_refusal"])
+        groups = []
+        for key, case in cases.items():
+            chance = format_protocol_number(str(odds[key]),"chance",words=words["figure_not_available_words"])
+            detail = ""
+            if case.get("card_detail_words"):
+                cells = treasury_chair._case_cells(block["scenarios"],case)
+                cell_words = [words["case_cell_words"] % (words["scenario_name_words"] % cell["cell"]["coin_scenario"],
+                    format_protocol_number(cell["price_outcome"],"price",unit=next(f["unit"] for f in run["pack"]["capture"]["tier1"] if f["id"]=="price_last"))) for cell in cells]
+                detail = words["case_detail_words"] % (words["case_cells_words"] % (words[case["card_detail_words"]["discount" if summary["already_discount"] else "premium"]],words["card_joiners"]["between_parts"].join(cell_words)))
+            groups.append(dict(joiner="cases",parts=[dict(label=words["cases_lead"],key=None,text=text,reason=False) for text in (case["label"],chance,detail)]))
+        groups.append(dict(joiner="case_judgment",parts=[dict(label=words["cases_lead"],key=None,text=rule["judgment_words"],reason=False)]))
+        front["cases"] = groups
+    lines = [gloss(summary["kind_line"])]
+    for lead, text in treasury_card_lines(summary, front):
+        lines.append("<strong>%s</strong>" % gloss(lead) if text is None else
+                     "<strong>%s:</strong> %s" % (gloss(lead), gloss(text)))
+    if summary.get("may_sell_without_announcing"):
+        lines.append('<div class="card prominent"><p>%s</p></div>' % gloss(words["undisclosed_sales_words"]))
+    _treasury_card(page,words["front_lead"],lines)
+
+
+def _treasury_section(page, run):
+    """P4, P7: raw machine cells, traced model text only."""
+    summary = run.get("treasury")
+    if summary is None or not summary["front"]:
+        return
+    gloss = lambda text: _glossed(text, scope="treasury")
+    marked = _treasury_prose(page,run)
+    page.add("<h3>%s</h3>" % gloss(summary["words"]["section_heading"]))
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, and '
+             "those worked out from them marked calculated; nothing here reads them.</div>")
+    for lead,table in summary["tables"]:
+        _treasury_card(page,lead,[_business_table(table,gloss,names=gloss,terms=gloss,cfg=page.figure_cfg)])
+    block = run["verdict"].get("scenario_rating") or {}
+    if block.get("aggregated"):
+        zero = brief._floors()["archetype_measures"]["holding_rule"]["treasury"]["ladder_rules"]["cell_zero_words"]
+        for cell in block.get("scenarios") or []:
+            if decimal.Decimal(cell["price_outcome"]) == 0:
+                page.add("<p>%s</p>" % marked(summary["words"]["zero_cell_line_words"] % (cell["name"],zero)))
+
+
+def _treasury_read(page, run):
+    summary = run.get("treasury")
+    if summary is None:
+        return
+    read = run["verdict"].get("treasury_read")
+    if not read:
+        return
+    words,force = summary["words"],summary["in_force"]
+    marked = _treasury_prose(page,run)
+    layer = force.get("coin_layer") or {}
+    latest = layer.get("latest")
+    source = words["coin_sitting_words"] % (latest["run_id"],brief._format_date(latest["published"])) if read["coin_layer"]["source"] == "on_record" and latest else words["coin_built_words"]
+    lines = [marked(words["read_layer_words"] % source)]
+    pair = sufficiency.treasury_frame(brief._floors(),run["pack"]["capture"])
+    names = {p["key"]:p["name"] for p in pair[1]["preferreds"]}
+    for preferred in read["preferred"]:
+        lines.append(marked(words["read_preferred_words"] % (names[preferred["key"]],
+            words["treatment_words"]["debt" if preferred["as_debt"] else "not_debt"],preferred["why"])))
+    lines += ["<strong>%s:</strong> %s" % (gloss,marked(read["objection"][key]))
+              for key in words["objection_words"] for gloss in [_glossed(words["objection_words"][key],scope="treasury")]]
+    _treasury_card(page,words["read_lead"],lines)
+
+
+def _treasury_opening(page, run):
+    summary = run.get("treasury")
+    if summary is None:
+        return
+    words,force = summary["words"],summary["in_force"]
+    gloss = lambda text: _glossed(text,scope="treasury")
+    treatment = lambda value: words["treatment_words"]["debt" if value else "not_debt"]
+    pair = sufficiency.treasury_frame(brief._floors(),run["pack"]["capture"])
+    names = {p["key"]:p["name"] for p in pair[1]["preferreds"]}
+    lines = []
+    for key,choice in force.get("opening_treatment",{}).items():
+        lines += [gloss(names[key]+": "+words["treatment_line_words"] % (treatment(choice["as_debt"]),force["chosen_by"],"")),
+                  '<div><blockquote>%s</blockquote></div>' % gloss(choice["why"])]
+    for change in force.get("preferred_changes",[]):
+        lines += [gloss(names[change["preferred"]]+": "+words["changed_words"] % (treatment(change["from"]),treatment(change["to"]),"")),
+                  '<div><blockquote>%s</blockquote></div>' % gloss(change["why"])]
+    latest = (force.get("coin_layer") or {}).get("latest")
+    lines.append(gloss(words["coin_sitting_words"] % (force["coin_sitting"],brief._format_date(latest["published"])) if force.get("coin_sitting") and latest else words["coin_built_words"]))
+    _treasury_card(page,words["opening_lead"],lines)
+
+
 def _front_archetype(page, run):
     """The business archetype and the rating measure it calls for, beside
     the rating (owner ruling AC15, P2). A single name only - a basket, a
     theme, a fund and an asset with no earnings carry none."""
     capture = (run.get("pack") or {}).get("capture") or {}
+    from council.engine import treasury_chair
+    if treasury_chair.declared(run.get("pack") or {},brief._floors()):
+        return
     subject = capture.get("subject") or {}
     frame = (capture.get("business_frame") or {}).get(subject.get("ticker"))
     if not frame or not frame.get("archetype"):
@@ -2807,6 +3455,9 @@ def _front_archetype(page, run):
     if brief.holding_subject_frame(capture) is frame:
         _front_holding(page, run, frame, measure)
         return
+    if brief.compounder_subject_frame(capture) is frame:
+        _front_float_compounder(page, run, frame, measure)
+        return
     if brief.grower_subject_frame(capture) is frame:
         _front_grower(page, run, frame, measure)
         return
@@ -2821,6 +3472,65 @@ def _front_archetype(page, run):
                                          esc(brief.integrated_major_words(run.get("pack") or {})))
     page.add('<div class="card"><span class="lead">What kind of business, '
              "and how it is rated</span>%s%s%s</div>" % (kind, rated, holding))
+
+
+def float_compounder_bases(run, readings):
+    """AC19, AC84: helper figures enter the tracer through figures alone."""
+    capture = run["pack"]["capture"]
+    cfg = trace.capture_config(brief._marks_config(), capture)
+    bases = chair_fields.answer_line_bases(
+        (run["verdict"].get("atlas_envelope") or {}).get("key_numbers") or [], capture, cfg)
+    return bases + trace.facts_bases(readings["figures"], cfg)
+
+
+def _compounder_glossed(text):
+    return _glossed(text, brief.compounder_rule()["compounder_subtype"])
+
+
+def _front_float_compounder(page, run, frame, measure):
+    """AC84: the yardstick beside growth; below-target solvency stands alone."""
+    readings = run.get("float_compounder")
+    if readings is None:
+        return
+    bases = float_compounder_bases(run, readings)
+    def shown(text):
+        return trace.mark(text, bases, page.figure_cfg, _compounder_glossed)
+    page.add('<div class="card"><span class="lead">What kind of business, and how it is rated</span>'
+             '%s &mdash; rated on %s.%s</div>' % (
+                 _compounder_glossed(brief.fi_kind_words(frame, _plain)), _compounder_glossed(MEASURE_WORDS[measure]),
+                 "".join("<div>%s</div>" % shown(line) for line in brief.compounder_lines(run["pack"], readings) + readings["errors"])))
+    solvency = brief.compounder_solvency_line(run["pack"], readings)
+    if solvency:
+        page.add('<div class="card prominent"><p>%s</p></div>' % shown(solvency))
+
+
+def _float_compounder_section(page, run):
+    readings = run.get("float_compounder")
+    if readings is None:
+        return
+    pack = run["pack"]
+    frame = brief.compounder_subject_frame(pack["capture"])
+    words = brief.compounder_rule()["page_words"]
+    bases = float_compounder_bases(run, readings)
+    def prose(text):
+        return trace.mark(text, bases, page.figure_cfg, esc)
+    def shown(text):
+        return trace.mark(text, bases, page.figure_cfg, _compounder_glossed)
+    page.add("<h3>%s</h3>" % _compounder_glossed(words["section_heading"]))
+    page.add('<div class="muted small">Evidence, not analysis: the figures the pack carries, and '
+             'those worked out from them marked calculated; nothing here reads them.</div>')
+    lines = brief.compounder_lines(pack, readings) + readings["errors"]
+    solvency = brief.compounder_solvency_line(pack, readings)
+    if solvency:
+        lines.append(solvency)
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+        _compounder_glossed(words["yardstick_lead"]), "".join("<p>%s</p>" % shown(line) for line in lines)))
+    for lead, table in brief.float_compounder_tables(pack, frame, readings):
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+            _compounder_glossed(lead), _business_table(table, prose, terms=_compounder_glossed, cfg=page.figure_cfg)))
+    page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
+        _compounder_glossed(words["tests_lead"]), "".join("<p>%s</p>" % shown(line)
+            for line in brief.compounder_lines(pack, readings, tests=True))))
 
 
 def _holding_glossed(text):
@@ -2839,7 +3549,7 @@ def _front_holding(page, run, frame, measure):
     bases = brief._frame_bases(capture, capture["subject"]["ticker"])
     for sentence in brief.holding_sentences(readings):
         page.add('<div class="card prominent"><p>%s</p></div>' %
-                 trace.mark(sentence, bases, brief._marks_config(), esc))
+                 trace.mark(sentence, bases, page.figure_cfg, esc))
 
 
 def _holding_section(page, run):
@@ -2850,7 +3560,7 @@ def _holding_section(page, run):
     page.add("<h3>What the holding company owns and how it is rated</h3>")
     bases = brief._frame_bases(capture, capture["subject"]["ticker"])
     def prose(text):
-        return trace.mark(text, bases, brief._marks_config(), esc)
+        return trace.mark(text, bases, page.figure_cfg, esc)
     _nav_bridge_section(page, run, frame, prose, None, None)
 
 
@@ -2889,7 +3599,7 @@ def _front_producer(page, run, frame, measure):
              % (esc(brief.producer_kind_words(frame, _plain)), rated,
                 _glossed(brief.producer_life_line(readings, with_sentence=False))))
     sentence = brief.reserve_price_sentence(readings)
-    if sentence:
+    if sentence and (run.get("uranium") or {}).get("way") != "producer":
         page.add('<div class="card prominent"><p>%s</p></div>' % esc(sentence))
 
 
@@ -3000,10 +3710,18 @@ def _front_answer_line(page, run):
     shown = reformat_prose(" ".join(line.split()), "chairman answer line", page.number_subs)
     bases = chair_fields.answer_line_bases(
         (verdict.get("atlas_envelope") or {}).get("key_numbers") or [],
-        (run.get("pack") or {}).get("capture") or {}, brief._marks_config())
+        (run.get("pack") or {}).get("capture") or {}, page.figure_cfg)
+    if run.get("protocol"):
+        bases = protocol_bases(run, run["protocol"])
+    if run.get("float_compounder") is not None:
+        bases = float_compounder_bases(run, run["float_compounder"])
+    if run.get("uranium") is not None:
+        bases = uranium_bases(run, run["uranium"])
+    if run.get("treasury") is not None:
+        bases = treasury_bases(run, run["treasury"])
     page.add('<div class="card prominent"><span class="lead">%s</span><p>%s</p></div>'
              % (esc(chair_fields.labels()["answer_line"]),
-                trace.mark(shown, bases, brief._marks_config(), esc)))
+                trace.mark(shown, bases, page.figure_cfg, esc)))
 
 
 def _missing_field(page, key):
@@ -3077,7 +3795,7 @@ def _synthesis_chair_fields(page, run):
         # page marks every other figure the capture wrote (AC19).
         ticker = constituent or (capture.get("subject") or {}).get("ticker")
         marked = trace.mark(str(name), brief._frame_bases(capture, ticker),
-                            brief._marks_config(), esc)
+                            page.figure_cfg, esc)
         return "&quot;%s&quot;%s" % (marked, "" if constituent is None
                                       else esc(" of %s" % constituent))
     note = ""
@@ -3135,6 +3853,10 @@ def _front_section(page, run, now):
     page.numbered("decision", "1", "The answer")
     _front_insider_not_considered(page, run)
     _front_answer_line(page, run)
+    _front_protocol(page, run)
+    _front_uranium(page, run)
+    _front_preferred(page, run)
+    _front_treasury(page, run)
     _front_decisive_argument(page, run["verdict"])
     _front_chart_and_tape(page, run)
     _front_archetype(page, run)
@@ -3174,6 +3896,9 @@ def _question_section(page, run):
                  "It went to the portfolio system exactly as he wrote it:"
                  '<div class="verbatim" style="margin-top:8px">%s</div></div>'
                  % esc(frame["for_atlas"]))
+    _protocol_opening(page, run)
+    _uranium_opening(page, run)
+    _treasury_opening(page, run)
     page.collapse("The owner&#x27;s question as he asked it", mark)
 
 
@@ -3211,7 +3936,7 @@ def _synthesis_price_arithmetic(page, verdict):
 
 # --- 3b. The named expression: constituents, or the one vehicle --------------------------------
 
-def _member_fact_cell(facts_by_id, concept, ticker):
+def _member_fact_cell(facts_by_id, concept, ticker, cfg=None):
     """One expression member's own frozen figure as a table cell, read
     from the pack fact `<concept>__<slug(ticker)>` and rounded for
     reading like every other figure on the page. An absent fact renders
@@ -3219,7 +3944,7 @@ def _member_fact_cell(facts_by_id, concept, ticker):
     fact = facts_by_id.get("%s__%s" % (concept, subjects.slug(ticker)))
     if not fact:
         return "&mdash;"
-    return esc(format_number(fact.get("value"), fact.get("unit")))
+    return esc(format_fact_number(fact, cfg=cfg))
 
 
 def _bound_words(tag):
@@ -3321,9 +4046,9 @@ def _constituents_section(page, run):
                         "</tr>"
                         % (esc(item.get("name", "")), esc(ticker),
                            _member_fact_cell(facts_by_id, "price_last",
-                                             ticker),
+                                             ticker, cfg=page.figure_cfg),
                            _member_fact_cell(facts_by_id, "market_cap",
-                                             ticker),
+                                             ticker, cfg=page.figure_cfg),
                            metric, words))
         page.add('<table><tr><th>Name</th><th class="nowrap">Ticker</th>'
                  '<th class="nowrap">Last price</th>'
@@ -3437,9 +4162,15 @@ def _detail_section(page, run):
     _detail_calendar(page, run)
     _front_downside(page, run)
     _fi_section(page, run)
+    _float_compounder_section(page, run)
     _holding_section(page, run)
     _grower_section(page, run)
     _producer_section(page, run)
+    _uranium_section(page, run)
+    _preferred_section(page, run)
+    _treasury_section(page, run)
+    _business_section(page, run)
+    _protocol_section(page, run)
     _cycle_section(page, run)
     _constituents_section(page, run)
     _detail_basis(page, run)
@@ -3530,7 +4261,7 @@ def _change_sentence(change):
     return "<li>%s &mdash; %s.</li>" % (esc(FIELD_WORDS.get(field, field)), words)
 
 
-def _moved_numbers(appendix):
+def _moved_numbers(appendix, cfg=None):
     """The rating and every key number whose value differs between the draft the outside
     challenge read and the final document, as (name, before, after) in the market form, paired
     in order by name and date; a number on one side only shows a dash on the other (unit
@@ -3570,7 +4301,7 @@ def _moved_numbers(appendix):
         if old and new and (old.get("value"), old.get("unit")) == (new.get("value"),
                                                                   new.get("unit")):
             continue
-        cells = [format_number(k.get("value"), k.get("unit")) if k else "\u2014"
+        cells = [format_fact_number(k, cfg=cfg) if k else "\u2014"
                  for k in (old, new)]
         if old and new and cells[0] == cells[1]:
             cells[1] += " (moved within the rounding; the exact values are in the fold below)"
@@ -3595,7 +4326,7 @@ def _changes_section(page, run):
         page.add('<div class="card">Nothing changed after the outside challenge.</div>')
         return
     mark = page.mark()
-    moved = _moved_numbers(appendix)
+    moved = _moved_numbers(appendix, cfg=page.figure_cfg)
     if moved:
         page.add('<table><tr><th>what moved</th><th class="nowrap">before</th>'
                  '<th class="nowrap">after</th></tr>%s</table>'
@@ -3634,6 +4365,10 @@ def _synthesis_section(page, run):
     resolve = answers.get("chair_resolve") or {}
     page.numbered("synthesis", "2", "The chairman's synthesis")
     _synthesis_chair_fields(page, run)
+    _protocol_read(page, run)
+    _uranium_read(page, run)
+    _cover_read(page, run)
+    _treasury_read(page, run)
     _synthesis_price_arithmetic(page, run["verdict"])
     prose = resolve.get("final_markdown")
     if not prose:
@@ -3729,7 +4464,7 @@ def _change_row(change, decisive, run):
 
     def shown(value):
         # A figure the pack no longer carries has no unit to read it by; it stands as recorded.
-        return esc(format_number(value, fact["unit"]) if fact.get("unit") else str(value))
+        return esc(format_fact_number(dict(fact, value=value), cfg=trace.capture_config(brief._marks_config(), (run.get("pack") or {}).get("capture") or {})) if fact.get("unit") else str(value))
     dated = format_date(fact.get("as_of", ""))
     dated = " (as of %s)" % esc(dated) if dated else ""
     word = change.get("change")
@@ -3819,7 +4554,7 @@ def _cycle_section(page, run):
     names = GLOSSARY["series"]
     table = brief.cycle_rows(capture)
     if table:
-        page.add(_business_table(table, esc))
+        page.add(_business_table(table, esc, cfg=page.figure_cfg))
     mark = page.mark()
     for series in cycle.get("series") or []:
         rows = "".join(
@@ -3846,7 +4581,7 @@ def _plain(value):
     return "" if value is None else str(value)
 
 
-def _fi_value(facts, fact_id):
+def _fi_value(facts, fact_id, cfg=None):
     """One fact a financial institution's frame names: its label where one exists, its id and
     its frozen value in the market form, and its date. An id the pack does not carry is shown as
     escaped data, never as the page's own named fact (P-U3e-3)."""
@@ -3855,11 +4590,11 @@ def _fi_value(facts, fact_id):
         return "%s (not in the pack)" % esc(fact_id)
     label = str(fact.get("label") or "").strip() or _fact_name(fact_id)
     return "%s %s (as of %s)" % (esc(label),
-                                 esc(format_number(fact.get("value"), fact.get("unit"))),
+                                 esc(format_fact_number(fact, cfg=cfg)),
                                  esc(format_date(fact.get("as_of", ""))))
 
 
-def _business_cell(cell, prose, terms=esc):
+def _business_cell(cell, prose, terms=esc, cfg=None):
     """One cell of a business table (unit READ-B1): the capture's words marked (AC19), a cycle
     reading with its date in small print, anything else as the brief reads it, escaped."""
     if cell["kind"] == "prose":
@@ -3867,21 +4602,24 @@ def _business_cell(cell, prose, terms=esc):
     if cell["kind"] == "reading":
         return '%s <span class="muted small">(%s)</span>' % (
             esc(format_number(cell["value"], cell["unit"])), esc(format_date(cell["date"])))
+    if (cell["kind"] == "fact" and "share" not in cell
+            and trace.is_page_fraction(cell["fact"], cfg or brief._marks_config())):
+        return terms(format_fact_number(cell["fact"], cfg=cfg) + cell["stale"])
     return terms(brief.cell_text(cell))
 
 
-def _business_table(table, prose, fold=None, names=None, terms=esc):
+def _business_table(table, prose, fold=None, names=None, terms=esc, cfg=None):
     """A business table as HTML: the table, then the lines under it - inside a closed fold named
     `fold` where one is given. `names`, where given, prints each row's first cell of plain words
     (a growth company's tables carry their terms' hover notes, GROWTH-ARCHETYPE (c))."""
     def first(cell):
         if names is not None and cell["kind"] == "words":
             return names(brief.cell_text(cell))
-        return _business_cell(cell, prose, terms)
+        return _business_cell(cell, prose, terms, cfg=cfg)
     rows = "".join("<tr>%s</tr>" % "".join(
-        "<td>%s</td>" % (first(cell) if not index else _business_cell(cell, prose, terms))
+        "<td>%s</td>" % (first(cell) if not index else _business_cell(cell, prose, terms, cfg=cfg))
         for index, cell in enumerate(row)) for row in table["rows"])
-    below = "".join("<div>%s</div>" % " ".join(_business_cell(cell, prose, terms) for cell in line)
+    below = "".join("<div>%s</div>" % " ".join(_business_cell(cell, prose, terms, cfg=cfg) for cell in line)
                     for line in table["below"])
     if below and fold:
         below = '<details><summary>%s</summary><div class="body">%s</div></details>' % (fold,
@@ -3907,7 +4645,7 @@ def _grower_section(page, run):
     bases = brief._frame_bases(capture, ticker)
 
     def prose(text):
-        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+        return trace.mark(" ".join(str(text or "").split()), bases, page.figure_cfg, esc)
 
     def card(lead, body):
         page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (_glossed(lead), body))
@@ -3922,20 +4660,20 @@ def _grower_section(page, run):
         (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
          if measure else "")))
     card("The yardstick, and what stands beside it",
-         _business_table(brief.grower_yardstick_rows(pack, frame), prose, names=_glossed))
+         _business_table(brief.grower_yardstick_rows(pack, frame), prose, names=_glossed, cfg=page.figure_cfg))
     card("The latest quarters, oldest first",
-         _business_table(brief.grower_quarter_rows(pack, frame), prose))
+         _business_table(brief.grower_quarter_rows(pack, frame), prose, cfg=page.figure_cfg))
     runway = brief.grower_runway(pack)
     cap = brief.grower_cap_sentence(runway)
     card("The cash, and how long it lasts",
          "<p>%s</p>%s%s" % (_glossed(brief.grower_months_line(runway, with_cap=False)),
                             _business_table(brief.grower_runway_rows(pack, frame, runway), prose,
-                                            names=_glossed),
+                                            names=_glossed, cfg=page.figure_cfg),
                             "<p><strong>%s</strong></p>" % esc(cap) if cap else ""))
     if frame.get("how_it_earns"):
         card("How it earns",
              _business_table(brief.earnings_rows(pack, frame), prose,
-                             fold="Each line in the capture&#x27;s own words"))
+                             fold="Each line in the capture&#x27;s own words", cfg=page.figure_cfg))
 
 
 def _producer_section(page, run):
@@ -3955,7 +4693,7 @@ def _producer_section(page, run):
     bases = brief._frame_bases(capture, ticker)
 
     def prose(text):
-        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+        return trace.mark(" ".join(str(text or "").split()), bases, page.figure_cfg, esc)
 
     def card(lead, body):
         page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (_glossed(lead), body))
@@ -3967,6 +4705,9 @@ def _producer_section(page, run):
     measure = _capture_measure(capture)
     readings = brief.producer_readings(pack)
     sentence = brief.reserve_price_sentence(readings)
+    # U5, ruling 3: this sentence already appears in the uranium front card.
+    if (run.get("uranium") or {}).get("way") == "producer":
+        sentence = None
     card("The kind of business", "%s%s.<p>%s</p>%s" % (
         esc(kind[:1].upper() + kind[1:]),
         (" &mdash; rated on %s" % _glossed(MEASURE_WORDS.get(measure, measure))
@@ -3974,11 +4715,51 @@ def _producer_section(page, run):
         _glossed(brief.producer_life_line(readings, with_sentence=False)),
         "<p><strong>%s</strong></p>" % esc(sentence) if sentence else ""))
     for lead, table in brief.producer_tables(pack, frame, readings):
-        card(lead, _business_table(table, prose, names=_glossed))
+        card(lead, _business_table(table, prose, names=_glossed, cfg=page.figure_cfg))
     if frame.get("how_it_earns"):
         card("How it earns",
              _business_table(brief.earnings_rows(pack, frame), prose,
-                             fold="Each line in the capture&#x27;s own words"))
+                             fold="Each line in the capture&#x27;s own words", cfg=page.figure_cfg))
+
+
+def _business_section(page, run):
+    """PAGES-PROFIT-FIX R3: business tables outside the four specialised sections."""
+    pack = run.get("pack") or {}
+    capture = pack.get("capture") or {}
+    subject = capture.get("subject") or {}
+    ticker = subject.get("ticker")
+    frame = (capture.get("business_frame") or {}).get(ticker) or {}
+    if (not page.figure_cfg.get("page_rules_enabled")
+            or subject.get("kind") != "single_stock" or not frame.get("archetype")
+            or frame["archetype"] in (brief.FI_ARCHETYPE, brief.GROWER_ARCHETYPE,
+                                      brief.PRODUCER_ARCHETYPE, brief.HOLDING_ARCHETYPE)):
+        return
+    bases = brief._frame_bases(capture, ticker)
+
+    def prose(text):
+        return trace.mark(" ".join(str(text or "").split()), bases, page.figure_cfg, esc)
+
+    def card(lead, body):
+        page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (esc(lead), body))
+
+    page.add("<h3>How the business earns, what it guided, and its peers</h3>")
+    if frame.get("how_it_earns"):
+        card("How it earns", _business_table(brief.earnings_rows(pack, frame), prose, cfg=page.figure_cfg))
+    for table in brief.guidance_rows(pack, frame):
+        card(brief.GUIDANCE_LEAD % table["period"], _business_table(table, prose, cfg=page.figure_cfg))
+    peers = frame.get("peers") or []
+    if peers:
+        facts = {fact["id"]: fact for fact in capture.get("tier1") or []}
+        rows = []
+        for peer in peers:
+            cells = [prose(peer.get("name")), prose(peer.get("ticker")),
+                     "<br>".join(_fi_value(facts, fid, cfg=page.figure_cfg) for fid in peer.get("metrics") or []),
+                     prose(peer.get("comparable_because")), prose(peer.get("not_comparable_on"))]
+            rows.append("<tr>%s</tr>" % "".join("<td>%s</td>" % cell for cell in cells))
+        page.add("<table><tr>%s</tr>%s</table>" % (
+            "".join("<th>%s</th>" % esc(name) for name in (
+                "Peer", "Ticker", "The figures compared", "Comparable because", "Not comparable on")),
+            "".join(rows)))
 
 
 def _fi_section(page, run):
@@ -3997,10 +4778,10 @@ def _fi_section(page, run):
     bases = brief._frame_bases(capture, ticker)
 
     def prose(text):
-        return trace.mark(" ".join(str(text or "").split()), bases, brief._marks_config(), esc)
+        return trace.mark(" ".join(str(text or "").split()), bases, page.figure_cfg, esc)
 
     def value(fact_id):
-        return _fi_value(facts, fact_id)
+        return _fi_value(facts, fact_id, cfg=page.figure_cfg)
 
     def card(lead, body):
         page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (lead, body))
@@ -4025,24 +4806,24 @@ def _fi_section(page, run):
              "A declared gap: %s" % prose(capital["gap"].get("reason")))
     else:
         card("Capital beside its requirement",
-             _business_table(brief.capital_rows(pack, frame), prose))
+             _business_table(brief.capital_rows(pack, frame), prose, cfg=page.figure_cfg))
     stress = brief.stress_rows(pack, ticker)
     if stress:
-        card(esc(brief.FI_STRESS_HEADING), _business_table(stress, prose))
+        card(esc(brief.FI_STRESS_HEADING), _business_table(stress, prose, cfg=page.figure_cfg))
     risk = frame.get("fi_risk_cost") or {}
     if risk:
         table = brief.risk_rows(pack, frame)
         card("The risk-cost line: %s" % esc(brief.FI_RISK_KIND_WORDS.get(risk.get("kind"))
                                             or risk.get("kind")),
              "%s<div>Why this line: %s</div>"
-             % (_business_table(table, prose) if table else "No fact, by design.",
+             % (_business_table(table, prose, cfg=page.figure_cfg) if table else "No fact, by design.",
                 prose(risk.get("because"))))
     if frame.get("how_it_earns"):
         card("How it earns",
              _business_table(brief.earnings_rows(pack, frame), prose,
-                             fold="Each line in the capture&#x27;s own words"))
+                             fold="Each line in the capture&#x27;s own words", cfg=page.figure_cfg))
     for table in brief.guidance_rows(pack, frame):
-        card(esc(brief.GUIDANCE_LEAD % table["period"]), _business_table(table, prose))
+        card(esc(brief.GUIDANCE_LEAD % table["period"]), _business_table(table, prose, cfg=page.figure_cfg))
     _nav_bridge_section(page, run, frame, prose, value, card)
 
 
@@ -4052,7 +4833,7 @@ def _nav_bridge_section(page, run, frame, prose, value, card):
         readings = brief.holding_readings(run["pack"])
         for lead, table in brief.holding_tables(run["pack"], frame, readings):
             page.add('<div class="card"><span class="lead">%s</span>%s</div>' % (
-                _holding_glossed(lead), _business_table(table, prose, names=_holding_glossed, terms=_holding_glossed)))
+                _holding_glossed(lead), _business_table(table, prose, names=_holding_glossed, terms=_holding_glossed, cfg=page.figure_cfg)))
         page.add('<div class="card">%s</div>' % esc(brief.FI_NOT_RATED_SENTENCE))
         return
     bridge = frame.get("nav_bridge")
@@ -4193,7 +4974,7 @@ def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames
         stale = ' <span class="tag stale">STALE</span>' if status == "stale" else ""
         rows.append('<tr><td>%s</td><td>%s%s</td><td class="nowrap">%s</td><td>%s</td></tr>'
                     % (esc(_fact_words(fact)),
-                       esc(format_number(fact.get("value"), fact.get("unit"))), stale,
+                       esc(format_fact_number(fact, cfg=page.figure_cfg)), stale,
                        esc(format_date(fact.get("as_of", ""))),
                        source_html.replace(esc(fact.get("source", "")),
                                            esc(_source_document(fact.get("source"))), 1)))
@@ -4220,6 +5001,8 @@ def _decisive_facts_table(page, tier1, freshness, dependencies, envelope, frames
 def _evidence_section(page, run):
     pack = run["pack"] or {}
     capture = pack.get("capture") or {}
+    token = subjects.protocol_token(capture.get("subject") or {}, brief._floors())
+    registry = brief._floors()["asset_classes"]["crypto"]
     page.numbered("evidence", "7", "The evidence")
     market = capture.get("market_state") or {}
     if market.get("state") == "closed":
@@ -4269,7 +5052,10 @@ def _evidence_section(page, run):
         rests = ('<span class="tag checked" title="the verdict names this '
                  'fact as one its ruling rests on">used in the ruling</span> '
                  if fact_id in dependencies else "")
-        value = format_number(fact.get("value"), fact.get("unit"))
+        value = format_fact_number(fact, cfg=page.figure_cfg)
+        if token and fact.get("unit") == registry["protocols"][token]["unit"]:
+            value = format_protocol_number(fact.get("value"), "amount", unit=fact["unit"], scaled=True,
+                words=registry["protocol_rule"]["page_words"]["figure_not_available_words"])
         rows.append('<tr><td>%s%s<div class="muted small" style="margin-top:4px">'
                     '%s &middot; %s</div></td><td>%s</td><td class="nowrap">%s</td>'
                     '<td class="nowrap"><span class="tag %s">%s</span></td></tr>'
@@ -4619,12 +5405,31 @@ def _bound_cell(row):
     return cell
 
 
+def _atlas_heading(run):
+    """The hand-off section's heading. A withheld hand-off (owner ruling
+    AC78(6)) reached nobody, so the section never says Atlas receives it
+    (audit round 3); the front's pointer names the same heading."""
+    if run.get("handoff_withheld"):
+        return "What the portfolio system would have received"
+    return "What the portfolio system receives"
+
+
 def _atlas_section(page, run):
     envelope = run["verdict"].get("atlas_envelope") or {}
-    page.add('<h3 id="atlas">What the portfolio system receives</h3>')
+    page.add('<h3 id="atlas">%s</h3>' % _atlas_heading(run))
+    withheld = run.get("handoff_withheld")
+    if withheld:
+        # Owner ruling AC78(6): one plain line, outside the folded part.
+        page.add('<div class="card prominent">Not handed to Atlas: %s</div>'
+                 % esc(withheld.get("reason") or ""))
     mark = page.mark()
-    page.add('<div class="muted small">The verdict carries a machine hand-off for the portfolio '
-             "system, named Atlas. This is what is inside it.</div>")
+    if withheld:
+        page.add('<div class="muted small">The verdict carries a machine hand-off for the '
+                 "portfolio system, named Atlas. It was withheld and never sent; below is what "
+                 "it would have carried.</div>")
+    else:
+        page.add('<div class="muted small">The verdict carries a machine hand-off for the portfolio '
+                 "system, named Atlas. This is what is inside it.</div>")
     rating = envelope.get("rating")
     # The subject's frozen shape travels in the envelope (kind, the
     # named constituents or the one vehicle) - copied from the capture,
@@ -4636,6 +5441,8 @@ def _atlas_section(page, run):
                          % esc(_kind_words(
                              {"kind": envelope["subject_kind"],
                               "product": envelope.get("product"),
+                              "asset_class": envelope.get("asset_class"),
+                              "vehicle": envelope.get("vehicle"),
                               "constituents": envelope.get(
                                   "constituents")})))
     constituents = envelope.get("constituents") or []
@@ -4681,7 +5488,7 @@ def _atlas_section(page, run):
     if key_numbers:
         rows = "".join('<tr><td>%s%s</td><td class="nowrap">%s</td><td class="nowrap">%s</td></tr>'
                        % (esc(k.get("name", "")), _bound_cell(k),
-                          esc(format_number(k.get("value"), k.get("unit"))),
+                          esc(format_fact_number(k, cfg=page.figure_cfg)),
                           esc(format_date(k.get("as_of", ""))))
                        for k in key_numbers)
         page.add('<table><tr><th>key number</th><th class="nowrap">value</th>'
@@ -4719,9 +5526,14 @@ def _atlas_section(page, run):
         page.add('<div class="card prominent"><span class="lead">The owner&#x27;s note for the '
                  'portfolio system, verbatim</span><div class="verbatim">%s</div></div>'
                  % esc(envelope["for_atlas_note"]))
-    page.add('<div class="muted small">The envelope also travels as its own file, and that file '
-             "carries this verdict&#x27;s own hash, so the hand-off can be proved.</div>")
-    page.collapse("For Atlas, the portfolio system &mdash; no reading needed", mark)
+    if withheld:
+        page.add('<div class="muted small">Because the hand-off was withheld, no envelope file was '
+                 "written beside this verdict; the withheld notice stands in its place.</div>")
+        page.collapse("For Atlas, the portfolio system &mdash; withheld and never sent", mark)
+    else:
+        page.add('<div class="muted small">The envelope also travels as its own file, and that file '
+                 "carries this verdict&#x27;s own hash, so the hand-off can be proved.</div>")
+        page.collapse("For Atlas, the portfolio system &mdash; no reading needed", mark)
 
 
 # --- Footer stamps -----------------------------------------------------------------------------
@@ -4738,21 +5550,24 @@ def _footer(page, run):
              % (when, esc(verdict.get("run_id", ""))))
 
 
-def _one_ladder(rows, horizon, currency=None):
+def _one_ladder(rows, horizon, currency=None, *, catalyst=None, calculated=None):
     """One ladder, whole: nothing bounded, nothing trimmed. This is
     where the front's "in full in the appendix" pointer has to be true
     (audit finding ANCHORLESS-C c3-1)."""
     cells = "".join('<tr><td>%s</td><td class="nowrap">%s</td>'
-                    '<td class="nowrap">%s</td><td>%s</td></tr>'
+                    '<td class="nowrap">%s</td><td>%s</td>%s</tr>'
                     % (esc(rung.get("name", "")),
-                       esc(format_price(rung.get("price_outcome"), currency)),
+                       _ladder_price(rung, currency, calculated),
                        esc(rung.get("probability", "")),
-                       esc(rung.get("rationale", "")))
+                       esc(rung.get("rationale", "")),
+                       ("<td>%s</td>" % catalyst(rung.get("catalyst", ""))) if catalyst else "")
                     for rung in rows)
     return ('<div class="muted small">Horizon: %s months.</div>'
             '<table><tr><th>the case</th><th class="nowrap">price if it '
-            'happens</th><th class="nowrap">chance</th><th>why</th></tr>'
-            "%s</table>" % (esc(str(horizon)), cells))
+            'happens</th><th class="nowrap">chance</th><th>why</th>%s</tr>'
+            "%s</table>" % (esc(str(horizon)),
+                ("<th>%s</th>" % esc(brief._floors()["asset_classes"]["crypto"]["protocol_rule"]["ladder_catalyst_head"]))
+                if catalyst else "", cells))
 
 
 def _ladders_section(page, run):
@@ -4768,10 +5583,12 @@ def _ladders_section(page, run):
         return
     currency = (run["verdict"].get("subject") or {}).get("currency")
     page.add("<h3>The scenario ladders, in full</h3>")
+    calculated = _treasury_ladder_note(page, run)
     if scenarios:
         page.add("<h3>The chairman&#x27;s published ladder</h3>")
         page.add(_one_ladder(scenarios, block.get("horizon_months", ""),
-                             currency))
+                             currency, calculated=calculated, catalyst=_protocol_prose(page, run)
+                             if (run.get("protocol") or {}).get("range_line") else None))
     if seat_ladders:
         page.add("<h3>What each advisor's own ladder said</h3>")
         page.add('<div class="muted small">The chairman weighed these and '
@@ -4782,7 +5599,7 @@ def _ladders_section(page, run):
             page.add("<h4>%s</h4>" % esc(dict(ADVISOR_SEATS).get(seat, seat)))
             page.add(_one_ladder(entry.get("scenarios") or [],
                                  entry.get("horizon_months", ""),
-                                 currency))
+                                 currency, calculated=calculated))
     sensitivity = block.get("sensitivity") or {}
     lines = [text for text in
              ((sensitivity.get("flip") or {}).get("sentence"),
@@ -4967,6 +5784,7 @@ def build_page(run, now):
     where the run's record does not carry one. Nothing here reads the clock on the wall: the
     page a sitting produced and the same page reprinted a month later are the same bytes."""
     page = Page()
+    page.figure_cfg = trace.capture_config(brief._marks_config(), (run.get("pack") or {}).get("capture") or {})
     # The chairman's own STRUCTURED verdict text (falsifier statements, trigger details, level
     # meanings) is respelt into the market form ONCE, before any section renders it, so a field
     # shown both on the decision front and in the appendix is respelt once and logged once (AC16(1)).
@@ -5015,7 +5833,7 @@ def render(run_dir, moment=None, subs_out=None):
         subs_out.extend(page.number_subs)
     subject = run["verdict"].get("subject") or {}
     title = "Investment Council - %s" % (subject.get("name") or run["verdict"].get("run_id", ""))
-    return "".join([
+    return brief.preferred_owner_words("".join([
         PREAMBLE.decode("ascii"),
         '<head>\n<meta charset="UTF-8">\n',
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n',
@@ -5033,7 +5851,7 @@ def render(run_dir, moment=None, subs_out=None):
         'title="Switch to light">&#x25D2;</button>\n',
         '<div class="wrap report" id="top">\n', page.body(), "\n</div>\n",
         "<script>", SCRIPT, SECTION_SCRIPT, "</script>\n</body>\n</html>\n",
-    ])
+    ]),run["pack"]["capture"],html_page=True)
 
 
 def main(argv):

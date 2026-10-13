@@ -5,6 +5,7 @@ source string says so."""
 
 import contextlib
 import copy
+import decimal
 import io
 import json
 import hashlib
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 
@@ -93,7 +95,7 @@ def minimal_capture():
     refuses at sufficiency - which is where the refusals it drives
     already live."""
     return {
-        "capture_version": "1.13.0",
+        "capture_version": "1.17.0",
         "subject": {"kind": "single_stock",
                     "asset_class": "equity",
                     "name": "Example Manufacturing Co",
@@ -537,7 +539,7 @@ class TestGateUnitIsOnTheList(GateTest):
                 self.assertTrue(gate._UNIT_TOKEN.fullmatch(unit))
 
     def test_the_floors_version_is_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.23.0")
+        self.assertEqual(FLOORS["floors_version"], "1.47.0")
         self.assertIn("direction", FLOORS["allowed_units"])
         self.assertEqual(len(set(FLOORS["allowed_units"])),
                          len(FLOORS["allowed_units"]))
@@ -3536,7 +3538,7 @@ class TestFloorsOneThreeZero(unittest.TestCase):
         # company's own buying as single-stock floors (owner ruling AC4,
         # unit U4(b)), then with those two made real (owner ruling
         # AC35(2), unit U4(d)).
-        self.assertEqual(FLOORS["floors_version"], "1.23.0")
+        self.assertEqual(FLOORS["floors_version"], "1.47.0")
 
     def test_segment_revenue_absent_without_a_gap_refuses(self):
         capture = self.one_business(
@@ -4651,6 +4653,34 @@ def to_contract_1_13_0(capture, run_id):
     return capture
 
 
+def to_contract_1_14_0(capture, run_id):
+    """AC67, AC78-AC81: version alone; no earlier protocol field invented."""
+    capture = to_contract_1_13_0(capture, run_id)
+    capture["capture_version"] = "1.14.0"
+    return capture
+
+
+def to_contract_1_15_0(capture, run_id):
+    """AC84: version alone; no earlier compounder field invented."""
+    capture = to_contract_1_14_0(capture, run_id)
+    capture["capture_version"] = "1.15.0"
+    return capture
+
+
+def to_contract_1_16_0(capture, run_id):
+    """AC89: version alone; no earlier treasury field invented."""
+    capture = to_contract_1_15_0(capture, run_id)
+    capture["capture_version"] = "1.16.0"
+    return capture
+
+
+def to_contract_1_17_0(capture, run_id):
+    """AC92(3): version alone; no earlier preferred field invented."""
+    capture = to_contract_1_16_0(capture, run_id)
+    capture["capture_version"] = "1.17.0"
+    return capture
+
+
 def frame_migration_report(run_id):
     """What this sitting on record would have had to carry, row by row,
     and what answered each: a figure it already carried under another id,
@@ -4763,7 +4793,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
 
     def stages(self, run_id):
         capture = to_floors_1_8_0(
-            to_contract_1_13_0(self.recorded(run_id), run_id))
+            to_contract_1_17_0(self.recorded(run_id), run_id))
         gated = gate.validate_capture(capture, SCHEMA)
         self.assertEqual(gated["result"], "accepted", gated["reasons"])
         # Today's law (architect ruling, 2026-09-08) pays no seat until
@@ -4787,7 +4817,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         for run_id in ("council-coin-2026-09-04", "council-lulu-2026-09-05",
                        "council-btc-2026-09-01"):
             capture = to_floors_1_8_0(
-                to_contract_1_13_0(self.recorded(run_id), run_id))
+                to_contract_1_17_0(self.recorded(run_id), run_id))
             self.assertNotIn("evidence_challenge", capture)
             outcome = sufficiency_of(freeze.build_pack(capture), FLOORS)
             self.assertEqual(outcome["result"], "refuse", run_id)
@@ -4806,7 +4836,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """LULU bought back shares and recorded them under ids the
         repurchase floor does not read (architect ruling 2 on the U4(d)
         seed): its migrated gap says so, and never that it buys none."""
-        capture = to_floors_1_8_0(to_contract_1_13_0(
+        capture = to_floors_1_8_0(to_contract_1_17_0(
             self.recorded("council-lulu-2026-09-05"),
             "council-lulu-2026-09-05"))
         reasons = [gap["reason"] for gap in capture["gaps"]
@@ -4827,7 +4857,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         """The migration's whole cost, for a coin: one string. Bitcoin
         declares no capital-spending gap, so it grows no bound tags, and
         it has no business to frame, so it grows no frame either."""
-        capture = to_contract_1_13_0(
+        capture = to_contract_1_17_0(
             self.recorded("council-btc-2026-09-01"),
             "council-btc-2026-09-01")
         self.assertEqual([fact for fact in capture["tier1"]
@@ -4855,12 +4885,12 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         contract the capture is refused until it says."""
         for run_id in ("council-lulu-2026-09-05",
                        "council-coin-2026-09-04"):
-            capture = to_contract_1_13_0(self.recorded(run_id), run_id)
+            capture = to_contract_1_17_0(self.recorded(run_id), run_id)
             ticker = FRAME_MIGRATIONS[run_id]["ticker"]
             self.assertEqual(
                 capture["business_frame"][ticker]
                 ["headline_decline_read"]["reading"], "unknown", run_id)
-            stripped = to_contract_1_13_0(self.recorded(run_id), run_id)
+            stripped = to_contract_1_17_0(self.recorded(run_id), run_id)
             stripped["business_frame"][ticker][
                 "headline_decline_read"] = None
             reasons = gate.validate_capture(stripped, SCHEMA)["reasons"]
@@ -4908,7 +4938,7 @@ class TestLiveCapturesStillClearEveryStage(unittest.TestCase):
         freshness rule. Only the id and the source label change."""
         for run_id, plan in FRAME_MIGRATIONS.items():
             recorded = self.recorded(run_id)
-            migrated = to_contract_1_13_0(self.recorded(run_id), run_id)
+            migrated = to_contract_1_17_0(self.recorded(run_id), run_id)
             carried = {fact["id"]: fact for fact in migrated["tier1"]}
             for source_id, ruled_id in plan["rekeyed"]:
                 original = fact_in(recorded, source_id)
@@ -7025,9 +7055,13 @@ def write_evidence_stage(directory, pack_path=None, capture=None,
             # in full_document. brief.render_full is the one renderer the brief
             # command and the host both call, so the fixture cannot drift from
             # either.
-            document = brief.render_full(
-                canonical.read_json(pack_path),
-                canonical.sha256_file(pack_path), usage_doc).encode("utf-8")
+            document_pack = canonical.read_json(pack_path)
+            document_capture = document_pack["capture"]
+            document_force = (host_module().pause_in_force(directory,
+                document_capture["captured_at"], document_capture["subject"], FLOORS, capture=document_capture)
+                if sufficiency.treasury_frame(FLOORS, document_capture) else None)
+            document = brief.render_full(document_pack,
+                canonical.sha256_file(pack_path), usage_doc, in_force=document_force).encode("utf-8")
         canonical.write_bytes_atomic(full_path, document)
         full_sha = canonical.sha256_file(full_path)
         # Owner ruling AC40(2b): the brief command writes the page the owner
@@ -7145,7 +7179,7 @@ class TestTheBriefCarriesTheOneLineQuestion(unittest.TestCase):
     LINE = "INVENTED FIXTURE - the one line the approver reads"
     LABEL = "The question, in one line:"
 
-    def _capture(self, version="1.13.0"):
+    def _capture(self, version="1.17.0"):
         capture = load_fixture("exmp-pass.json")
         capture["capture_version"] = version
         capture["question_line"] = self.LINE
@@ -10168,7 +10202,7 @@ class TestTheWulfSittingIsTheArchetypeRulesAcceptance(unittest.TestCase):
     file on disk is never rewritten (owner ruling AB20)."""
 
     def migrated(self):
-        return to_contract_1_13_0(
+        return to_contract_1_17_0(
             canonical.read_json(os.path.join(LIVE_RUNS, WULF_RUN, "evidence",
                                              "capture.json")),
             WULF_RUN)
@@ -11331,7 +11365,7 @@ class TestListingsOutsideTheUs(GateTest):
             if not os.path.exists(path):
                 continue
             capture = canonical.read_json(path)
-            for reading in (capture, to_contract_1_13_0(
+            for reading in (capture, to_contract_1_17_0(
                     copy.deepcopy(capture), run_id)):
                 self.assertEqual(gate.validate_capture(reading, SCHEMA, FLOORS),
                                  gate.validate_capture(reading, SCHEMA, before),
@@ -11769,11 +11803,29 @@ class TestBenchmarkRule(GateTest):
         return gate.validate_capture(capture, SCHEMA)["reasons"]
 
     def test_the_floors_carry_the_ruled_benchmarks(self):
-        self.assertEqual(FLOORS["floors_version"], "1.23.0")
+        self.assertEqual(FLOORS["floors_version"], "1.47.0")
         rule = FLOORS["benchmarks"]["by_asset_class"]
         self.assertEqual(rule["equity"]["us_listing"]["ticker"], "SPY")
         for absolute in ("crypto", "gold", "commodity"):
             self.assertIsNone(rule[absolute], absolute)
+
+    def test_the_floors_carry_the_confirmed_atlas_handoff(self):
+        # Owner ruling AC78(6): the subjects Atlas has confirmed it reads,
+        # as data; Zcash is not among them, and every listed product is a
+        # ruled one.
+        rule = FLOORS["atlas_handoff"]
+        confirmed = rule["confirmed"]
+        self.assertIs(confirmed["every_subject_without_a_product"], True)
+        self.assertEqual(confirmed["products"], ["bitcoin", "copper"])
+        self.assertNotIn("zcash", confirmed["products"])
+        ruled = set(FLOORS["asset_classes"]["crypto"]["products"]) | set(
+            FLOORS["asset_classes"]["commodity"]["products"])
+        self.assertLessEqual(set(confirmed["products"]), ruled)
+        for key in ("why", "confirmed_by", "authority"):
+            self.assertTrue(rule[key].strip(), key)
+        self.assertIn("AC78(6)", rule["why"])
+        self.assertIn("AC70(2)", rule["why"])
+        self.assertIn("AC78(6)", FLOORS["authority"])
 
     def test_the_series_rules_are_data(self):
         rules = FLOORS["price_series"]
@@ -11976,7 +12028,7 @@ class TestEveryPackOnRecordStillValidatesUnder170(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.13.0", name)
+                self.assertEqual(capture["capture_version"], "1.17.0", name)
                 self.assertNotIn("price_series", capture, name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  os.path.join(folder, name))
@@ -13123,7 +13175,7 @@ class TestFIContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.13.0", name)
+                self.assertEqual(capture["capture_version"], "1.17.0", name)
                 self.assertEqual(capture["question_line"],
                                  question_line_of(
                                      capture["question_verbatim"]), name)
@@ -14029,7 +14081,7 @@ class TestQuestionLine(GateTest):
         for run_id in ("council-lulu-2026-09-05", "council-btc-2026-09-01"):
             recorded = canonical.read_json(os.path.join(
                 LIVE_RUNS, run_id, "evidence", "capture.json"))
-            migrated = to_contract_1_13_0(copy.deepcopy(recorded), run_id)
+            migrated = to_contract_1_17_0(copy.deepcopy(recorded), run_id)
             self.assertEqual(migrated["question_line"],
                              question_line_of(recorded["question_verbatim"]))
             self.assertEqual(gate_check(migrated)["result"], "accepted",
@@ -14779,11 +14831,11 @@ class TestFIFixturesUnderTheInsiderAndBuybackFloors(FISufficiencyTest):
     the insider_flow_ or buyback_ floor, so both refuse on them."""
 
     def test_the_bank_fixture_passes_under_floors_1_12_0(self):
-        self.assertEqual(FLOORS["floors_version"], "1.23.0")
+        self.assertEqual(FLOORS["floors_version"], "1.47.0")
         self.passes(load_fixture(U4B_FI_BANK_FIXTURE))
 
     def test_the_holding_fixture_passes_under_the_insider_and_buyback_floors(self):
-        self.assertEqual(FLOORS["floors_version"], "1.23.0")
+        self.assertEqual(FLOORS["floors_version"], "1.47.0")
         self.passes(load_fixture(U4B_FI_HOLDING_FIXTURE))
 
 
@@ -15746,8 +15798,9 @@ class TestApprovalDocumentCostHelpAndBound(unittest.TestCase):
                              if ": " in piece)
         names = "\n".join(name for name in names if len(name) <= 90
                           and ". " not in name)
+        # This approval page uses the unscoped glossary.
         printed = [row for row in notes
-                   if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(
+                   if not row.get("scope") and re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(
                        row["term"]), names, re.IGNORECASE)]
         self.assertGreater(len(printed), 5, [row["term"] for row in printed])
         for row in printed:
@@ -16427,7 +16480,7 @@ class TestARoundedShareOrYield(GateTest):
 # evidence may claim to stay current longer. The number is data in the
 # floors.
 CLOSED_PERIOD_CEILING_DAYS = 1826
-FLOORS_VERSION_NOW = "1.23.0"
+FLOORS_VERSION_NOW = "1.47.0"
 # The JPM capture on record, gated as written: its broker figure (item
 # 8) and its six history facts ruled current for longer than five years
 # (item 6) are the only refusals.
@@ -17537,7 +17590,7 @@ def jpm_with_live_year():
     # Written today, to the contract in force: 1.10.0 and 1.11.0 add only
     # the growth and producer archetypes' optional fields, so the version
     # string is all that moves.
-    capture["capture_version"] = "1.13.0"
+    capture["capture_version"] = "1.17.0"
     by_date = {}
     for fact in capture["tier1"]:
         if fact["id"].startswith(gate._REVISED_PREFIX) and fact["id"] in \
@@ -18287,17 +18340,24 @@ class TestInsiderDepthFollowsOwnership(unittest.TestCase):
         live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
         "live run records are not published in the public copy")
     def test_the_runs_on_record_regate_to_the_same_result_and_message(self):
-        """Every pack on record, gated under this unit's floors and under
-        the same floors without the depth block and the financial-year
-        end, gives the same result, the same satisfied list and the same
-        message; the JPM record reads light, carries every dealing and
-        gates to the result it recorded."""
+        """Every pack on record captured before the financial-year end is
+        ruled, gated under this unit's floors and under the same floors
+        without the depth block and the financial-year end, gives the same
+        result, the same satisfied list and the same message. A pack
+        captured on or after that day gates to the result it recorded and
+        to the same result as without the unit, and the unit adds to its
+        satisfied list exactly what its own capture carries for it: the
+        financial-year end, and - where the group's shares put officers and
+        directors under the threshold, so the depth reads light - the
+        summary facts. The JPM record reads light, carries every dealing
+        and gates to the result it recorded."""
         before = copy.deepcopy(FLOORS)
+        depth = depth_entry(FLOORS)["depth"]
         del depth_entry(before)["depth"]
         before["classes"]["single_stock"]["floors"] = [
             entry for entry in before["classes"]["single_stock"]["floors"]
             if entry.get("id") != FYE_ID]
-        checked = 0
+        checked = bound = 0
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
             if not os.path.exists(path):
@@ -18311,9 +18371,36 @@ class TestInsiderDepthFollowsOwnership(unittest.TestCase):
                 self.assertEqual(str(caught.exception), str(exc), run_id)
                 continue
             new = sufficiency.check(copy.deepcopy(pack), FLOORS)
-            self.assertEqual(new, old, run_id)
             checked += 1
+            capture = pack["capture"]
+            if capture["captured_at"][:10] < FYE_RULED_FROM:
+                self.assertEqual(new, old, run_id)
+                continue
+            bound += 1
+            self.assertEqual(new, canonical.read_json(os.path.join(
+                os.path.dirname(path), "sufficiency-result.json")), run_id)
+            self.assertEqual(new["result"], old["result"], run_id)
+            values = {fact["id"]: fact["value"] for fact in capture["tier1"]}
+            state = sufficiency.insider_depth(pack, FLOORS)["depth"]
+            if (depth["ownership_id"] not in values
+                    and depth["group_shares_id"] in values):
+                # No percentage on record: the group's shares beside the
+                # shares in issue decide the depth.
+                in_issue = next(values[fact_id] for fact_id
+                                in depth["shares_in_issue_ids"]
+                                if fact_id in values)
+                light = (Decimal(values[depth["group_shares_id"]]) * 100
+                         < Decimal(depth["threshold_pct"]) * Decimal(in_issue))
+                self.assertEqual(state, "light" if light else "full", run_id)
+            added = {FYE_ID} & set(values)
+            if state == "light":
+                added |= set(depth["summary"]) & set(values)
+            self.assertTrue(set(old["floors"]["satisfied"])
+                            <= set(new["floors"]["satisfied"]), run_id)
+            self.assertEqual(set(new["floors"]["satisfied"])
+                             - set(old["floors"]["satisfied"]), added, run_id)
         self.assertGreater(checked, 0)
+        self.assertGreater(bound, 0)
         pack_dir = os.path.join(LIVE_RUNS, JPM_RUN, "pack")
         pack = canonical.read_json(os.path.join(pack_dir, "pack.json"))
         insider = sufficiency.insider_depth(pack, FLOORS)
@@ -18789,7 +18876,7 @@ class TestGrowthContract(unittest.TestCase):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.13.0", name)
+                self.assertEqual(capture["capture_version"], "1.17.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a grower (architect ruling A12).
@@ -18955,6 +19042,70 @@ def growth_floors_from(day):
     return growth_floors(moved)
 
 
+FLOOR_NOTE_ENDINGS = (" (not captured)", " (present but stale at capture)")
+
+
+def unread_dated_floors(capture, floors, day, ruled):
+    """The dated floors its own declared archetype (and sub-type) owes on
+    `day` that left no mark on the sufficiency reading `ruled` - read from
+    the floors data and the capture alone. Each such floor, of every kind,
+    must leave one: what it counted as satisfied, a declared gap lifting
+    it, an advisory note, or a missing item naming it - so a floor skipped
+    in silence is caught whether its facts are carried or absent. A dated
+    floor of a kind this reading does not know is itself reported; a
+    capture of another archetype owes none."""
+    frame = (capture.get("business_frame") or {}).get(
+        capture["subject"].get("ticker")) or {}
+    archetype = frame.get("archetype")
+    block = floors["archetype_floors"].get(archetype) or {}
+    row = floors["archetype_measures"]["table"].get(archetype) or {}
+    entries = (list(block.get("all_subtypes") or [])
+               + list(block.get(frame.get(row.get("subtype_field"))) or []))
+    carried = [fact["id"] for fact in capture["tier1"]]
+    marks = set(ruled["floors"]["satisfied"])
+    marks |= set(ruled["floors"]["lifted_by_declared_gap"])
+    marks |= {item["what"] for item in ruled["missing"]}
+    for note in ruled["floors"]["advisory_missing"]:
+        for ending in FLOOR_NOTE_ENDINGS:
+            if note.endswith(ending):
+                note = note[:-len(ending)]
+        marks.add(note)
+    owed = []
+    for entry in entries:
+        if not entry.get("applies_from") or entry["applies_from"] > day:
+            continue
+        kind = entry["kind"]
+        if kind == "id":
+            owed.append((entry["id"], {entry["id"]}))
+        elif kind == "prefix":
+            prefix = entry["prefix"]
+            owed.append((prefix, {fact_id for fact_id in carried
+                                  if fact_id.startswith(prefix)}
+                         | {prefix, "a fact whose id starts with '%s'"
+                            % prefix}))
+        elif kind == "pairs":
+            for first, second in entry["pairs"]:
+                if first in carried:
+                    owed.append(("%s with %s" % (first, second), {
+                        "%s with %s" % (first, second),
+                        "%s (the companion figure beside %s)"
+                        % (second, first)}))
+        elif kind == "parallel_prefixes":
+            prefixes = entry["prefixes"]
+            members = [fact_id for fact_id in carried
+                       if fact_id.startswith(tuple(prefixes))
+                       and fact_id not in prefixes]
+            for fact_id in members:
+                owed.append((fact_id, {fact_id}))
+            if not members:
+                owed.append((prefixes[0], {
+                    prefixes[0], "the whole family: facts named %s"
+                    % ", ".join("'%s...'" % p for p in prefixes)}))
+        else:
+            owed.append(("a dated floor of kind %r" % kind, set()))
+    return [label for label, shown in owed if not shown & marks]
+
+
 class TestGrowthFloorsData(GateTest):
     """Floors 1.13.0 (owner rulings AC49(1) and AC50; architect rulings A5
     and A9): the four quarters as a floor from a ruled day, the rule and
@@ -19029,16 +19180,37 @@ class TestGrowthFloorsData(GateTest):
         "live run records are not published in the public copy")
     def test_every_quarterly_floor_is_ruled_after_every_capture_on_record(
             self):
-        latest = max(
-            canonical.read_json(os.path.join(LIVE_RUNS, run_id, "pack",
-                                             "pack.json"))
-            ["capture"]["captured_at"][:10]
-            for run_id in sorted(os.listdir(LIVE_RUNS))
-            if os.path.exists(os.path.join(LIVE_RUNS, run_id, "pack",
-                                           "pack.json")))
-        for archetype in GROWTH_QUARTERLY:
-            for entry in growth_quarterly_floor(FLOORS, archetype):
-                self.assertGreater(entry["applies_from"], latest, archetype)
+        """A capture made before a quarterly floor's ruled day is never
+        bound by it; a capture made on or after it gates, through the
+        sufficiency check, to the same result and the same missing items as
+        with the floor ruled from the day after it - the floor asks nothing
+        it lacks, whether because its archetype is not one the floor binds
+        or because it carries the four quarters - and where its archetype
+        is bound, the quarters it carries are counted as satisfied, so a
+        floor skipped in silence on a later capture is caught."""
+        checked = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            day = pack["capture"]["captured_at"][:10]
+            bound = [entry["applies_from"] for archetype in GROWTH_QUARTERLY
+                     for entry in growth_quarterly_floor(FLOORS, archetype)
+                     if entry["applies_from"] <= day]
+            if not bound:
+                continue
+            later = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+            ruled = sufficiency.check(copy.deepcopy(pack), FLOORS)
+            unruled = sufficiency.check(copy.deepcopy(pack),
+                                        growth_floors_from(later))
+            self.assertEqual((ruled["result"], ruled["missing"]),
+                             (unruled["result"], unruled["missing"]), run_id)
+            self.assertEqual(
+                unread_dated_floors(pack["capture"], FLOORS, day, ruled),
+                [], run_id)
+            checked += 1
+        self.assertGreater(checked, 0)
 
 
 
@@ -19632,18 +19804,91 @@ def floors_before_growth():
 
 
 class TestTheRunsOnRecordRegateUnchanged(unittest.TestCase):
-    """Every pack on record gives the same sufficiency result, satisfied
-    list and message under this unit's floors as under the same floors
-    without its additions; the quarterly floors' applies_from is what
-    keeps them out. The refreeze of every pack on record to its own bytes
-    is TestSeriesLessPacksFreezeAsBefore's."""
+    """Every pack captured before the quarterly floors' ruled day gives the
+    same sufficiency result, satisfied list and message under this unit's
+    floors as under the same floors without its additions; the quarterly
+    floors' applies_from is what keeps them out. A pack captured on or
+    after that day gates to the result it recorded, with the same result
+    and missing items as without this unit, and counts as satisfied
+    exactly the quarters it carries under its own archetype's quarterly
+    floor - none for an archetype the floor does not bind. The refreeze of
+    every pack on record to its own bytes is
+    TestSeriesLessPacksFreezeAsBefore's."""
+
+    def assert_regated_as_before(self, run_id, capture, old, new):
+        """A pack captured on or after the ruled day: `new` (the floors in
+        force) is `old` (without this unit) with exactly the quarters it
+        carries under its own archetype's quarterly floor counted as
+        satisfied - less any already satisfied without it (a quarter a
+        decisive metric names, say)."""
+        frame = (capture.get("business_frame") or {}).get(
+            capture["subject"].get("ticker")) or {}
+        prefixes = GROWTH_QUARTERLY.get(frame.get("archetype"), [])
+        satisfied = old["floors"]["satisfied"]
+        added = {fact["id"] for fact in capture["tier1"]
+                 if fact["id"].startswith(tuple(prefixes))} - set(satisfied)
+        self.assertTrue(set(satisfied)
+                        <= set(new["floors"]["satisfied"]), run_id)
+        self.assertEqual(set(new["floors"]["satisfied"])
+                         - set(satisfied), added, run_id)
+        self.assertEqual(len(new["floors"]["satisfied"]),
+                         len(satisfied) + len(added), run_id)
+        # Everything else is as without this unit; a pass's message
+        # counts the must-have items present, grown by the quarters added,
+        # and a refusal's message carries no count, so it is unchanged.
+        expected = copy.deepcopy(old)
+        expected["floors"]["satisfied"] = new["floors"]["satisfied"]
+        if old["result"] == "pass":
+            counted = "%d must-have item(s) present"
+            self.assertIn(counted % len(satisfied), old["message"], run_id)
+            expected["message"] = old["message"].replace(
+                counted % len(satisfied),
+                counted % (len(satisfied) + len(added)), 1)
+        self.assertEqual(new, expected, run_id)
+
+    def test_a_refused_pack_after_the_ruled_day_regates_as_before(self):
+        """Audit finding RECORD-SITTING-2 r2: a pack captured on the ruled day
+        that refuses for a reason of its own refuses the same under both
+        floors, and its refusal message carries no count of must-have
+        items present - the comparison above must still hold for it, so a
+        refused sitting on record never fails it falsely. FAILS on the
+        pre-fix comparison, which demanded the count in every message."""
+        capture = with_quarters(framed(), GROWER_PROFITS)
+        capture["captured_at"] = GROWTH_APPLIES_FROM + "T00:00Z"
+        old = growth_outcome(copy.deepcopy(capture), floors_before_growth())
+        new = growth_outcome(copy.deepcopy(capture))
+        self.assertEqual((old["result"], new["result"]),
+                         ("refuse", "refuse"), new["message"])
+        self.assertNotIn("must-have item(s) present", old["message"])
+        self.assert_regated_as_before("invented", capture, old, new)
+
+    def test_a_quarter_already_decisive_is_not_counted_twice(self):
+        """Audit finding RECORD-SITTING-2 r3: a pack captured on the ruled day
+        whose frame names one of its quarters in a decisive metric has
+        that quarter satisfied under both floors, so the floors in force
+        add only the quarters not already counted - the comparison above
+        must hold for it, so such a sitting on record never fails it
+        falsely. FAILS on the pre-fix comparison, which expected every
+        quarter carried to be newly satisfied."""
+        capture = with_quarters(framed(), GROWER_PROFITS)
+        capture["captured_at"] = GROWTH_APPLIES_FROM + "T00:00Z"
+        quarter = "revenue_quarter_" + GROWER_QUARTERS[0]
+        frame_of(capture)["decisive_metrics"][0]["answered_by"].append(
+            quarter)
+        old = growth_outcome(copy.deepcopy(capture), floors_before_growth())
+        new = growth_outcome(copy.deepcopy(capture))
+        self.assertIn(quarter, old["floors"]["satisfied"])
+        self.assert_regated_as_before("invented", capture, old, new)
 
     @unittest.skipUnless(
         live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
         "live run records are not published in the public copy")
     def test_every_pack_on_record_regates_as_before_this_unit(self):
         before = floors_before_growth()
-        checked = 0
+        for archetype in GROWTH_QUARTERLY:
+            for entry in growth_quarterly_floor(FLOORS, archetype):
+                self.assertEqual(entry["applies_from"], GROWTH_APPLIES_FROM)
+        checked = bound = 0
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
             if not os.path.exists(path):
@@ -19657,12 +19902,20 @@ class TestTheRunsOnRecordRegateUnchanged(unittest.TestCase):
                 self.assertEqual(str(caught.exception), str(exc), run_id)
                 continue
             new = sufficiency.check(copy.deepcopy(pack), FLOORS)
-            self.assertEqual(new, old, run_id)
             checked += 1
+            capture = pack["capture"]
+            if capture["captured_at"][:10] < GROWTH_APPLIES_FROM:
+                self.assertEqual(new, old, run_id)
+                continue
+            bound += 1
+            self.assertEqual(new, canonical.read_json(os.path.join(
+                os.path.dirname(path), "sufficiency-result.json")), run_id)
+            self.assert_regated_as_before(run_id, capture, old, new)
         self.assertGreater(checked, 0)
-        # The rule judges nothing on record even read from the day of the
-        # earliest sitting: no pack on record is a profit-maker, landlord
-        # or grower whose frame the rule reads.
+        self.assertGreater(bound, 0)
+        # The rule judges neither of these packs even read from the day of
+        # the earliest sitting: neither is a profit-maker, landlord or
+        # grower whose frame the rule reads.
         earliest = growth_floors_from("2026-08-01")
         for run_id in (JPM_RUN, WULF_RUN):
             pack = canonical.read_json(os.path.join(LIVE_RUNS, run_id,
@@ -20476,10 +20729,12 @@ PRODUCER_PRODUCTS = {
     "natural_gas": ("mcf", "USD per MMBtu"),
     "gold": ("oz", "USD per ounce"),
     "silver": ("oz", "USD per ounce"),
-    "copper": ("lb", "USD per pound")}
+    "copper": ("lb", "USD per pound"),
+    "uranium": ("lb", "USD per lb")}
 PRODUCER_CLASS_SOURCES = {
     "gold": "asset_classes.gold",
-    "copper": "asset_classes.commodity.products.copper"}
+    "copper": "asset_classes.commodity.products.copper",
+    "uranium": "asset_classes.commodity.products.uranium"}
 # Each kind's main product, the unit its reserves and output are counted
 # in, the unit its prices are quoted in, its reserves fact, its revenue
 # lines' nature, and the evidence only that kind carries.
@@ -20794,7 +21049,10 @@ class TestProducerFloorsData(GateTest):
                 entry = products[name]
                 self.assertEqual((entry["unit"], entry["price_unit"]),
                                  (unit, price_unit))
-                self.assertEqual(entry["max_price_freshness_days"], 3)
+                expected = (FLOORS["asset_classes"]["commodity"]["products"][name]
+                            ["rule"]["freshness_classes"]["monthly_published"]
+                            if name == "uranium" else 3)
+                self.assertEqual(entry["max_price_freshness_days"], expected)
                 self.assertTrue(entry["benchmark_words"].strip())
                 self.assertTrue(entry["why"].strip())
                 self.assertEqual(entry.get("class_source"),
@@ -20911,18 +21169,83 @@ class TestProducerFloorsData(GateTest):
         live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
         "live run records are not published in the public copy")
     def test_the_rule_day_falls_after_every_capture_on_record(self):
-        latest = max(
-            canonical.read_json(os.path.join(LIVE_RUNS, run_id, "pack",
-                                             "pack.json"))
-            ["capture"]["captured_at"][:10]
-            for run_id in sorted(os.listdir(LIVE_RUNS))
-            if os.path.exists(os.path.join(LIVE_RUNS, run_id, "pack",
-                                           "pack.json")))
-        self.assertGreater(
-            FLOORS["archetype_measures"]["resource_rule"]["applies_from"],
-            latest)
-        for _, entry in producer_floor_entries():
-            self.assertGreater(entry["applies_from"], latest)
+        """A capture made before the producer's ruled day is never bound by
+        its rule or its floors; a capture made on or after it gates, through
+        the sufficiency check, to the same result and the same missing
+        items as with the rule and floors ruled from the day after it - and
+        where it is a producer, what it carries for its floors is counted
+        as satisfied, so a floor skipped in silence on a later capture is
+        caught."""
+        days = [FLOORS["archetype_measures"]["resource_rule"]
+                ["applies_from"]] + [entry["applies_from"] for _, entry
+                                     in producer_floor_entries()]
+        checked = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            day = pack["capture"]["captured_at"][:10]
+            if all(ruled_from > day for ruled_from in days):
+                continue
+            later = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+            ruled = sufficiency.check(copy.deepcopy(pack), FLOORS)
+            unruled = sufficiency.check(copy.deepcopy(pack),
+                                        producer_floors_from(later))
+            self.assertEqual((ruled["result"], ruled["missing"]),
+                             (unruled["result"], unruled["missing"]), run_id)
+            self.assertEqual(
+                unread_dated_floors(pack["capture"], FLOORS, day, ruled),
+                [], run_id)
+            checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_the_rule_day_reading_catches_a_dated_floor_skipped(self):
+        """The mark the two rule-day tests ask of a later capture: a
+        producer read from its own day leaves one for every dated floor it
+        owes; read by a gate that skips one floor in silence - a single
+        fact's family, a figure beside its companion, or a quarterly family
+        the capture lacks altogether - that floor is named."""
+        for subtype in PRODUCER_SUBTYPES:
+            with self.subTest(subtype=subtype):
+                capture = producer_capture(subtype)
+                day = capture["captured_at"][:10]
+                floors = producer_floors_from(day)
+                ruled = growth_outcome(capture, floors)
+                self.assertEqual(
+                    unread_dated_floors(capture, floors, day, ruled), [])
+
+        capture = producer_capture()
+        day = capture["captured_at"][:10]
+        floors = producer_floors_from(day)
+
+        def skipping(kind):
+            skipped = copy.deepcopy(floors)
+            entries = skipped["archetype_floors"][PRODUCER]["all_subtypes"]
+            entries[:] = [entry for entry in entries if not kind(entry)]
+            return skipped
+
+        cases = (
+            (lambda entry: entry.get("prefix") == "unit_cost_",
+             ["unit_cost_"]),
+            (lambda entry: entry["kind"] == "pairs",
+             ["production_q with production_prior_year_q",
+              "realized_price_q with realized_price_prior_year_q"]))
+        for kind, named in cases:
+            with self.subTest(named=named):
+                ruled = growth_outcome(capture, skipping(kind))
+                self.assertEqual(
+                    unread_dated_floors(capture, floors, day, ruled), named)
+        lacking = producer_capture()
+        lacking["tier1"] = [fact for fact in lacking["tier1"]
+                            if not fact["id"].startswith(
+                                ("production_quarter_",
+                                 "realized_price_quarter_"))]
+        ruled = growth_outcome(lacking, skipping(
+            lambda entry: entry["kind"] == "parallel_prefixes"
+            and "production_quarter_" in entry["prefixes"]))
+        self.assertEqual(unread_dated_floors(lacking, floors, day, ruled),
+                         ["production_quarter_"])
 
     def test_a_producer_owes_its_floors_from_the_ruled_day_only(self):
         """Read from its own day, a producer of each kind meets its floors;
@@ -20970,7 +21293,7 @@ class TestProducerContract(GateTest):
                         and "capture_version" in capture):
                     continue
                 found += 1
-                self.assertEqual(capture["capture_version"], "1.13.0", name)
+                self.assertEqual(capture["capture_version"], "1.17.0", name)
                 self.assertEqual(validate.validate(capture, SCHEMA), [],
                                  name)
                 # No fixture is a producer or an integrated major
@@ -21613,7 +21936,7 @@ class TestTheProducerRunsOnRecord(unittest.TestCase):
             if os.path.exists(path):
                 # As recorded, and migrated to this contract so the whole
                 # gate runs past the version line.
-                for capture in (canonical.read_json(path), to_contract_1_13_0(
+                for capture in (canonical.read_json(path), to_contract_1_17_0(
                         canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(capture),
                                                 SCHEMA, before)
@@ -21781,7 +22104,7 @@ class TestResourceReadings(unittest.TestCase):
         self.assertIsNone(producer_readings(framed()))
         self.assertIsNone(producer_readings(grower_capture()))
         capture = producer_capture("miner")
-        producer_block(capture)["product"] = "uranium"
+        producer_block(capture)["product"] = "lithium"
         self.assertIsNone(producer_readings(capture))
         # A reading outside the product's unit reads None, never converted.
         capture = producer_capture("miner")
@@ -21806,11 +22129,11 @@ class TestProducerRule(ProducerTest):
 
     def test_an_unlisted_product_refuses_with_the_shopping_list(self):
         capture = producer_capture("miner")
-        producer_block(capture)["product"] = "uranium"
+        producer_block(capture)["product"] = "lithium"
         item = self.refused(capture, "a main product the owner has ruled on")
         self.assertIn("owner ruling AC51(R3)", item["why_needed"])
-        self.assertIn("names 'uranium'", item["why_needed"])
-        for words in ("the owner's ruling adding 'uranium'", "unit its "
+        self.assertIn("names 'lithium'", item["why_needed"])
+        for words in ("the owner's ruling adding 'lithium'", "unit its "
                       "reserves and output", "unit its price", "benchmark"):
             self.assertIn(words, item["where_it_likely_lives"])
 
@@ -23503,6 +23826,1089 @@ def holding_capture(**overrides):
     return capture
 
 
+def treasury_fact(c, fid, value, unit, day="2026-10-11", refs=(), operation=None, source="INVENTED company annual filing"):
+    c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+    derived = {"operation":operation,"operands":[dict(fact_id=r,label="invented operand",value=next(f["value"] for f in c["tier1"] if f["id"]==r)) for r in refs]} if operation else None
+    grower_fact(c,fid,str(value),unit,day,derived,1826)
+    c["tier1"][-1]["source"]=source
+
+
+def treasury_capture(shape="a", **overrides):
+    """AC89-AC93: invented treasury examples, built in memory only."""
+    from council.lib import subjects
+    c=holding_capture(); frame=holding_frame(c); ticker="TRS"+{"a":"A","b":"B","c":"C","worked":"A"}[shape]
+    c["subject"].update(ticker=ticker,name="Treasury Example "+ticker[-1]+" Inc.")
+    c["business_frame"]={ticker:frame}; c["captured_at"]="2026-10-12T12:00Z"
+    for tier in ("tier1","tier2"):
+        for f in c[tier]: f["as_of"]="2026-10-11"
+    c["tier1"]=[f for f in c["tier1"] if not f["id"].startswith(("nav_","peer_","holdco_cash_flow_"))]
+    registry=FLOORS["asset_classes"]["crypto"]
+    key=next(k for k,r in registry["products"].items() if r.get("treasury_fund",{}).get("ticker")) if shape in ("a","worked") else list(registry["protocols"])[0 if shape=="b" else 1]
+    row=subjects.admitted_coin(FLOORS,key)[1]; money=row["price_unit"]; count_day="2026-10-07" if shape!="c" else "2026-09-17"
+    line=[] if shape in ("a","worked") else [dict(key="terms",kind="staked" if shape=="b" else "company_issued_token",words="INVENTED company terms")]
+    block=dict(coins=[dict(coin=key,count_basis="filing",lines=line)],first_year_end="fy2024",latest_year_end="fy2025",convertibles=[],loans=[],preferreds=[],raises=[],coin_sales=[],company_measures=[dict(key="own",words="INVENTED company premium")],may_sell_without_announcing=True)
+    frame["treasury"]=block; frame["peers"]=[]; frame["archetype_because"]="INVENTED: raising money to buy the coin is the main activity."
+    c["gaps"]=[g for g in c["gaps"] if g["fact_class"]!="peer_"]
+    def gap(fid, reason="INVENTED none published"):
+        c["gaps"].append(dict(fact_class=fid,reason_kind="absent_by_design",reason=reason,weakened_test="rating_vs_history_or_peers"))
+    gap("peer_")
+    gap("business_segment_sales_"); gap("business_segment_operating_profit_")
+    def add(fid,value,unit=money,day="2026-10-11",refs=(),operation=None,source="INVENTED company annual filing"):
+        treasury_fact(c,fid,value,unit,day,refs,operation,source)
+    issued=4000000 if shape=="worked" else 5000000; market=issued*100
+    add("fiscal_year_end","12-31","month_day"); add("price_last",100); add("shares_in_issue",issued,"shares")
+    next(f for f in c["tier1"] if f["id"]=="price_last")["freshness_rule_days"]=3
+    add("market_cap",market,refs=("price_last","shares_in_issue"),operation="multiply")
+    add("fcf_yield_ratio",1,"x"); add("holdco_costs_ttm",180000000)
+    add("treasury_coins_"+key,12000,row["unit"],count_day)
+    source_rule=registry["monetary_coin_rule"]
+    add("coin_price_"+key,50000,row["price_unit"],source="INVENTED "+source_rule["price_source_words"][0])
+    add("nav_component_"+key,600000000,refs=("treasury_coins_"+key,"coin_price_"+key),operation="multiply")
+    bridge=dict(components=[dict(name="INVENTED coin",value_fact="nav_component_"+key,method="coin_at_today_price")],holdco_net_debt_fact="holdco_net_debt",nav_total_fact="nav_total",discount_fact="nav_discount")
+    frame["nav_bridge"]=bridge
+    convertibles=[(100000000,2,80),(200000000,0,250)] if shape=="worked" else [(10000000,2,p) for p in (80,90,150,180,200,250)] if shape=="a" else []
+    for n,(amount,rate,price) in enumerate(convertibles,1):
+        k="x"+str(n); block["convertibles"].append(dict(key=k,name="INVENTED bond "+k,holder_put=n<=2))
+        for term,value,unit in (("amount",amount,money),("rate",rate,"percent_per_year"),("conversion_price",price,money),("maturity","2029-12-31","iso_date"),("put_date","2028-12-31","iso_date")):
+            if term!="put_date" or n<=2: add("treasury_convertible_"+k+"_"+term,value,unit)
+    if shape in ("a","c","worked"):
+        block["loans"]=[dict(key="l1",name="INVENTED loan",secured_on_coins=True,lender_may_sell=shape=="c",terms_words="INVENTED lender terms")]
+        for term,value,unit in (("amount",20000000,money),("rate",8,"percent_per_year"),("maturity","2028-12-31","iso_date")): add("treasury_loan_l1_"+term,value,unit)
+    preferreds=[(50000000,10),(30000000,8)] if shape=="worked" else [(1000000,8)]*(5 if shape=="a" else 1 if shape=="b" else 0)
+    for n,(amount,rate) in enumerate(preferreds,1):
+        k="p"+str(n); block["preferreds"].append(dict(key=k,name="INVENTED preferred "+k,cumulative=n!=2,redemption_words="INVENTED variable dividend, no redemption right" if shape=="a" and n==1 else "INVENTED no redemption right"))
+        add("treasury_preferred_"+k+"_amount",amount); add("treasury_preferred_"+k+"_dividend_rate",rate,"percent_per_year")
+    if shape=="a":
+        native="EUR"
+        add("background_native_preferred",1000000,native); add("fx_rate_preferred",1,money+" per "+native)
+        add("treasury_preferred_p5_amount",1000000,refs=("background_native_preferred","fx_rate_preferred"),operation="multiply")
+    debts=[f["id"] for f in c["tier1"] if f["id"].startswith(("treasury_convertible_","treasury_loan_")) and f["id"].endswith("_amount")]
+    debt=sum(int(next(f["value"] for f in c["tier1"] if f["id"]==r)) for r in debts)
+    if len(debts)==1:
+        instrument=next(f for f in c["tier1"] if f["id"]==debts[0])
+        add("treasury_true_debt",debt,day=instrument["as_of"],source=instrument["source"])
+    else: add("treasury_true_debt",debt,refs=debts,operation="sum" if debts else None)
+    add("treasury_cash",60000000)
+    add("holdco_net_debt",debt-60000000,refs=("treasury_true_debt","treasury_cash"),operation="subtract")
+    value=600000000+60000000-debt
+    if shape=="b":
+        block["other_coins"]={"names":["INVENTED smaller coin"]}; add("treasury_other_coins",1000000)
+        bridge["components"].append(dict(name="INVENTED other",value_fact="treasury_other_coins",method="company_reported_value",valuation_basis="other")); value+=1000000
+    components=[r["value_fact"] for r in bridge["components"]]
+    if len(components)>1: add("nav_components_total",sum(int(next(f["value"] for f in c["tier1"] if f["id"]==r)) for r in components),refs=components,operation="sum")
+    add("nav_total",value,refs=("nav_components_total" if len(components)>1 else components[0],"holdco_net_debt"),operation="subtract")
+    add("nav_discount",value-market,refs=("nav_total","market_cap"),operation="subtract")
+    add("treasury_total_assets",500000000); add("treasury_coin_assets_reported",450000000)
+    rule=FLOORS["archetype_measures"]["holding_rule"]["treasury"]; periods,_=sufficiency._treasury_periods(c,block,rule)
+    for p,(day,annual) in periods.items():
+        add("treasury_hist_coins_"+key+"_"+p,10000,row["unit"],day.isoformat()); add("treasury_hist_shares_"+p,3800000,"shares",day.isoformat())
+        if annual:
+            for term,value,unit in (("coin_price_"+key,30000,row["price_unit"]),("cash",60000000,money),("true_debt",debt,money),("price",100,money)):
+                add("treasury_hist_"+term+"_"+p,value,unit,day.isoformat(),source="INVENTED "+source_rule["series_source_words"][0] if term.startswith("coin_price") else "INVENTED company annual report")
+    for line in block["coins"][0]["lines"]: add("treasury_line_"+key+"_"+line["key"],10000,row["unit"],count_day)
+    add("treasury_measure_own",20,"percent")
+    if shape in ("a","worked"):
+        for n,instrument in enumerate(("shares","shares","preferred") if shape=="a" else ("shares",),1):
+            k="r"+str(n); block["raises"].append(dict(key=k,instrument=instrument,name="INVENTED raise"))
+            for term,value,unit in [("proceeds",21000000,money)]+([("units_sold",200000,"shares"),("coins_before",10800,row["unit"]),("shares_before",3800000,"shares"),("coin_price",30000,row["price_unit"])] if instrument=="shares" else []):
+                add("treasury_raise_"+k+"_"+term,value,unit,"2026-09-01",source="INVENTED "+source_rule["series_source_words"][0] if term=="coin_price" else "INVENTED company announcement")
+    else: gap("treasury_raise_")
+    for n in range(1,3 if shape=="c" else 2 if shape=="a" else 1):
+        k="s"+str(n); block["coin_sales"].append(dict(key=k,words="INVENTED company reason for sale")); add("treasury_coin_sale_"+k+"_proceeds",1000000)
+    if not block["coin_sales"]: gap("treasury_coin_sale_")
+    fund=subjects.treasury_fund(FLOORS,key)
+    if fund:
+        for fid,value in (("spot_fund_nav_per_share",50),("spot_fund_price",51)): add(fid,value,money,source="INVENTED "+fund["ticker"])
+    else: gap("spot_fund_",rule["fund_gap_words"])
+    for req in c["sufficiency"]["requirements"]:
+        if req["id"]=="profit_growth": req["answered_by"]=["treasury_hist_coins_"+key+"_fy2025"]
+        elif req["id"]=="free_cash_flow": req["answered_by"]=["treasury_cash"]
+        elif req["id"]=="rating_vs_history_or_peers":
+            req.update(answered_by=["market_cap","nav_total"]); req.pop("peer_denominator_metrics",None)
+    frame["decisive_metrics"][-1]["answered_by"]=["nav_total","nav_discount","treasury_cash"]
+    block.update(overrides)
+    return c
+
+
+def treasury_ladder_capture(shape="a", cited=True, sane_prices=False, **overrides):
+    """AC92(2): extend the original invented shapes, never their builder."""
+    c = treasury_capture(shape, **overrides)
+    key = holding_frame(c)["treasury"]["coins"][0]["coin"]
+    rule = FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+    for fid, value, unit in (("realized_volatility_5y", "40", "percent_per_year"),
+            ("risk_free_rate_3m", "4", "percent_per_year"), ("swings_history_days", "2000", "days"),
+            ("volatility_window_days", "1826", "days")):
+        treasury_fact(c, fid, value, unit)
+    # The new ladder examples keep every premium inside the seed's range.
+    for fact in c["tier1"]:
+        if sane_prices and fact["id"].startswith("treasury_hist_coin_price_"):
+            fact["value"] = "60000"
+    prefix = rule.get("coin_layer", {}).get("prefix_form", "coin_{c}__").format(c=key)
+    if cited:
+        c["gaps"].append(dict(fact_class=prefix, reason_kind="absent_by_design", reason="INVENTED cited coin-example", weakened_test="rating_vs_history_or_peers"))
+    else:
+        from council.lib import subjects
+        registry, _ = subjects.admitted_coin(FLOORS, key)
+        crypto = FLOORS["asset_classes"]["crypto"]
+        kinds = crypto["monetary_coin_rule"]["coin_kinds"] if registry == "monetary" else crypto["protocol_rule"]["protocol_kinds"]
+        for entry in subjects.class_anchors(FLOORS, dict(asset_class="crypto", product=key, kind=kinds[0])):
+            ids = entry.get("ids") or [entry["id"]] if entry["kind"] in ("id", "one_of") else []
+            for fid in ids:
+                if fid not in ("price_last", "price_last_cross_check", "supply_circulating_cross_check"):
+                    treasury_fact(c, prefix + fid, "10", "ratio")
+                    next(f for f in c["tier1"] if f["id"] == prefix + fid)["freshness_rule_days"] = entry.get("max_freshness_days", 1)
+            for family in entry.get("prefixes") or [entry.get("prefix")]:
+                if family:
+                    for n in range(entry.get("min_members", 1)):
+                        treasury_fact(c, prefix + family + "invented" + str(n), "10", "ratio")
+    return c
+
+
+def zero_yardstick_capture(cash="60000000", price="20000"):
+    """F3: the grader's price-only change to the invented worked shape."""
+    c = treasury_ladder_capture("worked", sane_prices=True)
+    key = holding_frame(c)["treasury"]["coins"][0]["coin"]
+    facts = {f["id"]: f for f in c["tier1"]}
+    facts["coin_price_" + key]["value"] = price
+    facts["treasury_cash"]["value"] = cash
+    return c
+
+
+def treasury_preferred_history_capture(amounts=None):
+    """G2-2: dated invented amounts, separately for each preferred."""
+    c = treasury_ladder_capture("worked", sane_prices=True)
+    amounts = {p: {"p1": "50000000"} for p in ("fy2024", "fy2025")} if amounts is None else amounts
+    rule = FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+    pattern = rule["roles"].get("history_preferred", {}).get("pattern", "treasury_preferred_{k}_at_{p}")
+    dates = {r["period"]: r["date"] for r in sufficiency.treasury_readings(freeze.build_pack(c), FLOORS)["periods"] if r["annual"]}
+    unit = next(f["unit"] for f in c["tier1"] if f["id"] == "treasury_cash")
+    for period, rows in amounts.items():
+        for key, value in rows.items():
+            treasury_fact(c, pattern.format(k=key, p=period), value, unit, day=dates[period],
+                source="INVENTED annual report: none outstanding" if str(value) == "0" else "INVENTED annual report preferred table")
+    return c
+
+
+class TestTreasuryBarAndLayerEvidence(unittest.TestCase):
+    # The new evidence examples retain the original exact coin-count quotient.
+    def setUp(self): self.rule = FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+    def outcome(self, c): return sufficiency_of(freeze.build_pack(c))
+    def test_a_non_treasury_pack_without_the_holding_rule_keeps_the_base_result(self):
+        # P3 fold one: control, the two readings agree on the previous head too.
+        before = copy.deepcopy(FLOORS); before["archetype_measures"].pop("holding_rule")
+        pack = freeze.build_pack(producer_capture())
+        self.assertEqual(sufficiency_of(copy.deepcopy(pack), before), sufficiency_of(copy.deepcopy(pack), FLOORS))
+    def test_a_treasury_whose_coins_cannot_cover_its_debt_today_refuses_plainly(self):
+        for cash in ("60000000", "80000000"):
+            c = zero_yardstick_capture(cash)
+            result = self.outcome(c)
+            self.assertEqual(result["result"], "refuse", result)
+            words = self.rule["zero_yardstick"]
+            self.assertTrue(any(row["why_needed"] == words["words"] for row in result["missing"]), result)
+    def test_the_four_bar_facts_are_required(self):
+        for fid in ("realized_volatility_5y", "risk_free_rate", "swings_history_days", "volatility_window_days"):
+            c = treasury_ladder_capture(); c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(fid)]
+            self.assertEqual(self.outcome(c)["result"], "refuse"); self.assertIn(fid, str(self.outcome(c)["missing"]))
+    def test_a_history_under_a_year_refuses(self):
+        c = treasury_ladder_capture()
+        for f in c["tier1"]:
+            if f["id"] == self.rule["swings"]["history_id"]: f["value"] = str(self.rule["swings"]["min_history_days"] - 1)
+        self.assertIn(self.rule["swings"]["short_history_refusal"], str(self.outcome(c)["missing"]))
+    def test_the_window_must_be_the_lesser(self):
+        for history in (400, 2000):
+            c = treasury_ladder_capture()
+            for f in c["tier1"]:
+                if f["id"] == self.rule["swings"]["history_id"]: f["value"] = str(history)
+                if f["id"] == self.rule["swings"]["window_id"]: f["value"] = str(min(history, self.rule["swings"]["full_window_days"]) - 1)
+            self.assertIn(self.rule["swings"]["window_refusal"], str(self.outcome(c)["missing"]))
+        c = treasury_ladder_capture()
+        next(f for f in c["tier1"] if f["id"] == self.rule["swings"]["history_id"])["value"] = "INVENTED unreadable"
+        self.assertIn(self.rule["swings"]["window_refusal"], str(self.outcome(c)["missing"]))
+    def test_a_built_layer_requires_the_coins_own_anchors(self):
+        for shape in ("a", "b"):
+            c = treasury_ladder_capture(shape, cited=False)
+            self.assertEqual(self.outcome(c)["result"], "pass", self.outcome(c)["missing"])
+            for entry in sufficiency._treasury_coin_layer(freeze.build_pack(c), FLOORS)[3]:
+                if entry["level"] != "required": continue
+                broken = copy.deepcopy(c); ids = entry.get("ids") or [entry.get("id")]; prefixes = entry.get("prefixes") or [entry.get("prefix")]
+                broken["tier1"] = [f for f in broken["tier1"] if f["id"] not in ids and not any(p and f["id"].startswith(p) for p in prefixes)]
+                self.assertEqual(self.outcome(broken)["result"], "refuse", entry)
+    def test_the_exempt_ids_are_not_asked(self):
+        c = treasury_ladder_capture(cited=False); entries = sufficiency._treasury_coin_layer(freeze.build_pack(c), FLOORS)[3]
+        prefix = self.rule["coin_layer"]["prefix_form"].format(c=holding_frame(c)["treasury"]["coins"][0]["coin"])
+        for fid in self.rule["coin_layer"]["exempt_ids"]: self.assertNotIn(prefix + fid, [e.get("id") for e in entries])
+        self.assertEqual(self.outcome(c)["result"], "pass")
+    def test_a_cited_gap_asks_for_nothing(self):
+        # Control: cited evidence adds no coin-anchor demand, on base too.
+        self.assertEqual(self.outcome(treasury_ladder_capture())["result"], "pass")
+    def test_both_gap_and_facts_refuse(self):
+        c = treasury_ladder_capture(); prefix = self.rule["coin_layer"]["prefix_form"].format(c=holding_frame(c)["treasury"]["coins"][0]["coin"])
+        treasury_fact(c, prefix + "supply_circulating", "10", "ratio")
+        self.assertIn(self.rule["coin_layer"]["layer_both_refusal"], str(self.outcome(c)["missing"]))
+    def test_a_layer_fact_for_another_coin_refuses(self):
+        c = treasury_ladder_capture(); largest = holding_frame(c)["treasury"]["coins"][0]["coin"]
+        for registry in self.rule["admitted_registries"]:
+            for coin in FLOORS["asset_classes"]["crypto"][registry]:
+                if coin == largest: continue
+                broken = copy.deepcopy(c); treasury_fact(broken, self.rule["coin_layer"]["prefix_form"].format(c=coin) + "supply_circulating", "10", "ratio")
+                self.assertIn(self.rule["coin_layer"]["layer_coin_refusal"], str(self.outcome(broken)["missing"]))
+    def test_every_other_pack_keeps_its_result(self):
+        # Control: all fixture captures plus each archetype builder keep results.
+        old = copy.deepcopy(FLOORS); rule = old["archetype_measures"]["holding_rule"]["treasury"]
+        for key in ("ladder_rules", "coin_layer", "swings", "pause", "casefile_words", "seat_emphasis"): rule.pop(key, None)
+        captures = [canonical.read_json(os.path.join(FIXTURES, n)) for n in os.listdir(FIXTURES) if n.endswith("-pass.json")]
+        captures += [holding_capture(), *[coin_capture(k) for k in FLOORS["asset_classes"]["crypto"]["products"]], *[protocol_capture(k) for k in FLOORS["asset_classes"]["crypto"]["protocols"]], uranium_capture(), producer_capture()]
+        for c in captures:
+            p = freeze.build_pack(c); self.assertEqual(sufficiency.check(p, FLOORS), sufficiency.check(p, old))
+
+
+class TestTheTreasuryRunsOnRecord(unittest.TestCase):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)), "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        from council.engine import treasury_chair
+        base = copy.deepcopy(FLOORS); rule = base["archetype_measures"]["holding_rule"]["treasury"]
+        for key in ("ladder_rules", "coin_layer", "swings", "pause", "casefile_words", "seat_emphasis"): rule.pop(key)
+        bars = {"realized_volatility_5y", "risk_free_rate", "swings_history_days", "volatility_window_days"}
+        base["archetype_floors"][HOLDING]["single_coin_treasury"] = [e for e in base["archetype_floors"][HOLDING]["single_coin_treasury"] if (e.get("id") or e.get("prefix")) not in bars]
+        for registry in rule["admitted_registries"]:
+            for key in FLOORS["asset_classes"]["crypto"][registry]:
+                latest = treasury_chair.coin_on_record(LIVE_RUNS, key, FLOORS)
+                if latest:
+                    doc = canonical.read_json(os.path.join(LIVE_RUNS, latest["run_id"], "verdict.json"))
+                    self.assertEqual(latest["scenarios"], [{k:s[k] for k in ("name", "price_outcome", "probability")} for s in (doc.get("scenario_rating") or {}).get("scenarios") or []])
+                    spec = FLOORS["archetype_measures"]["holding_rule"]["treasury"]["coin_layer"]
+                    c = treasury_ladder_capture(); c["captured_at"] = max(date.fromisoformat(rule["applies_from"]), date.fromisoformat(latest["published"]) + timedelta(days=spec["max_age_days"])).isoformat() + "T12:00Z"
+                    self.assertEqual(treasury_chair.layer_for(freeze.build_pack(c), FLOORS, latest)["source"], "this_sitting")
+        gated = checked = frozen = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                c = canonical.read_json(path)
+                for capture in (c, to_contract_1_17_0(copy.deepcopy(c), run_id)):
+                    self.assertEqual(gate.validate_capture(copy.deepcopy(capture), SCHEMA, FLOORS), gate.validate_capture(copy.deepcopy(capture), SCHEMA, base))
+                gated += 1
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path): continue
+            pack = canonical.read_json(path)
+            with open(path, "rb") as handle: self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])), handle.read())
+            frozen += 1
+            try: old = sufficiency.check(copy.deepcopy(pack), base)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught: sufficiency.check(copy.deepcopy(pack), FLOORS)
+                self.assertEqual(str(caught.exception), str(exc)); continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack), FLOORS), old); checked += 1
+        self.assertGreater(min(gated, checked, frozen), 0)
+
+
+class TreasuryTest(unittest.TestCase):
+    def facts(self,c): return {f["id"]:f for f in c["tier1"]}
+    def block(self,c): return holding_frame(c)["treasury"]
+    def rule(self): return FLOORS["archetype_measures"]["holding_rule"]["treasury"]
+    def coin(self,c): return self.block(c)["coins"][0]["coin"]
+    def drop(self,c,fid): c["tier1"]=[f for f in c["tier1"] if f["id"]!=fid]
+    def passes(self,c=None):
+        result=sufficiency_of(freeze.build_pack(c or treasury_ladder_capture()))
+        self.assertEqual(result["result"],"pass",result["missing"])
+    def refuses(self,c,word):
+        result=sufficiency_of(freeze.build_pack(c)); self.assertEqual(result["result"],"refuse",result)
+        self.assertIn(word,str(result["missing"]))
+    def mutate(self,fid,word,shape="a",**changes):
+        c=treasury_ladder_capture(shape); self.facts(c)[fid.format(c=self.coin(c))].update(changes); self.refuses(c,word)
+    def gap(self,c,fid): c["gaps"].append(dict(fact_class=fid,reason_kind="absent_by_design",reason="INVENTED not published",weakened_test="profit_growth"))
+    def readings(self,shape="worked",choice=True,c=None):
+        c=c or treasury_ladder_capture(shape)
+        treatment={p["key"]:dict(as_debt=p["key"]=="p1",why="INVENTED owner's choice") for p in self.block(c)["preferreds"]} if choice else None
+        return sufficiency.treasury_readings(freeze.build_pack(c),FLOORS,treatment)
+
+
+def treasury_page_capture(shape="worked"):
+    """P1: extend the merged builders with sane invented display examples."""
+    c = treasury_ladder_capture(shape, sane_prices=True)
+    if shape in ("a","b"):
+        for fact in c["tier1"]:
+            if fact["id"].startswith("treasury_hist_coin_price_"): fact["value"]="48000"
+    if shape == "c":
+        facts = {f["id"]: f for f in c["tier1"]}
+        facts["price_last"]["value"] = "50"
+        facts["market_cap"]["value"] = "250000000"
+        facts["nav_discount"]["value"] = str(decimal.Decimal(facts["nav_total"]["value"])-250000000)
+    return c
+
+
+class TreasuryPageTest(unittest.TestCase):
+    # Invented twelve thousand over four million is three thousandths.
+    def setUp(self):
+        self.floors = copy.deepcopy(FLOORS)
+        self.rule = self.floors["archetype_measures"]["holding_rule"]["treasury"]
+        self.rule["sitting_open"] = True
+        self.words = self.rule.get("page_words", {})
+        self.patch = unittest.mock.patch.object(brief, "_FLOORS", self.floors)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+
+    def force(self, c, changed=False, way="cited"):
+        from council.engine import treasury_chair as T
+        choice = {p["key"]:dict(as_debt=False,why="INVENTED opening reason") for p in holding_frame(c)["treasury"]["preferreds"]}
+        opening = dict(preferred_treatment=choice,chosen_by="INVENTED owner",coin_sitting="coin-example" if way=="cited" else None)
+        changes = [dict(preferred=next(iter(choice)),**{"from":False,"to":True,"why":"INVENTED pause reason"})] if changed and choice else []
+        layer = dict(coin=holding_frame(c)["treasury"]["coins"][0]["coin"],source="on_record" if way=="cited" else "this_sitting",
+            latest=dict(run_id="coin-example",published="2026-10-10",rating="hold") if way=="cited" else None,
+            horizon_months="12",scenarios=[])
+        return T.treasury_in_force(opening,dict(preferred_changes=changes),self.rule,layer)
+
+    def read(self, shape="worked", c=None, changed=False):
+        c = c or treasury_page_capture(shape)
+        return brief.treasury_summary(freeze.build_pack(c),self.force(c,changed))
+
+    def table(self, summary, key):
+        return next(t for lead,t in summary["tables"] if lead==self.words[key+"_lead"])
+
+    def text(self, summary):
+        return "\n".join([*summary["lines"],*[line for _,t in summary["tables"] for line in brief.table_lines(t,[])]])
+
+
+class TestTreasuryCardReasons(TreasuryPageTest):
+    # The same invented exact pairs as the page builder; no new arithmetic.
+    def parts(self, summary):
+        return [part for groups in summary["front_parts"].values() for group in groups for part in group["parts"]]
+
+    def test_reasons_are_whole_labelled_lines_on_the_three_shapes(self):
+        from council.report import render_report as R
+        for shape in ("a", "b", "c"):
+            summary = self.read(shape, changed=shape == "a")
+            lines = R.treasury_card_lines(summary)
+            for groups in summary["front_parts"].values():
+                parts=[part for group in groups for part in group["parts"]]
+                for part in parts:
+                    if part["reason"]:
+                        label=part["label"].lower()
+                        self.assertIn((label+": "+part["text"]).lower(), " ".join(text for _,text in lines).lower()) if len(parts)>1 else self.assertIn((part["label"],part["text"]),lines)
+        labels = self.words["card_reason_labels"]
+        self.assertIn(labels["interest_months"] + ": " + self.words["no_interest_words"], dict(self.read("b")["front"])["charges"])
+        self.assertIn(labels["twelve_month_change"].lower() + ": " + self.rule["reading_reasons"]["no_prior_count"]["words"], dict(self.read("c")["front"])["coins_per_share"])
+
+    def test_every_numeric_card_operand_uses_the_same_reason_rule(self):
+        from council.report import render_report as R
+        c = treasury_page_capture(); pack = freeze.build_pack(c); force = self.force(c)
+        original = sufficiency.treasury_readings(pack, self.floors, force["preferred_treatment"])
+        original["margin_loans"] = [copy.deepcopy(original["loans"][0])]
+        paths = [("rated_premium",), ("comparable_premium",), ("history_average",), ("range_word",),
+            ("fund", "premium"), ("fund", "rated_premium"), ("diluted_coins_per_share",), ("coins_per_share",),
+            ("twelve_month_change",), ("months_covered", "interest"), ("months_covered", "all"),
+            ("zero_coin_price",), ("preferred_zero_coin_price",), ("margin_loans", 0, "amount"), ("count_age_days",)]
+        for path in paths:
+            with self.subTest(path=path):
+                readings = copy.deepcopy(original); target = readings
+                for key in path[:-1]: target = target[key]
+                target[path[-1]] = None
+                with unittest.mock.patch.object(sufficiency, "treasury_readings", return_value=readings):
+                    summary = brief.treasury_summary(pack, force)
+                self.assertTrue(any(part["reason"] for part in self.parts(summary)))
+                lines = R.treasury_card_lines(summary)
+                for groups in summary["front_parts"].values():
+                    parts = [part for group in groups for part in group["parts"]]
+                    if any(part["reason"] for part in parts):
+                        for part in parts:
+                            suffix = "" if part["reason"] else self.words["card_joiners"]["figure_suffixes"].get(part["key"], "")
+                            self.assertIn(part["label"].lower()+(": " if part["reason"] else " ")+part["text"]+suffix, " ".join(text for _,text in lines))
+                            if part["reason"]:
+                                self.assertNotIn("cash covers "+part["text"]+" months", dict(summary["front"]).get("charges",""))
+
+    def test_mixed_numeric_and_missing_charges_never_use_the_numeric_template(self):
+        c = treasury_page_capture(); pack = freeze.build_pack(c); force = self.force(c)
+        readings = sufficiency.treasury_readings(pack, self.floors, force["preferred_treatment"])
+        for key in ("interest", "all"):
+            changed = copy.deepcopy(readings); changed["months_covered"][key] = None
+            changed["why"][key + "_months"] = self.rule["reading_reasons"]["no_fixed_charges"]["words"]
+            with unittest.mock.patch.object(sufficiency, "treasury_readings", return_value=changed):
+                summary = brief.treasury_summary(pack, force)
+            parts = [part for group in summary["front_parts"]["charges"] for part in group["parts"]]
+            self.assertEqual(len(parts), 4)
+            self.assertEqual(sum(part["reason"] for part in parts), 1)
+            self.assertEqual([part["text"] for part in parts if part["reason"]], [changed["why"][key + "_months"]])
+            from council.report import render_report as R
+            lines = R.treasury_card_lines(summary)
+            for part in parts:
+                suffix = "" if part["reason"] else self.words["card_joiners"]["figure_suffixes"].get(part["key"], "")
+                self.assertIn(part["label"].lower()+(": " if part["reason"] else " ")+part["text"]+suffix, " ".join(text for _,text in lines))
+
+    def test_mixed_lines_keep_the_readable_figures_on_shapes_b_and_c(self):
+        from council.lib import subjects
+        from council.report import render_report as R
+        for shape in ("b", "c"):
+            with self.subTest(shape=shape):
+                c = treasury_page_capture(shape); pack = freeze.build_pack(c); force = self.force(c)
+                readings = sufficiency.treasury_readings(pack, self.floors, force["preferred_treatment"])
+                summary = brief.treasury_summary(pack, force); front = dict(summary["front"])
+                for key, ratio in readings["months_covered"].items():
+                    if ratio:
+                        figure = R.format_protocol_number(str(ratio["numerator"] / ratio["denominator"]), "number")
+                        with self.subTest(figure=key):
+                            self.assertIn(figure + " months", front["charges"])
+                if shape == "c":
+                    coin = subjects.admitted_coin(self.floors, readings["coins"][0]["coin"])[1]
+                    for key in ("coins_per_share", "diluted_coins_per_share"):
+                        ratio = readings[key]
+                        figure = R.format_protocol_number(str(ratio["numerator"] / ratio["denominator"]), "amount", unit=coin["unit"])
+                        label = self.words["card_reason_labels"][key]
+                        with self.subTest(figure=key):
+                            self.assertIn(label.lower() + " " + figure, front["coins_per_share"])
+
+    def test_generic_reason_is_used_only_when_no_specific_reason_exists(self):
+        c = treasury_page_capture(); pack = freeze.build_pack(c); force = self.force(c)
+        readings = sufficiency.treasury_readings(pack, self.floors, force["preferred_treatment"])
+        specific = self.rule["reading_reasons"]["unreadable_instrument"]["words"]
+        readings["history_average"] = None; readings["why"]["history_average"] = specific
+        readings["margin_loans"] = [copy.deepcopy(readings["loans"][0])]
+        loan = readings["margin_loans"][0]; loan["amount"] = None; readings["why"][loan["key"]] = specific
+        period = readings["periods"][0]; period["value_per_share"] = None; period["why"] = specific
+        readings["coin_sales"] = [dict(key="example", proceeds=None, words="INVENTED sale")]
+        with unittest.mock.patch.object(sufficiency, "treasury_readings", return_value=readings):
+            summary = brief.treasury_summary(pack, force)
+        generic = self.rule["reading_reasons"]["unreadable_figure"]["words"]
+        cells = [(lead, cell["text"]) for lead, table in summary["tables"] for row in table["rows"] for cell in row]
+        self.assertEqual([(lead, text) for lead, text in cells if generic in text], [(self.words["sales_lead"], generic)])
+        self.assertFalse(any(generic in line for line in summary["lines"]))
+        self.assertTrue(any(specific in line for line in summary["lines"]))
+
+    def test_case_label_and_seat_words_share_the_ruled_fold(self):
+        case = self.rule["ladder_rules"]["premium_cases"]["premium_falls"]
+        self.assertEqual(case["label"], self.rule["falls_basis_words"])
+        for text in (self.rule["seat_emphasis"]["advisor_bear"], self.rule["ladder_rules"]["falls_premium_refusal"],
+                     case["missing_refusal"], self.rule["casefile_words"]["falls_premium_words"]):
+            self.assertIn(case["label"], text)
+
+
+class TestTreasuryGraderPages(TreasuryPageTest):
+    def test_history_reasons_are_below_and_company_words_print_once(self):
+        summary=self.read("c"); history=self.table(summary,"history")
+        self.assertTrue(all(row[1]["text"]==self.words["history_gap_cell_words"] for row in history["rows"]))
+        notes=" ".join(cell["text"] for row in history["below"] for cell in row)
+        self.assertEqual(notes.count("the company's own token line is not published"),1)
+        for key in ("sales","measures"):
+            for row in self.table(summary,key)["rows"]: self.assertEqual(row[0]["text"],self.words["unnamed_line_words"])
+
+    def test_the_yardstick_uses_the_counted_value_beside_the_company_figure(self):
+        from council.report import render_report as R
+        for shape in ("a", "c"):
+            c=treasury_page_capture(shape); pack=freeze.build_pack(c); force=self.force(c)
+            readings=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+            summary=brief.treasury_summary(pack,force); coin=readings["coins"][0]
+            used=R.format_protocol_number(str(coin["value"]),"money",currency="USD")
+            row=next(row for row in summary["tables"][0][1]["rows"] if "value" in row[0]["text"].lower() or "Nav component" in row[0]["text"])
+            self.assertTrue(row[1]["text"].startswith(used))
+            if shape=="c": self.assertIn("the company's own figure (includes its own token)",row[1]["text"])
+
+    def test_history_counts_use_the_net_reading_or_its_gap(self):
+        c=treasury_page_capture("c"); pack=freeze.build_pack(c); force=self.force(c)
+        readings=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+        summary=brief.treasury_summary(pack,force); rows=self.table(summary,"history")["rows"]
+        for period,row in zip(readings["periods"],rows,strict=True):
+            with self.subTest(period=period["period"]):
+                self.assertIsNone(period["coins_per_share"])
+                self.assertEqual(row[1]["text"],self.words["history_gap_cell_words"])
+                self.assertIn(brief._format_date(period["date"]),self.text(summary))
+        coin=holding_frame(c)["treasury"]["coins"][0]; line=coin["lines"][0]; period=readings["periods"][0]
+        fid=self.rule["roles"]["history_line"]["pattern"].format(c=coin["coin"],k=line["key"],p=period["period"])
+        source=next(f for f in c["tier1"] if f["id"]==readings["lines"][0]["fact"])
+        c["tier1"].append(dict(source,id=fid,value="2000",as_of=period["date"]))
+        summary=self.read(c=c); cell=self.table(summary,"history")["rows"][0][1]["text"]
+        self.assertTrue(cell.startswith("8,000")); self.assertIn("the company's own count",cell)
+
+    def test_every_table_label_uses_plain_words_or_the_named_line(self):
+        from council.lib import subjects
+        for shape in ("a","b","c"):
+            c=treasury_page_capture(shape); summary=self.read(c=c); block=holding_frame(c)["treasury"]
+            keys={x["key"] for field in ("convertibles","loans","preferreds","raises","coin_sales","company_measures") for x in block[field]}
+            keys|={coin["coin"] for coin in block["coins"]}
+            for lead,table in summary["tables"]:
+                for row in table["rows"]:
+                    self.assertNotIn("_",row[0]["text"]); self.assertNotIn(row[0]["text"],keys)
+                    if lead==self.words["lines_lead"]: self.assertNotIn("_",row[1]["text"])
+            self.assertIn("the company's own token",self.text(self.read("c")))
+
+    def test_a_complete_line_reads_its_sentence_template(self):
+        self.words["premium_words"]="INVENTED changed sentence %s %s %s %s %s"
+        self.assertTrue(dict(self.read()["front"])["premium"].startswith("INVENTED changed sentence"))
+        self.words["charges_words"] = "INVENTED charges sentence %s %s"
+        self.assertTrue(dict(self.read()["front"])["charges"].startswith("INVENTED charges sentence"))
+
+    def test_an_unnamed_sale_or_measure_prints_the_safe_gap(self):
+        c=treasury_page_capture("a"); pack=freeze.build_pack(c); force=self.force(c)
+        readings=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+        for field in ("coin_sales","company_measures"):
+            for entry in readings[field]: entry.pop("name",None); entry.pop("words",None)
+        with unittest.mock.patch.object(sufficiency,"treasury_readings",return_value=readings):
+            summary=brief.treasury_summary(pack,force)
+        for key in ("sales","measures"):
+            for row in self.table(summary,key)["rows"]: self.assertEqual(row[0]["text"],self.words["unnamed_line_words"])
+
+    def test_the_history_phrase_follows_the_signed_comparison(self):
+        self.assertIn("a narrower discount than at every year-end",dict(self.read("b")["front"])["premium"])
+        c=treasury_page_capture()
+        tagged=sufficiency.treasury_role_set(freeze.build_pack(c),self.floors)
+        for fact in c["tier1"]:
+            if any(tag[0]=="history_price" for tag in tagged.get(fact["id"],())): fact["value"]="200"
+        self.assertIn("a lower premium than at every year-end",dict(self.read(c=c)["front"])["premium"])
+
+    def test_yearends_recorded_are_distinct_from_premiums_struck(self):
+        from council.engine import treasury_chair as T
+        c=treasury_page_capture("a"); force=self.force(c,changed=True); pack=freeze.build_pack(c)
+        readings=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+        words="no year-end premium could be struck (2 year-ends recorded, 0 with a premium struck on the chosen basis)"
+        self.assertIn(words,self.text(brief.treasury_summary(pack,force)))
+        self.assertIn(words,"\n".join(T.casefile_lines(readings,force,self.rule["casefile_words"])))
+
+
+class TestTreasurySummary(TreasuryPageTest):
+    def test_none_for_every_other_subject(self):
+        # Control: no treasury page for any existing subject.
+        crypto=self.floors["asset_classes"]["crypto"]
+        captures=[holding_capture(),producer_capture(),grower_capture(),uranium_capture(),compounder_capture()]
+        captures += [load_fixture(name) for name in PASS_FIXTURES]
+        captures += [coin_capture(key) for key in crypto["products"]]
+        captures += [protocol_capture(key) for key in crypto["protocols"]]
+        for c in captures:
+            self.assertIsNone(getattr(brief,"treasury_summary",lambda *args:None)(freeze.build_pack(c)))
+    def test_the_front_keys_in_the_ruled_order(self):
+        for shape in ("a","b","c","worked"):
+            keys=[key for key,_ in self.read(shape)["front"]]
+            self.assertEqual(keys,[key for key in self.words["front_order"] if key!="cases"])
+    def test_the_premium_reads_as_a_premium_with_its_size(self):
+        self.assertIn(self.words["sign_words"]["premium"] % "19.3%",dict(self.read()["front"])["premium"])
+    def test_the_rated_first_the_comparable_beside_and_the_phrase(self):
+        line=dict(self.read()["front"])["premium"]
+        self.assertLess(line.index("19.3%"),line.index("17.6%")); self.assertIn(self.words["range_words"]["premium_narrower"],line)
+    def test_the_fund_line_names_the_fund_and_its_date(self):
+        from council.lib import subjects
+        for shape in ("a","b"):
+            c=treasury_page_capture(shape); fund=subjects.treasury_fund(self.floors,holding_frame(c)["treasury"]["coins"][0]["coin"])
+            line=dict(self.read(c=c)["front"])["fund"]
+            self.assertIn(fund["ticker"],line); self.assertIn(brief._format_date(fund["chosen_on"]),line); self.assertIn("2.0%",line)
+    def test_a_coin_without_a_fund_prints_the_gap_words(self):
+        self.assertEqual(dict(self.read("c")["front"])["fund"],self.rule["fund_gap_words"])
+    def test_coins_per_share_and_its_change(self):
+        line=dict(self.read()["front"])["coins_per_share"]
+        self.assertIn("0.003",line); self.assertIn(self.words["change_words"]["up"] % "14.0%",line)
+    def test_the_charges_and_the_zero_coin_price(self):
+        line=dict(self.read()["front"])["charges"]
+        self.assertIn("200",line); self.assertIn("counting every preferred dividend 65 months",line); self.assertIn("$21,666.67",line)
+    def test_the_margin_loan_line(self):
+        self.assertIn("INVENTED lender terms",dict(self.read("c")["front"])["margin_loan"])
+    def test_no_margin_loan_prints_its_words(self):
+        self.assertEqual(dict(self.read()["front"])["margin_loan"],self.words["no_margin_loan_words"])
+    def test_the_count_date_and_the_undisclosed_sales_sentence(self):
+        s=self.read(); self.assertIn("7 Oct 2026",dict(s["front"])["count"]); self.assertIn(self.words["undisclosed_sales_words"],s["lines"])
+    def test_the_preferred_table_shows_the_choice_and_the_change(self):
+        s=self.read(changed=True); text="\n".join(brief.table_lines(self.table(s,"preferreds"),[]))
+        self.assertIn("INVENTED opening reason",text); self.assertIn("INVENTED pause reason",text)
+        self.assertIn(self.words["changed_words"] % (self.words["treatment_words"]["not_debt"],self.words["treatment_words"]["debt"],"INVENTED pause reason"),text)
+    def test_lent_and_pledged_lines_print_as_counted(self):
+        for kind in ("lent","pledged"):
+            c=treasury_page_capture("b"); holding_frame(c)["treasury"]["coins"][0]["lines"][0]["kind"]=kind
+            self.assertIn(self.words["counted_words"]["counted"],self.text(self.read(c=c)))
+    def test_the_company_token_line_is_printed_not_counted(self):
+        self.assertIn(self.words["company_token_words"],self.text(self.read("c")))
+    def test_the_warrants_sentence(self):
+        c=treasury_page_capture(); holding_frame(c)["treasury"]["company_measures"].append(dict(key="warrants",words="INVENTED warrants"))
+        treasury_fact(c,"treasury_measure_warrants",100000,"shares")
+        self.assertIn(self.words["warrants_words"],self.text(self.read(c=c)))
+    def test_the_raises_table_rose_and_fell(self):
+        c=treasury_page_capture(); self.assertIn(self.words["effect_words"]["rose"],self.text(self.read(c=c)))
+        fact_in(c,"treasury_raise_r1_units_sold")["value"]="300000"
+        self.assertIn(self.words["effect_words"]["fell"],self.text(self.read(c=c)))
+    def test_the_history_since_inception(self):
+        table=self.table(self.read(),"history"); self.assertEqual(len(table["rows"]),6)
+        self.assertIn("31 Dec 2024",str(table)); self.assertIn("31 Dec 2025",str(table))
+    def test_the_swings_day_count_always_prints(self):
+        for days in (1826,400):
+            c=treasury_page_capture(); fact_in(c,self.rule["swings"]["window_id"])["value"]=str(days)
+            notes=self.read(c=c)["bar_notes"]; self.assertIn(brief._safe(str(days))," ".join(notes).replace(",",""))
+            self.assertEqual(self.words["short_history_suffix"] in notes[0],days<1826)
+    def test_the_approval_page_shows_the_opening_choice(self):
+        c=treasury_page_capture(); text=brief.render_full(freeze.build_pack(c),"invented",in_force=self.force(c))
+        self.assertEqual(text,brief.render_full(freeze.build_pack(c),"invented",in_force=self.force(c,changed=True)))
+        self.assertIn(self.words["treatment_line_words"] % (self.words["treatment_words"]["not_debt"],"INVENTED owner","INVENTED opening reason"),text)
+        from council.report import evidence_page
+        self.assertIn("INVENTED opening reason",evidence_page.render_page(text))
+    def test_the_case_file_carries_the_evidence_tables(self):
+        from council.engine import briefs
+        c=treasury_page_capture(); text=briefs.render_casefile(freeze.build_pack(c),{},c["question_verbatim"],c["subject"],in_force=self.force(c))
+        for lead,_ in self.read(c=c)["tables"]: self.assertIn(lead,text)
+    def test_an_unreadable_pack_prints_no_figure(self):
+        c=treasury_page_capture(); fact_in(c,"price_last")["value"]="INVENTED unreadable"
+        s=self.read(c=c); self.assertEqual(s["figures"],[]); self.assertEqual(s["front"],[]); self.assertIn(self.words["readings_refusal_words"],s["lines"])
+    def test_a_euro_preferred_displays_converted(self):
+        c=treasury_page_capture("a")
+        # The rule's existing native conversion accessor selects its vouched fact.
+        facts=brief.holding_display_facts(c); self.assertEqual(facts["background_native_preferred"]["id"],"treasury_preferred_p5_amount")
+        self.assertIn("$1.00M",self.text(self.read(c=c)))
+    def test_the_gap_line_names_treasury_gaps_in_words(self):
+        c=treasury_page_capture("b"); text="\n".join(brief._gaps_lines(c))
+        for key in ("treasury_raise_","treasury_coin_sale_"): self.assertIn(self.words["absent_item_words"][key],text)
+    def test_the_auditor_lift_line_names_the_fixed_charges(self):
+        from council.engine import briefs
+        c=treasury_page_capture(); text="\n".join(briefs._floors_block(c["subject"],self.floors,c))
+        self.assertIn("months of fixed charges cash covers",text)
+    def test_a_plain_holding_page_keeps_its_bytes(self):
+        # Control: the new declaration branch stays silent.
+        pack=freeze.build_pack(holding_capture()); self.assertIsNone(getattr(brief,"treasury_summary",lambda *args:None)(pack))
+        self.assertEqual(brief.render(pack,"invented"),brief.render(pack,"invented",in_force={}))
+    def test_a_uranium_page_keeps_its_bytes(self):
+        # Control: the new declaration branch stays silent.
+        pack=freeze.build_pack(uranium_capture()); self.assertIsNone(getattr(brief,"treasury_summary",lambda *args:None)(pack))
+        self.assertEqual(brief.render_full(pack,"invented"),brief.render_full(pack,"invented",in_force={}))
+    def test_no_recorded_yearend_says_the_falls_figure_is_todays(self):
+        from council.engine import treasury_chair as T
+        c=treasury_page_capture(); force=self.force(c,changed=True); pack=freeze.build_pack(c)
+        r=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+        self.assertEqual(r["history"],[]); text=self.text(brief.treasury_summary(pack,force))
+        self.assertIn(self.words["no_yearend_words"] % (self.rule["casefile_words"]["yearend_count_words"] % (sum(p["annual"] for p in r["periods"]),len(r["history"]))),text)
+        self.assertIn(self.rule["casefile_words"]["falls_premium_today_words"] % (str(T.falls_premium(r))+"%",self.rule["casefile_words"]["yearend_count_words"] % (sum(p["annual"] for p in r["periods"]),len(r["history"]))),T.casefile_lines(r,force,self.rule["casefile_words"]))
+        # Control: recorded year-ends retain the merged sentence.
+        force=self.force(c); r=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+        self.assertIn(self.rule["casefile_words"]["falls_premium_words"] % (str(T.falls_premium(r))+"%",self.rule["casefile_words"]["yearend_count_words"] % (sum(p["annual"] for p in r["periods"]),len(r["history"]))),T.casefile_lines(r,force,self.rule["casefile_words"]))
+
+
+class TestTreasuryMissingFigures(TreasuryPageTest):
+    # Invented two hundred ninety million over the reported count is an exact pair.
+    def readings(self, c, changed=False):
+        return sufficiency.treasury_readings(freeze.build_pack(c),self.floors,self.force(c,changed)["preferred_treatment"])
+    def reason(self, key): return self.rule["reading_reasons"][key]["words"]
+    def cells(self, table): return [[cell["text"] for cell in row] for row in table["rows"]]
+    def test_yearend_value_per_share_is_supplied_on_the_in_force_basis(self):
+        c=treasury_preferred_history_capture(); r=self.readings(c,changed=True)
+        for row in r["periods"]:
+            if row["annual"]:
+                self.assertEqual(row.get("value_per_share"),dict(numerator=decimal.Decimal(290000000),denominator=decimal.Decimal(3800000)))
+        r=self.readings(c)
+        self.assertEqual([row["value_per_share"]["numerator"] for row in r["periods"] if row["annual"]],[340000000,340000000])
+    def test_yearend_value_per_share_is_printed_from_the_reader(self):
+        c=treasury_page_capture(); r=self.readings(c)
+        for row in r["periods"]:
+            if row["annual"]: row["value_per_share"]=dict(numerator=decimal.Decimal(437000000),denominator=decimal.Decimal(3800000))
+        with unittest.mock.patch.object(sufficiency,"treasury_readings",return_value=r) as reader:
+            cells=self.cells(self.table(self.read(c=c),"history"))
+        reader.assert_called_once(); self.assertEqual([row[5] for row in cells if row[0].startswith("31 Dec")],["$115.00","$115.00"])
+    def test_yearend_gaps_fill_value_and_premium_cells(self):
+        for shape in ("a","c"):
+            c=treasury_page_capture(shape); r=self.readings(c,changed=shape=="a")
+            cells=self.cells(self.table(self.read(c=c,changed=shape=="a"),"history"))
+            for period,row in zip(r["periods"],cells):
+                if period["annual"]:
+                    self.assertEqual(row[5],self.words["history_gap_cell_words"]); self.assertEqual(row[6],self.words["history_gap_cell_words"])
+    def test_quarter_price_value_and_premium_cells_are_not_asked(self):
+        for shape in ("a","b","c"):
+            c=treasury_page_capture(shape); r=self.readings(c)
+            cells=self.cells(self.table(self.read(c=c),"history"))
+            for period,row in zip(r["periods"],cells):
+                if not period["annual"]:
+                    self.assertEqual([row[i] for i in (2,4,5,6)],[self.reason("quarter_end")]*4)
+    def test_history_coins_print_where_coins_per_share_prints(self):
+        c=treasury_page_capture("a"); unit=self.readings(c)["coins"][0]["fact"]
+        unit=fact_in(c,unit)["unit"]
+        cells=self.cells(self.table(self.read(c=c),"history"))
+        self.assertEqual([row[1] for row in cells],["10,000 "+unit]*6)
+    def test_non_converted_bonds_print_their_reason(self):
+        cells=self.cells(self.table(self.read("a"),"convertibles"))
+        self.assertEqual([row[7] for row in cells[2:]],[self.reason("conversion_above_price")]*4)
+    def test_conversion_reasons_cover_equal_and_unreadable_prices(self):
+        for value,key in (("100","conversion_at_price"),("INVENTED unreadable","conversion_unreadable")):
+            c=treasury_page_capture(); fact_in(c,"treasury_convertible_x1_conversion_price")["value"]=value
+            self.assertEqual(self.readings(c)["why"]["x1_conversion"],self.reason(key))
+    def test_non_common_raises_print_their_reason_for_both_cells(self):
+        for instrument in ("preferred","convertible"):
+            c=treasury_page_capture("a"); holding_frame(c)["treasury"]["raises"][-1]["instrument"]=instrument
+            row=self.cells(self.table(self.read(c=c),"raises"))[-1]
+            self.assertEqual(row[3:5],[self.reason("no_common_share_raise")]*2)
+    def test_zero_charges_print_their_reason(self):
+        c=treasury_page_capture("b"); fact_in(c,"treasury_preferred_p1_dividend_rate")["value"]="0"
+        self.assertEqual(dict(self.read(c=c)["front"])["charges"].count(self.reason("no_fixed_charges")),1)
+        self.assertIn(self.words["no_interest_words"],dict(self.read(c=c)["front"])["charges"])
+    def test_cash_cover_prints_its_reason_for_both_zero_prices(self):
+        self.assertEqual(dict(self.read("c")["front"])["charges"].count(self.reason("cash_covers_debt")),2)
+    def test_missing_prior_count_prints_its_reason(self):
+        self.assertIn(self.reason("no_prior_count"),dict(self.read("c")["front"])["coins_per_share"])
+    def test_token_gaps_fill_every_missing_coins_per_share_cell(self):
+        c=treasury_page_capture("c"); r=self.readings(c); rows=self.cells(self.table(self.read(c=c),"history"))
+        self.assertEqual([row[7] for row in rows],[self.words["history_gap_cell_words"] for p in r["periods"]])
+    def test_every_reader_reason_is_floor_data(self):
+        import ast, inspect
+        tree=ast.parse(inspect.getsource(sufficiency.treasury_readings)); doc=ast.get_docstring(tree.body[0])
+        english=[node.value for node in ast.walk(tree) if isinstance(node,ast.Constant) and isinstance(node.value,str)
+                 and node.value!=doc and re.search(r"[A-Za-z]+\s+[A-Za-z]+",node.value)]
+        self.assertEqual(english,[])
+        for key,entry in self.rule["reading_reasons"].items():
+            if key!="why": self.assertTrue(entry["words"]); self.assertIn("Owner ruling",entry["why"])
+    def test_no_formatting_failure_sentence_on_any_treasury_evidence_page(self):
+        from council.engine import briefs
+        from council.report import evidence_page
+        for shape in ("a","b","c"):
+            c=treasury_page_capture(shape); pack=freeze.build_pack(c); force=self.force(c,changed=shape=="a")
+            pages=[self.text(self.read(c=c,changed=shape=="a")),brief.render(pack,"invented",in_force=force),
+                brief.render_full(pack,"invented",in_force=force),briefs.render_casefile(pack,{},c["question_verbatim"],c["subject"],in_force=force)]
+            pages.append(evidence_page.render_page(pages[2]))
+            for page in pages: self.assertNotIn(self.words["figure_not_available_words"],page)
+
+
+class TestTreasuryData(TreasuryTest):
+    def test_the_subtype_block_carries_its_constants(self):
+        r=self.rule(); self.assertEqual(r["subtype"],"single_coin_treasury")
+        self.assertEqual(r["admitted_registries"],["products","protocols"])
+        self.assertEqual(set(r["diluted_count_instruments"]),{"convertibles"})
+        self.assertEqual(set(r["line_kinds_counted"]+r["line_kinds_not_counted"]),set(SCHEMA["properties"]["business_frame"]["additionalProperties"]["properties"]["treasury"]["properties"]["coins"]["items"]["properties"]["lines"]["items"]["properties"]["kind"]["enum"]))
+    def test_every_rule_constant_carries_its_why(self):
+        r=self.rule()
+        for key,value in r.items():
+            if key.endswith("_why") or key in ("why","note"): continue
+            if isinstance(value,dict) and "why" in value: self.assertTrue(value["why"])
+            elif key=="roles": self.assertTrue(all(s["why"] for s in value.values()))
+            else: self.assertTrue(r[key+"_why"])
+        def whys(value): return [v for k,v in value.items() if k=="why" or k.endswith("_why")] + [w for v in value.values() if isinstance(v,dict) for w in whys(v)]
+        reasons=whys(r); self.assertEqual(len(reasons),len(set(reasons)))
+        for why in reasons: self.assertRegex(why,r"AC\d+(?:\([A-Z]*\d+\))?|ruling C\d+|R\d")
+        rows=FLOORS["archetype_floors"][HOLDING]["single_coin_treasury"]
+        for field in ("why","likely_source"): self.assertEqual(len(rows),len({row[field] for row in rows}))
+        for row in rows: self.assertRegex(row["why"],r"AC\d+\(\d+\)|ruling C\d+|R\d")
+    def test_every_refusal_names_its_own_fetch_and_place(self):
+        words=[v for k,v in self.rule().items() if k.endswith("_refusal") and isinstance(v,dict)]
+        for triple in words: self.assertEqual(len(set(triple.values())),3)
+        self.assertEqual(len(words),len({v["where"] for v in words}))
+    def test_every_new_floor_carries_applies_from(self):
+        for row in FLOORS["archetype_floors"][HOLDING]["single_coin_treasury"]: self.assertEqual(row["applies_from"],self.rule()["applies_from"])
+    def test_the_lifted_holding_floors_are_named_by_key(self):
+        b=FLOORS["archetype_floors"][HOLDING]; keys={e.get("id") or e.get("prefix") or e.get("prefixes",[None])[0] for e in b["all_subtypes"]}
+        self.assertTrue(set(b["subtype_floors_lifted"][self.rule()["subtype"]])<=keys)
+    def test_the_subtype_tests_are_data(self): self.assertEqual(FLOORS["archetype_floors"][HOLDING]["subtype_canonical_tests"][self.rule()["subtype"]]["free_cash_flow"]["answered_by_ids"],["treasury_cash"])
+    def test_the_fund_is_named_on_three_registry_rows(self):
+        crypto=FLOORS["asset_classes"]["crypto"]; self.assertEqual(sum(bool(r.get("treasury_fund",{}).get("ticker")) for reg in self.rule()["admitted_registries"] for r in crypto[reg].values()),3)
+    def test_the_registries_are_otherwise_unchanged(self):
+        # Control: the admission lists stay those of the existing coin tests.
+        expected = ("45111d6b08252f9eb51ca6f0b43e6a25a991f48149e99a30ac5355be598065d2", "61b2b12a39dbb107ee202ba20c358cde05afdea9ef419e7127cdb6d9390f35e3")
+        for reg, digest in zip(("products","protocols"), expected):
+            rows = copy.deepcopy(FLOORS["asset_classes"]["crypto"][reg])
+            for row in rows.values(): row.pop("treasury_fund", None)
+            self.assertEqual(canonical.sha256_bytes(canonical.canonical_bytes(rows)), digest)
+    def test_the_holding_row_stays_flat(self): self.assertNotIn("subtypes",FLOORS["archetype_measures"]["table"][HOLDING])  # Control.
+    def test_the_door_is_open_since_b2_merged(self): self.assertIs(self.rule()["sitting_open"],True)  # The architect's merge-time edit after (b2), 2026-10-13 (AC89-AC94).
+
+
+class TestTreasuryContract(TreasuryTest):
+    def test_every_fixture_validates_at_the_new_version(self):
+        from council.lib import validate
+        found=0
+        for folder,_,names in os.walk(os.path.join(ROOT,"council","tests","fixtures")):
+            for name in names:
+                if not name.endswith(".json"): continue
+                doc=canonical.read_json(os.path.join(folder,name)); c=doc.get("capture",doc) if isinstance(doc,dict) else {}
+                if "capture_version" not in c: continue
+                found+=1; self.assertEqual(c["capture_version"],"1.17.0"); self.assertEqual(validate.validate(c,SCHEMA),[],name)
+        self.assertEqual(found,24)
+    @unittest.skipUnless(live_records_present(LIVE_RUNS,(JPM_RUN,WULF_RUN)),"live run records are absent")
+    def test_the_runs_on_record_migrate_with_no_treasury_field(self):
+        for run_id in os.listdir(LIVE_RUNS):
+            path=os.path.join(LIVE_RUNS,run_id,"evidence","capture.json")
+            if not os.path.exists(path): continue
+            c=canonical.read_json(path)
+            expected=to_contract_1_15_0(copy.deepcopy(c),run_id); expected["capture_version"]="1.17.0"
+            new=to_contract_1_17_0(copy.deepcopy(c),run_id)
+            self.assertEqual(new,expected)
+            self.assertTrue(all("treasury" not in f for f in new.get("business_frame",{}).values()))
+    def test_a_block_with_a_number_fails_the_schema(self):
+        c=treasury_ladder_capture(); self.block(c)["number"]=1; self.assertIn("unexpected field 'number'",str(gate_check(c)))
+    def test_an_unknown_line_kind_fails_the_schema(self):
+        c=treasury_ladder_capture("b"); self.block(c)["coins"][0]["lines"][0]["kind"]="invented_unknown"; self.assertIn("lines[0].kind",str(gate_check(c)))
+
+
+class TestTreasuryFrameAtTheGate(TreasuryTest):
+    def test_each_shape_clears_the_gate(self):
+        for shape in ("a","b","c","worked"):
+            c=treasury_ladder_capture(shape); gated=gate_check(c)
+            self.assertEqual(gated["result"],"accepted",gated["reasons"]); self.passes(c)
+    def test_a_block_on_a_profit_maker_refuses(self):
+        c=treasury_ladder_capture(); holding_frame(c)["archetype"]="profitable_operator"; self.assertIn("carries treasury",str(gate_check(c)))
+    def test_a_block_on_a_financial_holding_refuses(self):
+        c=treasury_ladder_capture(); holding_frame(c).update(archetype="financial_institution",fi_subtype="financial_holding"); self.assertIn("carries treasury",str(gate_check(c)))
+    def test_duplicate_keys_refuse(self):
+        for field in ("coins","convertibles","loans","preferreds","raises","coin_sales","company_measures"):
+            c=treasury_ladder_capture(); self.block(c)[field].append(copy.deepcopy(self.block(c)[field][0])); self.assertIn("duplicate",str(gate_check(c)))
+    def test_a_coin_method_without_the_block_refuses(self):
+        c=treasury_ladder_capture(); holding_frame(c).pop("treasury"); self.assertIn("without treasury",str(gate_check(c)))
+    def test_first_after_latest_refuses(self):
+        c=treasury_ladder_capture(first_year_end="fy2026"); self.assertIn("first_year_end is after",str(gate_check(c)))
+    def test_a_plain_holding_keeps_its_reasons(self): self.assertEqual(gate_check(holding_capture()),{"result":"accepted","reasons":[]})  # Control.
+
+
+class TestTreasuryDeclaration(TreasuryTest):
+    def test_the_declaration_names_the_subtype(self): self.assertEqual(sufficiency._declared_archetype(FLOORS,treasury_ladder_capture()),(HOLDING,self.rule()["subtype"]))
+    def test_a_plain_holding_declares_no_subtype(self): self.assertEqual(sufficiency._declared_archetype(FLOORS,holding_capture()),(HOLDING,None))  # Control.
+    def test_the_subtype_drops_the_replaced_holding_floors(self):
+        entries=sufficiency._archetype_floor_entries(FLOORS,(HOLDING,self.rule()["subtype"])); self.assertFalse(any(e.get("prefix") in FLOORS["archetype_floors"][HOLDING]["subtype_floors_lifted"][self.rule()["subtype"]] for e in entries))
+    def test_the_subtype_tests_replace_the_holding_tests(self): self.assertEqual(sufficiency._canonical_test_terms(FLOORS,sufficiency._declared_archetype(FLOORS,treasury_ladder_capture()))["free_cash_flow"]["answered_by_ids"],["treasury_cash"])
+    def test_the_currency_rule_reaches_the_subtype(self):
+        c=treasury_ladder_capture(); self.passes(c); self.facts(c)["treasury_preferred_p5_amount"]["derived"]=None; self.facts(c)["treasury_preferred_p5_amount"]["unit"]=self.facts(c)["background_native_preferred"]["unit"]; self.refuses(c,"one currency")
+    def test_a_conversion_out_of_the_pack_currency_refuses(self):
+        # Control: AC65 already refuses an outward conversion on the base.
+        c=treasury_ladder_capture(); f=self.facts(c); f["treasury_preferred_p5_amount"]["unit"]=f["background_native_preferred"]["unit"]; self.refuses(c,"AC65(1)")
+    def test_holding_readings_is_none_for_the_subtype(self): self.assertIsNone(sufficiency.holding_readings(freeze.build_pack(treasury_ladder_capture()),FLOORS))
+
+
+class TestTreasuryCoins(TreasuryTest):
+    def test_each_shape_passes(self):
+        for s in ("a","b","c","worked"): self.passes(treasury_ladder_capture(s))
+    def test_an_unadmitted_coin_refuses_naming_it(self):
+        c=treasury_ladder_capture("b"); old=self.coin(c); c=json.loads(json.dumps(c).replace(old,"invented_unknown")); self.refuses(c,"invented_unknown share of treasury")
+    def other_coins(self,value,c=None):
+        c=c or treasury_ladder_capture("b"); facts=self.facts(c); facts["treasury_other_coins"]["value"]=str(value)
+        for fid in ("nav_component_"+self.coin(c),"nav_components_total","nav_total","nav_discount"):
+            row=facts[fid]; operands=row["derived"]["operands"]
+            for operand in operands: operand["value"]=facts[operand["fact_id"]]["value"]
+            values=[decimal.Decimal(o["value"]) for o in operands]; row["value"]=str(sum(values) if row["derived"]["operation"]=="sum" else values[0]*values[1] if row["derived"]["operation"]=="multiply" else values[0]-values[1])
+        return c
+    def test_other_coins_above_a_tenth_refuse(self): self.refuses(self.other_coins(300000000),"other_coins share of treasury")
+    def test_other_coins_at_a_tenth_pass(self):
+        a,b=map(decimal.Decimal,self.rule()["admitted_above_share_of_treasury"].split("/")); c=treasury_ladder_capture("b"); facts=self.facts(c)
+        total=decimal.Decimal(facts["nav_component_"+self.coin(c)]["value"]); facts["treasury_coins_"+self.coin(c)]["value"]=str(total*(b-a)/b/decimal.Decimal(facts["coin_price_"+self.coin(c)]["value"]))
+        c=self.other_coins(total*a/b,c); self.passes(c)
+        floors=copy.deepcopy(FLOORS); floors["archetype_measures"]["holding_rule"]["treasury"]["admitted_above_share_of_treasury"]=str(a)+"/"+str(b+1)
+        self.assertEqual(sufficiency_of(freeze.build_pack(c),floors)["result"],"refuse")
+    def test_a_missing_total_assets_never_says_not_a_treasury_company(self):
+        c=treasury_ladder_capture(); self.drop(c,"treasury_total_assets"); result=sufficiency_of(freeze.build_pack(c))
+        self.assertIn("the total assets figure is missing from the capture — record it from the latest balance sheet, dated",str(result["missing"]))
+        self.assertNotIn("not a treasury company",str(result["missing"]))
+    def test_each_admitted_coin_is_read_from_the_registries(self):
+        from council.lib import subjects
+        for reg in self.rule()["admitted_registries"]:
+            for key,row in FLOORS["asset_classes"]["crypto"][reg].items(): self.assertEqual(subjects.admitted_coin(FLOORS,key)[1],row)
+    def test_coins_at_half_of_assets_refuse(self): self.mutate("treasury_total_assets","not more than half",value="1050000000")
+    def test_coins_just_above_half_pass(self):
+        c=treasury_ladder_capture(); self.facts(c)["treasury_total_assets"]["value"]="1049999999"; self.passes(c)
+    def test_the_assets_cross_product_keeps_every_recorded_digit(self):
+        c=treasury_ladder_capture(); self.facts(c)["treasury_total_assets"]["value"]="1049999999."+"9"*40; self.passes(c)
+    def test_a_count_of_thirty_six_days_refuses(self): self.mutate("treasury_coins_{c}","count is older",as_of="2026-09-06")
+    def test_a_count_of_thirty_five_days_passes(self):
+        c=treasury_ladder_capture(); self.facts(c)["treasury_coins_"+self.coin(c)]["as_of"]="2026-09-07"; self.passes(c)
+    def test_a_dashboard_count_refuses(self): self.mutate("treasury_coins_{c}","dashboard",source="INVENTED dashboard")
+    def test_a_dashboard_background_fact_passes(self):
+        c=treasury_ladder_capture(); treasury_fact(c,self.rule()["background_dashboard_prefix"]+"sample",1,"x",source=self.rule()["background_dashboard_words"]); self.passes(c)
+    def test_a_coin_price_not_from_coingecko_refuses(self): self.mutate("coin_price_{c}","same day",source="INVENTED wrong source")
+    def test_a_coin_price_of_another_day_refuses(self): self.mutate("coin_price_{c}","same day",as_of="2026-10-10")
+    def test_no_cross_check_is_asked(self):
+        # Control: the base holding hole asks for no coin cross-check.
+        c=holding_capture(); treasury_fact(c,"background_coin_example",1,"x",day="2026-08-29"); self.passes(c)
+    def test_a_share_count_before_the_count_refuses(self): self.mutate("shares_in_issue","no earlier",as_of="2026-10-06")
+    def test_a_bridge_missing_a_coin_refuses(self):
+        c=treasury_ladder_capture(); holding_frame(c)["nav_bridge"]["components"]=[]; self.refuses(c,"components and debt")
+    def test_a_coin_value_from_other_operands_refuses(self):
+        self.mutate("nav_component_{c}","arithmetic shown",derived=None)
+        c=treasury_ladder_capture(); fact=self.facts(c)["nav_component_"+self.coin(c)]
+        fact["derived"]["operands"][1]["fact_id"]=None
+        self.refuses(c,"arithmetic shown")
+    def test_a_market_value_not_price_times_shares_refuses(self): self.mutate("market_cap","shares in issue",derived=None)
+    def test_a_stray_treasury_fact_refuses(self):
+        c=treasury_ladder_capture(); treasury_fact(c,"treasury_misspelt",1,"x"); self.refuses(c,"treasury_misspelt")
+
+
+class TestTreasuryInstruments(TreasuryTest):
+    def single_debt_drift(self,field,value):
+        c=treasury_ladder_capture("c"); facts=self.facts(c); facts["treasury_true_debt"][field]=value
+        if field=="value":
+            for fid in ("holdco_net_debt","nav_total","nav_discount"):
+                row=facts[fid]; operands=row["derived"]["operands"]
+                for operand in operands: operand["value"]=facts[operand["fact_id"]]["value"]
+                row["value"]=str(decimal.Decimal(operands[0]["value"])-decimal.Decimal(operands[1]["value"]))
+        self.assertEqual(gate_check(c)["result"],"accepted")
+        outcome=sufficiency_of(freeze.build_pack(c)); self.assertEqual(outcome["result"],"refuse")
+        words=self.rule()["bridge_refusal"]
+        item=next(r for r in outcome["missing"] if r["what"].startswith(words["what"]))
+        self.assertEqual(item["where_it_likely_lives"],words["where"])
+        self.assertIn(field+" drift",item["why_needed"])
+        for fid in ("treasury_true_debt","treasury_loan_l1_amount"): self.assertIn(fid,item["why_needed"])
+    def test_a_single_true_debt_amount_drift_refuses(self): self.single_debt_drift("value","20000001")
+    def test_a_single_true_debt_source_drift_refuses(self): self.single_debt_drift("source","INVENTED another company filing")
+    def test_a_single_true_debt_date_drift_refuses(self): self.single_debt_drift("as_of","2026-10-10")
+    def test_a_single_true_debt_sum_still_refuses_at_the_gate(self):
+        # Control: passes on the fix-round-one state by design.
+        c=treasury_ladder_capture("c"); row=self.facts(c)["treasury_loan_l1_amount"]
+        self.facts(c)["treasury_true_debt"]["derived"]={"operation":"sum","operands":[dict(fact_id=row["id"],label="INVENTED loan amount",value=row["value"])]}
+        self.assertIn("derived fact 'treasury_true_debt' declares 'sum' over one operand - arithmetic takes at least two",gate_check(c)["reasons"])
+    def test_a_sourced_single_convertible_passes(self):
+        c=treasury_ladder_capture("c"); block=self.block(c); block["loans"]=[]
+        block["convertibles"]=[dict(key="x1",name="INVENTED bond",holder_put=False)]
+        for row in c["tier1"]:
+            if row["id"].startswith("treasury_loan_l1_"): row["id"]=row["id"].replace("treasury_loan_l1_","treasury_convertible_x1_")
+        treasury_fact(c,"treasury_convertible_x1_conversion_price",200,self.facts(c)["price_last"]["unit"])
+        self.assertEqual(gate_check(c)["result"],"accepted"); self.passes(c)
+    def test_every_missing_term_refuses_naming_it(self):
+        c=treasury_ladder_capture(); roles=sufficiency.treasury_role_set(freeze.build_pack(c),FLOORS)
+        self.assertTrue(roles)
+        for fid,tags in roles.items():
+            if not any(t[0].startswith(("convertible_","loan_","preferred_")) for t in tags): continue
+            changed=copy.deepcopy(c); self.drop(changed,fid); self.refuses(changed,fid)
+    def test_a_put_without_its_date_refuses(self):
+        c=treasury_ladder_capture(); self.drop(c,"treasury_convertible_x1_put_date"); self.refuses(c,"x1_put_date")
+    def test_true_debt_not_the_instruments_sum_refuses(self): self.mutate("treasury_true_debt","instruments sum",derived=None)
+    def test_a_recorded_zero_without_instruments_passes(self): self.passes(treasury_ladder_capture("b"))
+    def test_a_euro_preferred_converted_passes(self): self.passes()  # Conversion is exercised by shape a.
+
+
+class TestTreasuryHistory(TreasuryTest):
+    def test_every_year_since_inception_is_required(self):
+        c=treasury_ladder_capture(); self.assertIn("treasury_hist_shares_fy2024",sufficiency.treasury_role_set(freeze.build_pack(c),FLOORS)); self.passes(c)
+    def test_a_missing_year_refuses(self):
+        c=treasury_ladder_capture(); self.drop(c,"treasury_hist_shares_fy2024"); self.refuses(c,"fy2024")
+    def test_a_late_annual_report_refuses(self): self.refuses(treasury_ladder_capture(latest_year_end="fy2024"),"latest annual report")
+    def test_a_past_coin_price_not_from_the_series_refuses(self): self.mutate("treasury_hist_coin_price_{c}_fy2025","daily series",source="INVENTED wrong source")
+    def test_a_past_coin_price_off_its_day_refuses(self): self.mutate("treasury_hist_coin_price_{c}_fy2025","daily series",as_of="2025-12-30")
+    def test_a_share_price_five_days_early_refuses(self): self.mutate("treasury_hist_price_fy2025","fy2025",as_of="2025-12-26")
+    def test_a_missing_quarter_with_its_gap_passes(self):
+        c=treasury_ladder_capture(); fid="treasury_hist_coins_"+self.coin(c)+"_q2_fy2026"; self.drop(c,fid); self.gap(c,fid); self.passes(c)
+    def test_a_missing_quarter_without_its_gap_refuses(self):
+        c=treasury_ladder_capture(); self.drop(c,"treasury_hist_shares_q2_fy2026"); self.refuses(c,"q2_fy2026")
+    def test_a_quarter_and_its_gap_together_refuse(self):
+        c=treasury_ladder_capture(); self.gap(c,"treasury_hist_shares_q2_fy2026"); self.refuses(c,"gap disagree")
+
+
+class TestTreasuryRaisesAndSales(TreasuryTest):
+    def test_a_raise_outside_the_window_refuses(self): self.mutate("treasury_raise_r1_proceeds","four quarters",as_of="2025-10-11")
+    def test_a_share_raise_without_its_figures_refuses(self):
+        c=treasury_ladder_capture(); self.drop(c,"treasury_raise_r1_coins_before"); self.refuses(c,"coins_before")
+    def test_no_raise_with_its_gap_passes(self): self.passes(treasury_ladder_capture("b"))
+    def test_no_raise_without_its_gap_refuses(self):
+        c=treasury_ladder_capture("b"); c["gaps"]=[g for g in c["gaps"] if g["fact_class"]!="treasury_raise_"]; self.refuses(c,"treasury_raise_")
+    def test_no_sale_without_its_gap_refuses(self):
+        c=treasury_ladder_capture("b"); c["gaps"]=[g for g in c["gaps"] if g["fact_class"]!="treasury_coin_sale_"]; self.refuses(c,"treasury_coin_sale_")
+
+
+class TestTreasuryPeersAndFund(TreasuryTest):
+    def test_any_peer_refuses(self):
+        c=treasury_ladder_capture(); holding_frame(c)["peers"]=[holding_frame(holding_capture())["peers"][0]]; self.refuses(c,"no peer section")
+    def test_the_fund_facts_are_required_where_named(self):
+        for fid in ("spot_fund_nav_per_share","spot_fund_price"):
+            c=treasury_ladder_capture(); self.drop(c,fid); self.refuses(c,fid)
+    def test_a_fund_price_of_another_day_refuses(self): self.mutate("spot_fund_price","plain alternative",as_of="2026-10-10")
+    def test_a_coin_without_a_fund_declares_the_gap(self):
+        c=treasury_ladder_capture("c"); self.passes(c); self.assertEqual(self.readings(c=c)["fund"],{"gap":self.rule()["fund_gap_words"]})
+
+
+class TestTreasuryReadings(TreasuryTest):
+    def test_the_worked_case_exactly(self):
+        r=self.readings(); expected=dict(true_debt=320000000,true_debt_value=340000000,diluted_true_debt_value=440000000,diluted_shares=5250000,market_value=400000000,diluted_market_value=525000000,interest=3600000,preferred_dividends=7400000,fixed_charges=11000000)
+        for key,value in expected.items(): self.assertEqual(r[key],value,key)
+        self.assertEqual([v["percent"] for v in r["premiums"].values()],list(map(decimal.Decimal,("-17.6","-19.3","-37.9","-34.6"))))
+        for key,halves in (("zero_coin_price",(260000000,12000)),("preferred_zero_coin_price",(310000000,12000)),("coins_per_share",(12000,4000000)),("diluted_coins_per_share",(12000,5250000))): self.assertEqual(r[key],dict(zip(("numerator","denominator"),halves)))
+        self.assertEqual(r["months_covered"],{"interest":{"numerator":720000000,"denominator":3600000},"all":{"numerator":720000000,"denominator":11000000}})
+        self.assertEqual(r["raises"][0]["premium"]["percent"],decimal.Decimal("23.1")); self.assertEqual(r["raises"][0]["effect"],"rose")
+    def test_the_rated_premium_is_the_diluted_preferred_figure(self):
+        r=self.readings(); self.assertEqual(r["rated_premium"],r["premiums"]["diluted_preferred"])
+    def test_without_an_opening_the_preferred_figures_are_none(self):
+        r=self.readings(choice=False); self.assertIsNone(r["rated_premium"]); self.assertEqual(r["why"]["preferred_value"],self.rule()["no_opening_why"])
+    def test_a_bond_above_the_share_price_does_not_convert(self): self.assertFalse(self.readings()["convertibles"][1]["in_the_money"])
+    def test_a_bond_at_the_share_price_does_not_convert(self):
+        c=treasury_ladder_capture("worked"); self.facts(c)["treasury_convertible_x1_conversion_price"]["value"]="100"; self.assertEqual(self.readings(c=c)["diluted_shares"],4000000)
+    def test_warrants_are_a_line_not_in_the_diluted_count(self):
+        c=treasury_ladder_capture("worked"); self.block(c)["company_measures"].append(dict(key="warrants",words="INVENTED company warrants")); treasury_fact(c,"treasury_measure_warrants",100000,"shares"); self.assertEqual(self.readings(c=c)["diluted_shares"],5250000)
+    def test_the_margin_loan_is_named(self): self.assertEqual(self.readings("c")["margin_loans"][0]["key"],"l1")
+    def test_a_company_token_line_is_not_counted(self): self.assertFalse(self.readings("c")["lines"][0]["counted"])
+    def test_a_company_token_line_stays_outside_every_figure(self):
+        c=treasury_ladder_capture("c"); self.facts(c)["treasury_cash"]["value"]="0"; r=self.readings(c=c)
+        self.assertEqual((r["coins"][0]["count"],r["coins"][0]["value"],r["true_debt_value"]),(2000,100000000,80000000))
+        self.assertEqual(r["coins_per_share"]["numerator"],2000); self.assertEqual(r["diluted_coins_per_share"]["numerator"],2000)
+        self.assertEqual(r["zero_coin_price"],dict(numerator=20000000,denominator=2000)); self.assertEqual(r["rated_premium"],r["premiums"]["issued_true_debt"])
+        for premium in r["premiums"].values(): self.assertEqual(premium["denominator"],80000000)
+        for row in r["periods"]:
+            self.assertIsNone(row["coins_per_share"]); self.assertEqual(row["why"],self.rule()["past_token_gap_words"].format(date=row["date"]))
+        for row in r["periods"]:
+            if row["annual"]: self.assertIsNone(row["value"])
+        self.assertEqual(r["lines"][0]["count"],10000)
+        self.facts(c)["treasury_total_assets"]["value"]="700000000"; self.refuses(c,"not more than half")
+        floors=copy.deepcopy(FLOORS); rule=floors["archetype_measures"]["holding_rule"]["treasury"]; kind=rule["line_kinds_not_counted"].pop(); rule["line_kinds_counted"].append(kind)
+        gross=sufficiency.treasury_readings(freeze.build_pack(c),floors,{})
+        self.assertEqual((gross["coins_per_share"]["numerator"],gross["coins"][0]["value"],gross["lines"][0]["counted"]),(12000,600000000,True))
+        self.assertEqual(sufficiency_of(freeze.build_pack(c),floors)["result"],"pass")
+    def token_dates(self,published=False,start=None):
+        c=treasury_ladder_capture("c"); coin=self.coin(c); line=self.block(c)["coins"][0]["lines"][0]["key"]; facts=self.facts(c)
+        self.block(c)["raises"]=[dict(key="rtoken",instrument="shares",name="INVENTED dated raise")]; c["gaps"]=[g for g in c["gaps"] if g["fact_class"]!="treasury_raise_"]
+        series=FLOORS["asset_classes"]["crypto"]["monetary_coin_rule"]["series_source_words"][0]
+        for term,value,unit in (("proceeds",21000000,facts["treasury_cash"]["unit"]),("units_sold",200000,"shares"),("coins_before",10800,facts["treasury_coins_"+coin]["unit"]),("shares_before",3800000,"shares"),("coin_price",30000,facts["coin_price_"+coin]["unit"])):
+            treasury_fact(c,"treasury_raise_rtoken_"+term,value,unit,day="2026-09-01",source="INVENTED "+series if term=="coin_price" else "INVENTED company raise announcement")
+        if published:
+            periods,_=sufficiency._treasury_periods(c,self.block(c),self.rule())
+            for p,(day,_) in periods.items(): treasury_fact(c,"treasury_hist_line_"+coin+"_"+line+"_"+p,1000,facts["treasury_coins_"+coin]["unit"],day=day.isoformat(),source="INVENTED company period report")
+            treasury_fact(c,"treasury_raise_rtoken_line_"+coin+"_"+line,1000,facts["treasury_coins_"+coin]["unit"],day="2026-09-01",source="INVENTED company raise announcement")
+        if start: treasury_fact(c,"treasury_line_"+coin+"_"+line+"_start_date",start,"iso_date",source="INVENTED company token inception filing")
+        return c
+    def test_dated_past_token_figures_give_exact_history_and_raise(self):
+        c=self.token_dates(published=True); self.assertEqual(gate_check(c)["result"],"accepted"); self.passes(c); r=self.readings(c=c)
+        for row in r["periods"]:
+            self.assertEqual(row["coins_per_share"],dict(numerator=9000,denominator=3800000))
+            if row["annual"]: self.assertEqual(row["value"],310000000)
+        self.assertEqual(r["raises"][0]["coins_before"],9800); self.assertEqual(r["raises"][0]["premium"]["percent"],decimal.Decimal("35.7"))
+        self.assertEqual(r["coins_per_share"]["numerator"],2000)
+    def test_missing_past_token_figures_are_dated_gaps(self):
+        c=self.token_dates(); self.passes(c); r=self.readings(c=c)
+        for row in r["periods"]:
+            self.assertIsNone(row["coins_per_share"]); self.assertEqual(row["why"],self.rule()["past_token_gap_words"].format(date=row["date"]))
+            if row["annual"]: self.assertIsNone(row["value"]); self.assertIsNone(row["premium"])
+        row=r["raises"][0]; self.assertIsNone(row["coins_before"]); self.assertIsNone(row["premium"]); self.assertIsNone(row["effect"])
+        self.assertEqual(row["why"],self.rule()["past_token_gap_words"].format(date="2026-09-01"))
+    def test_dates_before_the_token_start_need_no_token_figure(self):
+        c=self.token_dates(start="2026-09-10"); self.assertEqual(gate_check(c)["result"],"accepted"); self.passes(c); r=self.readings(c=c)
+        for row in r["periods"]:
+            self.assertEqual(row["coins_per_share"],dict(numerator=10000,denominator=3800000))
+            if row["annual"]: self.assertEqual(row["value"],340000000)
+        self.assertEqual(r["raises"][0]["coins_before"],10800); self.assertEqual(r["raises"][0]["premium"]["percent"],decimal.Decimal("23.1"))
+        self.assertEqual(r["coins_per_share"]["numerator"],2000)
+        c=self.token_dates(start="2025-12-31"); next(f for f in c["tier1"] if f["id"].endswith("_start_date"))["as_of"]="2025-12-31"; self.passes(c); r=self.readings(c=c)
+        for row in r["periods"]:
+            if row["date"]<"2025-12-31": self.assertEqual(row["coins_per_share"]["numerator"],10000)
+            else: self.assertIsNone(row["coins_per_share"]); self.assertEqual(row["why"],self.rule()["past_token_gap_words"].format(date=row["date"]))
+    def test_a_token_figure_of_another_date_is_not_subtracted(self):
+        c=self.token_dates(published=True); facts=self.facts(c); fid=next(f for f in facts if f.startswith("treasury_hist_line_")); facts[fid]["as_of"]="2026-09-01"
+        r=self.readings(c=c); row=next(row for row in r["periods"] if fid.endswith("_"+row["period"])); self.assertIsNone(row["coins_per_share"]); self.assertIn(row["date"],row["why"])
+        self.refuses(c,fid)
+        c=self.token_dates(published=True); fid=next(f["id"] for f in c["tier1"] if f["id"].startswith("treasury_raise_rtoken_line_")); self.facts(c)[fid]["as_of"]="2026-09-02"
+        self.assertIsNone(self.readings(c=c)["raises"][0]["premium"]); self.refuses(c,fid)
+    def test_a_staked_line_is_printed_not_added(self): self.assertEqual(self.readings("b")["coins_per_share"]["numerator"],12000)
+    def test_a_value_at_or_below_zero_leaves_the_premium_none(self):
+        c=treasury_ladder_capture("worked"); self.facts(c)["treasury_preferred_p1_amount"]["value"]="600000000"; r=self.readings(c=c); self.assertIsNone(r["rated_premium"]); self.assertIn("diluted_preferred",r["why"])
+    def test_the_history_uses_the_holdings_range_words(self):
+        r=self.readings(c=treasury_preferred_history_capture())
+        self.assertEqual(r["history"][0]["discount"]["percent"], decimal.Decimal("-31.0"))
+        self.assertIn(r["range_word"],("wider","inside","narrower"))
+        annual=[p for p in r["periods"] if p["annual"]]
+        for row,period in zip(r["history"],annual): self.assertEqual(row["discount"],period["premium"])
+    def test_the_twelve_month_change_finds_its_period(self): self.assertIsNotNone(self.readings()["twelve_month_change"])
+    def test_none_for_every_other_subject(self):
+        for c in (holding_capture(),coin_capture(),protocol_capture()): self.assertIsNone(sufficiency.treasury_readings(freeze.build_pack(c),FLOORS))
+    def test_the_pack_bytes_are_unchanged(self):
+        pack=freeze.build_pack(treasury_ladder_capture()); before=canonical.canonical_bytes(pack); sufficiency.treasury_readings(pack,FLOORS); self.assertEqual(canonical.canonical_bytes(pack),before)
+
+
+class TestTheTreasuryRecordsUnchanged(TreasuryTest):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS,(JPM_RUN,WULF_RUN)),"live run records are absent")
+    def test_every_capture_and_pack_is_unchanged(self):
+        base=copy.deepcopy(FLOORS); base["archetype_measures"]["holding_rule"].pop("treasury")
+        for key in ("single_coin_treasury","subtype_floors_lifted","subtype_canonical_tests"): base["archetype_floors"][HOLDING].pop(key)
+        gated=checked=frozen=0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path=os.path.join(LIVE_RUNS,run_id,"evidence","capture.json")
+            if os.path.exists(path):
+                c=canonical.read_json(path)
+                for reading in (c,to_contract_1_17_0(copy.deepcopy(c),run_id)): self.assertEqual(gate.validate_capture(copy.deepcopy(reading),SCHEMA,FLOORS),gate.validate_capture(copy.deepcopy(reading),SCHEMA,base))
+                gated+=1
+            path=os.path.join(LIVE_RUNS,run_id,"pack","pack.json")
+            if not os.path.exists(path): continue
+            pack=canonical.read_json(path)
+            with open(path,"rb") as handle: self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])),handle.read())
+            frozen+=1
+            try: old=sufficiency.check(copy.deepcopy(pack),base)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught: sufficiency.check(copy.deepcopy(pack),FLOORS)
+                self.assertEqual(str(caught.exception),str(exc)); continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack),FLOORS),old); checked+=1
+        self.assertGreater(min(gated,checked,frozen),0)
+
+
 def holding_frame(capture):
     return capture["business_frame"][capture["subject"]["ticker"]]
 
@@ -23730,7 +25136,7 @@ class TestHoldingContract(unittest.TestCase):
                 if not isinstance(c, dict) or "capture_version" not in c:
                     continue
                 found += 1
-                self.assertEqual(c["capture_version"], "1.13.0")
+                self.assertEqual(c["capture_version"], "1.17.0")
                 self.assertEqual(validate.validate(c, SCHEMA), [], name)
                 for frame in (c.get("business_frame") or {}).values():
                     self.assertNotEqual(frame.get("archetype"), HOLDING)
@@ -23752,9 +25158,9 @@ class TestHoldingContract(unittest.TestCase):
             if not os.path.exists(path):
                 continue
             old = to_contract_1_11_0(canonical.read_json(path), run_id)
-            new = to_contract_1_13_0(canonical.read_json(path), run_id)
+            new = to_contract_1_17_0(canonical.read_json(path), run_id)
             expected = copy.deepcopy(old)
-            expected["capture_version"] = "1.13.0"
+            expected["capture_version"] = "1.17.0"
             self.assertEqual(new, expected, run_id)
 
     def test_the_migration_changes_only_the_version(self):
@@ -23763,8 +25169,8 @@ class TestHoldingContract(unittest.TestCase):
         c["capture_version"] = "1.11.0"
         old = to_contract_1_11_0(copy.deepcopy(c), "invented")
         expected = copy.deepcopy(old)
-        expected["capture_version"] = "1.13.0"
-        self.assertEqual(to_contract_1_13_0(c, "invented"), expected)
+        expected["capture_version"] = "1.17.0"
+        self.assertEqual(to_contract_1_17_0(c, "invented"), expected)
 
     def test_an_unknown_valuation_basis_fails_the_schema(self):
         from council.lib import validate
@@ -24594,7 +26000,7 @@ class TestTheHoldingRunsOnRecordRegateUnchanged(unittest.TestCase):
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
             if os.path.exists(path):
-                for c in (canonical.read_json(path), to_contract_1_13_0(canonical.read_json(path), run_id)):
+                for c in (canonical.read_json(path), to_contract_1_17_0(canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(c), SCHEMA, before)
                     for floors in (FLOORS, earliest):
                         self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, floors), old)
@@ -25477,7 +26883,7 @@ class TestTheBitcoinRecordsUnchanged(CoinTest):
         for run_id in sorted(os.listdir(LIVE_RUNS)):
             path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
             if os.path.exists(path):
-                for c in (canonical.read_json(path), to_contract_1_13_0(canonical.read_json(path), run_id)):
+                for c in (canonical.read_json(path), to_contract_1_17_0(canonical.read_json(path), run_id)):
                     old = gate.validate_capture(copy.deepcopy(c), SCHEMA, base)
                     coin = c["subject"]["kind"] in rule["coin_kinds"]
                     for floors in ((FLOORS,) if coin else (FLOORS, earliest)):
@@ -25589,8 +26995,7 @@ class TestCoinCurrencyReading(unittest.TestCase):
             "test_currency_magnitude_suffixes_equal_usd")
         listing.setUp()
         listing.test_currency_magnitude_suffixes_equal_usd()
-        rows = FLOORS["asset_classes"]["crypto"]["products"].values()
-        coins = {row["unit"] for row in rows}
+        coins = test_foundations.crypto_units(FLOORS)
         currencies = {u.removesuffix("_per_share") for u in FLOORS["allowed_units"]
                       if u.endswith("_per_share")}
         self.assertFalse(coins & currencies)
@@ -26029,25 +27434,95 @@ class TestTheCoinSeriesMeetsItsPrice(CoinTest):
         for bar in c["price_series"]["bars"]:
             bar["volume"] = "1"
         c["price_series"]["bars"][-1]["close"] = close
+        c["tier1"].append(dict(id="price_close_series_day", value="100",
+            unit=self.registry()[self.new_coin()]["price_unit"],
+            source="INVENTED CoinGecko daily history", as_of=end,
+            freshness_rule_days=7, derived=None))
         return c
 
-    def test_within_one_percent_passes(self):
-        # CONTROL on base: the stricter check still permits the boundary and prior day.
+    def test_the_same_day_close_within_one_percent_passes(self):
+        # CONTROL: the base permits the boundary too.
         for close in ("99", "101"):
             self.passes(self.capture(close))
 
-    def test_beyond_one_percent_refuses_both_figures(self):
-        for close in ("98", "102"):
-            self.refuses(self.capture(close), close, "100", "percent")
+    def test_the_same_day_close_beyond_one_percent_refuses_both_figures(self):
+        for value in ("98", "102"):
+            c = self.capture()
+            self.facts(c)["price_close_series_day"]["value"] = value
+            self.refuses(c, value, "100", "percent", "AC73(1)",
+                         self.rule()["price_source_words"][0],
+                         self.rule()["series_source_words"][0])
 
-    def test_dates_two_days_apart_refuse(self):
+    def test_a_live_price_far_from_yesterdays_close_passes(self):
+        c = self.capture()
+        for role in ("price", "price_check"):
+            self.facts(c)[self.rule()["roles"][role]["id"]]["value"] = "103"
+        self.passes(c)
+
+    def test_a_missing_same_day_close_refuses_naming_it(self):
+        c = self.capture()
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "price_close_series_day"]
+        self.refuses(c, "price_close_series_day", "daily close", "public daily history")
+
+    def test_a_same_day_close_dated_another_day_refuses(self):
+        c = self.capture()
+        self.facts(c)["price_close_series_day"]["as_of"] = "2026-10-01"
+        self.refuses(c, "price_close_series_day", "2026-10-01", "2026-10-02")
+
+    def test_a_same_day_close_not_from_the_price_source_refuses(self):
+        c = self.capture()
+        self.facts(c)["price_close_series_day"]["source"] = "INVENTED other daily history"
+        self.refuses(c, "price_close_series_day", *self.rule()["price_source_words"])
+
+    def test_a_same_day_close_in_another_unit_refuses(self):
+        c = self.capture()
+        self.facts(c)["price_close_series_day"]["unit"] = "percent"
+        self.refuses(c, "price_close_series_day", "percent",
+                     self.registry()[self.new_coin()]["price_unit"])
+
+    def test_the_series_freshness_rule_stays(self):
+        # CONTROL: the existing date span still binds.
         self.refuses(self.capture(end="2026-10-01"), "2026-10-01", "2026-10-03", "apart")
+
+    def test_a_coin_without_a_series_needs_no_same_day_close(self):
+        # CONTROL: the series remains optional.
+        self.passes(coin_capture())
+
+    def test_the_check_is_read_from_the_data(self):
+        floors = copy.deepcopy(FLOORS)
+        rule = self.rule(floors)
+        spec = rule.get("series_close_check", {})
+        spec.update(id="invented_series_close", unit="price_unit",
+                    source_words=self.rule()["price_source_words"])
+        rule["series_close_check"] = spec
+        rule["cross_check_tolerance_percent"]["price"] = "2"
+        c = self.capture("102")
+        self.refuses(c, "invented_series_close", floors=floors)
+        self.facts(c)["price_close_series_day"]["id"] = spec["id"]
+        self.passes(c, floors)
+        rule["cross_check_tolerance_percent"]["price"] = "1"
+        self.refuses(c, "102", "100", "percent", floors=floors)
+
+    def test_the_same_day_close_must_be_numeric_and_positive(self):
+        for value in ("INVENTED unknown", "0", "-1"):
+            with self.subTest(value=value):
+                c = self.capture()
+                self.facts(c)["price_close_series_day"]["value"] = value
+                self.refuses(c, "price_close_series_day")
+
+    def test_the_same_day_close_uses_its_own_source_words(self):
+        floors = copy.deepcopy(FLOORS)
+        self.rule(floors).setdefault("series_close_check", dict(
+            id="price_close_series_day", unit="price_unit"))["source_words"] = ["INVENTED daily source"]
+        c = self.capture()
+        self.refuses(c, "INVENTED daily source", floors=floors)
+        self.facts(c)["price_close_series_day"]["source"] = "INVENTED daily source"
+        self.passes(c, floors)
 
     def test_unruled_series_source_refuses(self):
         c = self.capture()
         c["price_series"]["source"] = "INVENTED other daily history"
-        self.refuses(c, "daily history", *self.rule().get(
-            "series_source_words", self.rule()["cross_check_source_words"]))
+        self.refuses(c, "daily history", *self.rule()["series_source_words"])
 
     def test_other_ticker_is_left_to_gate_binding(self):
         # CONTROL: no second sufficiency refusal for a mismatched ticker.
@@ -26056,9 +27531,5462 @@ class TestTheCoinSeriesMeetsItsPrice(CoinTest):
         self.passes(c)
         self.assertEqual(self.gate(c)["result"], "refused")
 
-    def test_without_series_sits_as_today(self):
-        # CONTROL: AC72 keeps the series optional.
-        self.passes(coin_capture())
+# AC67, AC78-AC81, PROTOCOL(a): invented figures; token differences are data.
+def protocol_capture(token=None, **overrides):
+    """The first registry token by default; every figure here is invented."""
+    registry = FLOORS["asset_classes"]["crypto"]
+    rule = registry["protocol_rule"]
+    token = token or next(iter(registry["protocols"]))
+    row = registry["protocols"][token]
+    c = load_fixture("btc-pass.json")
+    c["capture_version"] = SCHEMA["properties"]["capture_version"]["const"]
+    c["subject"].update(kind="protocol_token", product=token, name=row["names"][0])
+    c["captured_at"] = "2026-10-08T06:00Z"
+    keep = {a["id"] for a in rule["anchors"] if a["kind"] == "id"}
+    dropped = {a["id"] for a in registry["anchors"] if a["kind"] == "id"} - keep
+    dropped.update(fid for a in registry["anchors"] if a["kind"] == "one_of" for fid in a["ids"])
+    prefixes = [p for a in registry["anchors"] for p in ([a["prefix"]] if a["kind"] == "prefix" else a.get("prefixes", []))]
+    c["tier1"] = [f for f in c["tier1"] if f["id"] not in dropped and not any(f["id"].startswith(p) for p in prefixes)]
+    for fact in c["tier1"] + c["tier2"]:
+        fact["as_of"] = "2026-10-08"
+    facts = {f["id"]: f for f in c["tier1"]}
+    invented = dict(supply_total="2000000", price="100", price_check="100", supply="1000000", supply_check="1000000", supply_protocol="1100000", turnover="1000000", history="1000", volatility_window="1000")
+    for role, spec in rule["roles"].items():
+        if spec["binds"] and not row[spec["binds"]]:
+            continue
+        selector = spec["source"]
+        selector = selector[0] if isinstance(selector, list) else selector
+        words = row.get(selector, rule.get(selector, [])) if selector else []
+        fact = dict(id=spec["id"], value=invented.get(role, "300"), unit=row.get(spec["unit"], spec["unit"]), source="INVENTED " + " ".join(words), as_of="2026-10-08", freshness_rule_days=spec["max_freshness_days"], derived=None)
+        if spec["id"] in facts:
+            facts[spec["id"]].update(fact)
+        else:
+            c["tier1"].append(fact)
+    total = dict(id="turnover_30d_total", value="30000000", unit=rule["opening"]["claim_unit"], source="INVENTED " + " ".join(rule["price_source_words"]), as_of="2026-10-08", freshness_rule_days=1, derived={"operation": "add", "operands": [{"label": "invented day %s" % n, "value": "1000000"} for n in range(30)]})
+    c["tier1"].append(total)
+    next(f for f in c["tier1"] if f["id"] == rule["roles"]["turnover"]["id"])["derived"] = {"operation": "divide", "operands": [{"label": "sum", "fact_id": total["id"], "value": total["value"]}, {"label": "days", "value": "30"}]}
+    route = next(iter(rule["holders_fee_routes"]))
+    for spec in rule["route_roles"].values():
+        c["tier1"].append(dict(id=spec["prefix"]+route, value="300", unit=spec["unit"], source="INVENTED " + " ".join(rule["fee_source_words"]), as_of="2026-10-08", freshness_rule_days=2, derived=None))
+    common = dict(amount="100", unit=row["unit"], source="INVENTED protocol release contract", as_of="2026-10-08")
+    c["supply_schedule"] = dict(covers_through="2027-10-08", tranches=[dict(common, date="2027-01-08", end_date=None, receiving_group="invented team", release="cliff", dated_by="protocol", rule_source=None)], no_tranches_because=None, emissions=[dict(common, period_start="2026-10-09", period_end="2027-10-08", receiving_group="invented stakers")], offsets=[dict(common, route=rule["offset_routes"][0], period_start="2026-09-08", period_end="2026-10-08")], locked_holders=[dict(common, group="invented team")], no_locked_supply_because=None)
+    for requirement in c["sufficiency"]["requirements"]:
+        requirement["answered_by"] = [fid for fid in requirement["answered_by"] if fid not in dropped]
+    present = {f["id"] for f in c["tier1"] + c["tier2"]}
+    c["sufficiency"]["requirements"] = [r for r in c["sufficiency"]["requirements"]
+        if r["kind"] == "canonical_test" or (r["answered_by"] and set(r["answered_by"]) <= present)]
+    for fid, value in overrides.items():
+        next(f for f in c["tier1"] if f["id"] == fid)["value"] = value
+    h = gate.evidence_body_sha256(c)
+    c["evidence_challenge"].update(evidence_sha256=h, post_audit_sha256=h)
+    return c
+
+
+class ProtocolTest(CoinTest):
+    def rule(self, floors=None):
+        return (floors or FLOORS)["asset_classes"]["crypto"]["protocol_rule"]
+
+    def registry(self, floors=None):
+        return (floors or FLOORS)["asset_classes"]["crypto"]["protocols"]
+
+    def outcome(self, c=None, floors=None):
+        return sufficiency_of(freeze.build_pack(c or protocol_capture()), floors or FLOORS)
+
+    def gate(self, c):
+        h = gate.evidence_body_sha256(c)
+        c["evidence_challenge"].update(evidence_sha256=h, post_audit_sha256=h)
+        return gate.validate_capture(c, SCHEMA, FLOORS)
+
+    def gate_refuses(self, c, words):
+        out = self.gate(c)
+        self.assertEqual(out["result"], "refused", out)
+        self.assertIn(words, " ".join(out["reasons"]))
+
+    def changed(self, role, token=None, **fields):
+        c = protocol_capture(token)
+        self.facts(c)[self.rule()["roles"][role]["id"]].update(fields)
+        return c
+
+    def flagged(self, flag):
+        return next(k for k, r in self.registry().items() if r[flag])
+
+    def added(self, spec, c=None):
+        c = c or protocol_capture()
+        source = self.rule()[spec["source"]]
+        c["tier1"].append(dict(id=spec["id"], value="100", unit=spec["unit"], source="INVENTED " + " ".join(source), as_of="2026-10-08", freshness_rule_days=2, derived=None))
+        return c
+
+
+class TestProtocolRegistryData(ProtocolTest):
+    def test_the_four_tokens_are_admitted_in_the_ruled_order(self):
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes(list(self.registry()))).hexdigest(), 'b02618ad1f07d7f110c38c96095a17258cf741880fdcc4eb9aefaff2283025dd')
+        self.assertEqual([r["family"] for r in self.registry().values()], ["base_network", "lending_market", "trading_venue", "base_network"])
+        self.assertEqual(list(self.registry()), [r["names"][0].lower() for r in self.registry().values()])
+
+    def test_every_row_carries_the_ruled_fields(self):
+        fields = {"names", "family", "unit", "price_unit", "series_ticker", "default_derate_case", "price_cross_check", "supply_cross_check", "protocol_supply_beside", "protocol_source_words", "spot_funds", "spot_funds_note", "anchors", "brief_words", "report_words", "default_derate_case_why", "why"}
+        for row in self.registry().values():
+            self.assertEqual(set(row) - {"treasury_fund"}, fields)
+            self.assertIn(row["family"], self.rule()["families"])
+            self.assertIn(row["unit"], FLOORS["allowed_units"])
+
+    def test_every_default_is_a_ruled_derate_case(self):
+        for row in self.registry().values():
+            self.assertIn(row["default_derate_case"], self.rule()["derate_cases"])
+
+    def test_hyperliquid_defaults_to_sui(self):
+        row = self.registry()[self.flagged("protocol_supply_beside")]
+        self.assertEqual(row["default_derate_case"], next(iter(self.rule()["derate_cases"])))
+
+    def test_every_rule_constant_carries_its_why(self):
+        rule = self.rule()
+        self.assertEqual(set(rule) - {"why"}, set(rule["why"]))
+        self.assertTrue(all("AC" in why for why in rule["why"].values()))
+
+    def test_every_new_anchor_carries_applies_from(self):
+        for a in self.rule()["anchors"]:
+            self.assertGreaterEqual(a["applies_from"], self.rule()["applies_from"])
+
+    def test_the_frozen_crypto_anchors_are_unchanged(self):
+        # CONTROL: AB15; passes on the base by design.
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes(FLOORS["asset_classes"]["crypto"]["anchors"])).hexdigest(), "9efa3f497c35b9b6cd37a4e5d1b6a14791267d5a3531e735b0ebeeeb7a3b1c21")
+
+    def test_no_token_key_is_a_coin_or_a_product_key(self):
+        self.assertFalse(set(self.registry()) & set(FLOORS["asset_classes"]["crypto"]["products"]))
+
+    def test_no_protocol_token_is_confirmed_for_the_hand_off(self):
+        confirmed = FLOORS.get("atlas_handoff", {}).get("confirmed", {})
+        self.assertFalse(set(self.registry()) & set(confirmed.get("products", [])))
+        c = protocol_capture(); c["subject"].pop("product")
+        self.gate_refuses(c, self.rule()["protocol_needs_token"])
+
+
+    def test_protocol_rule_explanations_are_owner_sentences(self):
+        def explanations(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key == "why" and isinstance(item, str):
+                        yield item
+                    elif key == "why" and isinstance(item, dict):
+                        yield from item.values()
+                    else:
+                        yield from explanations(item)
+            elif isinstance(value, list):
+                for item in value:
+                    yield from explanations(item)
+        for words in explanations({"rule": self.rule(), "tokens": self.registry()}):
+            with self.subTest(words=words):
+                self.assertNotIn("PROTOCOL(", words)
+                self.assertNotIn("architect", words.casefold().replace("the architect's rule under owner ruling", ""))
+                self.assertTrue(words.endswith("."), words)
+
+
+class TestAProtocolNamesItself(ProtocolTest):
+    def test_the_contract_admits_the_protocol_kind(self):
+        self.assertEqual(self.gate(protocol_capture())["result"], "accepted")
+
+    def test_a_protocol_subject_without_a_token_refuses(self):
+        c = protocol_capture(); c["subject"].pop("product")
+        self.gate_refuses(c, self.rule()["protocol_needs_token"])
+
+    def test_an_unadmitted_token_refuses_with_the_admission_words(self):
+        c = protocol_capture(); c["subject"]["product"] = "invented_token"
+        self.refuses(c, self.rule()["unadmitted"]["what"])
+
+    def test_a_token_named_as_another_refuses(self):
+        c = protocol_capture(); c["subject"]["name"] = list(self.registry().values())[1]["names"][0]
+        self.refuses(c, "the token's name", c["subject"]["name"])
+
+    def test_a_coin_naming_a_token_still_refuses_as_a_coin(self):
+        # CONTROL: item zero; use an invented unadmitted product on base too.
+        c = coin_capture("bitcoin"); c["subject"].update(product="invented_token", name="Invented Token")
+        self.refuses(c, "the owner's admission of this coin")
+
+    def test_a_fund_naming_a_token_still_refuses(self):
+        # CONTROL: the fund's missing ticker precedes its named product.
+        c = coin_capture("bitcoin"); c["subject"].update(kind="etf", product="invented_token")
+        self.refuses(c, "names no ticker for this fund")
+
+    def test_the_series_binds_to_the_tokens_ticker(self):
+        from council.lib import subjects
+        for token, row in self.registry().items():
+            c = protocol_capture(token)
+            allowed, reason = gate._series_calendars(c["subject"], row["series_ticker"], FLOORS["price_series"], FLOORS)
+            self.assertIsNone(reason)
+            self.assertTrue(allowed)
+            self.assertIsNone(subjects.coin(c["subject"], FLOORS))
+
+    def test_another_tokens_series_refuses(self):
+        row = list(self.registry().values())[1]
+        _, reason = gate._series_calendars(protocol_capture()["subject"], row["series_ticker"], FLOORS["price_series"], FLOORS)
+        self.assertIn("not the subject", reason)
+
+
+class TestTheProtocolAnchorSet(ProtocolTest):
+    def test_solana_passes_on_its_own_anchor_set(self):
+        self.passes()
+
+    def test_each_admitted_token_passes(self):
+        for token in self.registry():
+            self.passes(protocol_capture(token))
+
+    def test_no_bitcoin_network_anchor_is_required(self):
+        from council.lib import subjects
+        c = protocol_capture(); anchors = subjects.class_anchors(FLOORS, c["subject"])
+        protocol_ids = {a["id"] for a in anchors if a["kind"] == "id"}
+        for a in FLOORS["asset_classes"]["crypto"]["anchors"]:
+            if a["kind"] == "id" and a["id"] not in protocol_ids:
+                self.assertNotIn(a["id"], self.facts(c))
+        self.passes(c)
+
+    def test_every_required_fact_refuses_when_missing(self):
+        from council.lib import subjects
+        for a in self.rule()["anchors"]:
+            if a["level"] == "required" and subjects.applies_on(a, date(2026, 10, 8)):
+                c = protocol_capture(); c["tier1"] = [f for f in c["tier1"] if f["id"] != a["id"]]
+                self.refuses(c, a["id"])
+
+    def test_bitcoin_keeps_every_anchor(self):
+        # CONTROL: the monetary reader never changes its anchor list.
+        from council.lib import subjects
+        c = coin_capture("bitcoin"); self.passes(c)
+        self.assertTrue(all(a in subjects.class_anchors(FLOORS, c["subject"]) for a in FLOORS["asset_classes"]["crypto"]["anchors"]))
+
+    def test_the_absent_sentence_is_data(self):
+        self.assertIn("halving schedule", self.rule()["absent_sentence"])
+
+
+class TestTheProtocolSources(ProtocolTest):
+    def test_a_price_beyond_the_tolerance_refuses(self):
+        self.refuses(self.changed("price_check", value="102"), "percent tolerance")
+
+    def test_a_price_within_the_tolerance_passes(self):
+        self.passes(self.changed("price_check", value="101"))
+
+    def test_a_price_not_from_coingecko_refuses(self):
+        self.refuses(self.changed("price", source="INVENTED other"), self.rule()["price_source_words"][0])
+
+    def test_a_cross_check_from_the_price_source_refuses(self):
+        self.refuses(self.changed("price_check", source=" ".join(self.rule()["price_source_words"] + self.rule()["cross_check_source_words"])), "independently")
+
+    def test_cross_checks_days_apart_refuse(self):
+        self.refuses(self.changed("price_check", as_of="2026-10-06"), "day(s) apart")
+
+    def test_ethereums_supply_is_cross_checked(self):
+        c = self.changed("supply_check", self.flagged("supply_cross_check"), value="1020000")
+        self.refuses(c, "percent tolerance")
+
+    def test_a_supply_cross_check_where_none_is_free_refuses(self):
+        spec = self.rule()["roles"]["supply_check"]
+        c = self.added(dict(spec, unit=next(iter(self.registry().values()))["unit"]))
+        self.refuses(c, self.rule()["single_source_refusal"])
+
+    def test_hyperliquid_without_its_own_supply_refuses(self):
+        c = protocol_capture(self.flagged("protocol_supply_beside")); fid = self.rule()["roles"]["supply_protocol"]["id"]
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        self.refuses(c, fid, "protocol_supply_beside")
+
+    def test_a_protocol_supply_on_another_token_refuses(self):
+        spec = self.rule()["roles"]["supply_protocol"]
+        c = protocol_capture(); c["tier1"].append(dict(self.facts(c)["supply_circulating"], id=spec["id"]))
+        self.refuses(c, self.rule()["single_source_refusal"])
+
+    def test_a_fee_not_from_defillama_refuses(self):
+        self.refuses(self.changed("fees_30d", source="INVENTED other"), self.rule()["fee_source_words"][0])
+
+    def test_the_second_fee_source_is_optional(self):
+        # CONTROL: base has no obligation to gather this optional source.
+        self.passes(coin_capture("bitcoin"))
+        if "protocol_rule" in FLOORS["asset_classes"]["crypto"]:
+            self.passes(self.added(self.rule()["optional_roles"]["second_30d"]))
+
+    def test_each_refused_source_word_refuses(self):
+        for word in self.rule()["refused_source_words"]:
+            source = " ".join(self.rule()["fee_source_words"]) + " " + word.swapcase()
+            self.refuses(self.changed("fees_30d", source=source), self.rule()["refused_source_refusal"])
+
+    def test_a_refused_source_on_any_figure_refuses(self):
+        c = protocol_capture()
+        desk = self.rule()["refused_source_words"][-1]
+        for fact in c["tier1"]:
+            with self.subTest(fact=fact["id"]):
+                changed = copy.deepcopy(c)
+                self.facts(changed)[fact["id"]]["source"] = desk
+                out = self.refuses(changed, fact["id"], self.rule()["refused_source_refusal"])
+                self.assertTrue(any(item["what"] == fact["id"]
+                    and self.rule()["refused_source_refusal"] in item["why_needed"]
+                    and desk in item["why_needed"] for item in out["missing"]), out["message"])
+
+    def test_a_supply_in_another_tokens_unit_refuses(self):
+        row = self.registry()[self.flagged("supply_cross_check")]
+        self.refuses(self.changed("supply", unit=row["unit"]), row["unit"], "requires")
+
+    def test_every_input_is_in_the_one_role_set(self):
+        from council.lib import subjects
+        c = protocol_capture()
+        for spec in self.rule()["optional_roles"].values():
+            self.added(spec, c)
+        roles = sufficiency.protocol_role_set(freeze.build_pack(c), FLOORS)
+        required = {s["id"] for s in self.rule()["roles"].values()} | {s["id"] for s in self.rule()["optional_roles"].values()
+                    if subjects.applies_on(s, date.fromisoformat(c["captured_at"][:10]))}
+        required.update(f["id"] for f in c["tier1"] if any(f["id"].startswith(s["prefix"]) for s in self.rule()["route_roles"].values()))
+        required.add("turnover_30d_total")
+        self.assertEqual(set(roles), required)
+
+    def test_every_present_role_checks_number_unit_date_and_source(self):
+        c = protocol_capture(self.flagged("supply_cross_check"))
+        for spec in self.rule()["optional_roles"].values():
+            self.added(spec, c)
+        roles = sufficiency.protocol_role_set(freeze.build_pack(c), FLOORS)
+        for fid in roles:
+            if fid not in self.facts(c):
+                continue
+            for fields, words in (({"value": "invented"}, "must be a number"),
+                                  ({"unit": "invented_unit"}, "requires"),
+                                  ({"as_of": "2026-09-01"}, "fresh within"),
+                                  ({"source": "INVENTED other"}, "must name")):
+                with self.subTest(fid=fid, fields=fields):
+                    if "source" in fields and fid == self.rule()["roles"]["volatility_window"]["id"]:
+                        continue  # This role expressly permits any source.
+                    changed = copy.deepcopy(c)
+                    self.facts(changed)[fid].update(fields)
+                    self.refuses(changed, fid, words)
+
+
+class TestTheHoldersFees(ProtocolTest):
+    def route_capture(self, route=None):
+        c = protocol_capture(); rule = self.rule()
+        route = route or next(iter(rule["holders_fee_routes"]))
+        for spec in rule["route_roles"].values():
+            fact = next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))
+            fact["id"] = spec["prefix"] + route
+        return c
+
+    def test_routes_summing_to_the_total_pass(self):
+        c = self.route_capture()
+        for spec in self.rule()["route_roles"].values():
+            first = next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))
+            first["value"] = "100"
+            c["tier1"].append(dict(first, id=spec["prefix"] + list(self.rule()["holders_fee_routes"])[1], value="200"))
+        self.passes(c)
+
+    def test_routes_not_summing_refuse(self):
+        self.refuses(self.changed("holders_30d", value="301"), "route sum 300", "total 301")
+
+    def test_an_unknown_route_refuses(self):
+        self.refuses(self.route_capture("invented_route"), "not a holders' fee route", ", ".join(self.rule()["holders_fee_routes"]))
+
+    def test_a_route_in_one_window_only_refuses(self):
+        c = self.route_capture(); prefix = self.rule()["route_roles"]["30d"]["prefix"]
+        c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(prefix)]
+        self.refuses(c, "one window")
+
+    def test_fees_without_a_route_refuse(self):
+        c = self.route_capture(); c["tier1"] = [f for f in c["tier1"] if "__" not in f["id"]]
+        self.refuses(c, "which route carries these fees")
+
+    def test_zero_holders_fees_without_a_route_pass(self):
+        c = self.route_capture(); c["tier1"] = [f for f in c["tier1"] if "__" not in f["id"]]
+        for w in self.rule()["route_roles"]:
+            self.facts(c)[self.rule()["roles"]["holders_"+w]["id"]]["value"] = "0"
+        self.passes(c)
+
+    def test_the_fee_switch_is_a_route(self):
+        self.passes(self.route_capture(list(self.rule()["holders_fee_routes"])[-1]))
+
+    def test_a_resellable_buyback_as_a_route_refuses(self):
+        self.refuses(self.route_capture(self.rule()["shown_not_counted_prefix"] + "invented"), "shown separately, labelled, and not counted")
+
+    def test_a_resellable_buyback_shown_apart_passes(self):
+        for spec in self.rule()["optional_roles"].values():
+            if spec["id"].startswith(self.rule()["shown_not_counted_prefix"]):
+                self.passes(self.added(spec))
+
+
+class TestTheSupplySchedule(ProtocolTest):
+    def schedule_changed(self, family, **fields):
+        c = protocol_capture(); c["supply_schedule"][family][0].update(fields)
+        return c
+
+    def test_the_schedule_passes(self):
+        self.assertEqual(self.gate(protocol_capture())["result"], "accepted")
+        self.passes()
+
+    def test_a_protocol_without_a_schedule_refuses(self):
+        c = protocol_capture(); c.pop("supply_schedule")
+        self.gate_refuses(c, "requires supply_schedule")
+
+    def test_a_schedule_on_bitcoin_refuses(self):
+        c = protocol_capture(); c["subject"]["kind"] = "bitcoin"
+        self.gate_refuses(c, "protocol kind only")
+
+    def test_linear_without_an_end_refuses(self):
+        self.gate_refuses(self.schedule_changed("tranches", release="linear"), "end_date after date")
+
+    def test_cliff_with_an_end_refuses(self):
+        self.gate_refuses(self.schedule_changed("tranches", end_date="2027-02-08"), "cliff tranche")
+
+    def test_an_aggregator_date_without_the_rule_source_refuses(self):
+        self.gate_refuses(self.schedule_changed("tranches", dated_by="aggregator"), self.rule()["aggregator_refusal"])
+
+    def test_an_amount_not_a_number_refuses(self):
+        self.gate_refuses(self.schedule_changed("tranches", amount="invented"), "decimal above zero")
+
+    def test_an_amount_in_another_unit_refuses(self):
+        unit = list(self.registry().values())[1]["unit"]
+        self.refuses(self.schedule_changed("tranches", unit=unit), "requires", unit)
+
+    def test_a_schedule_short_of_twelve_months_refuses(self):
+        c = protocol_capture(); c["supply_schedule"]["covers_through"] = "2027-10-07"
+        self.refuses(c, self.rule()["schedule_short_refusal"])
+
+    def test_no_tranches_without_a_reason_refuses(self):
+        c = protocol_capture(); c["supply_schedule"]["tranches"] = []
+        self.gate_refuses(c, "no_tranches_because")
+
+    def test_no_tranches_with_a_reason_passes(self):
+        c = protocol_capture(); c["supply_schedule"].update(tranches=[], no_tranches_because="INVENTED no releases")
+        self.assertEqual(self.gate(c)["result"], "accepted"); self.passes(c)
+
+    def test_no_locked_holders_without_a_reason_refuses(self):
+        c = protocol_capture(); c["supply_schedule"]["locked_holders"] = []
+        self.gate_refuses(c, "no_locked_supply_because")
+
+    def test_an_offset_route_outside_the_two_refuses(self):
+        self.refuses(self.schedule_changed("offsets", route="invented_route"), "offset routes are only")
+
+    def test_a_refused_source_in_the_schedule_refuses(self):
+        for family in ("tranches", "emissions", "offsets", "locked_holders"):
+            self.refuses(self.schedule_changed(family, source=self.rule()["refused_source_words"][0]), self.rule()["refused_source_refusal"])
+
+    def test_an_entry_measured_after_the_capture_refuses(self):
+        for family in ("tranches", "emissions", "offsets", "locked_holders"):
+            self.gate_refuses(self.schedule_changed(family, as_of="2026-10-09"), "after the capture")
+
+
+class TestTheShortHistory(ProtocolTest):
+    def test_under_a_year_refuses(self):
+        self.refuses(self.changed("history", value="364"), self.rule()["short_history_refusal"])
+
+    def test_the_whole_history_passes(self):
+        self.passes()
+
+    def test_a_window_shorter_than_the_history_refuses(self):
+        self.refuses(self.changed("volatility_window", value="999"), self.rule()["window_refusal"], "history 1000, window 999")
+
+    def test_five_years_or_more_uses_five_years(self):
+        c = self.changed("history", value="2000")
+        self.facts(c)[self.rule()["roles"]["volatility_window"]["id"]]["value"] = str(self.rule()["full_window_days"])
+        self.passes(c)
+
+    def test_a_coin_is_untouched(self):
+        # CONTROL: protocol history floors never bind to a coin.
+        self.passes(coin_capture("bitcoin"))
+
+
+class TestTheProtocolRecordsUnchanged(CoinTest):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        base = copy.deepcopy(FLOORS)
+        base["classes"].pop("protocol_token")
+        base["asset_classes"]["crypto"].pop("protocol_rule")
+        base["asset_classes"]["crypto"].pop("protocols")
+        earliest = copy.deepcopy(FLOORS)
+        rule = earliest["asset_classes"]["crypto"]["protocol_rule"]
+        rule["applies_from"] = "2026-08-01"
+        anchors = rule["anchors"] + [entry for row in earliest["asset_classes"]["crypto"]["protocols"].values() for entry in row["anchors"]]
+        for entry in anchors:
+            entry["applies_from"] = "2026-08-01"
+        gated = checked = frozen = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                for c in (canonical.read_json(path), to_contract_1_17_0(canonical.read_json(path), run_id)):
+                    old = gate.validate_capture(copy.deepcopy(c), SCHEMA, base)
+                    for floors in (FLOORS, earliest):
+                        self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, floors), old)
+                gated += 1
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            with open(path, "rb") as handle:
+                self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])), handle.read())
+            frozen += 1
+            try:
+                old = sufficiency.check(copy.deepcopy(pack), base)
+            except ValueError as exc:
+                for floors in (FLOORS, earliest):
+                    with self.assertRaises(ValueError) as caught:
+                        sufficiency.check(copy.deepcopy(pack), floors)
+                    self.assertEqual(str(caught.exception), str(exc))
+                continue
+            for floors in (FLOORS, earliest):
+                self.assertEqual(sufficiency.check(copy.deepcopy(pack), floors), old)
+            checked += 1
+        self.assertGreater(min(gated, checked, frozen), 0)
+
+
+
+def with_schedule(c, **parts):
+    """Invented releases: thirty tokens over thirty days gives one a day."""
+    schedule = c["supply_schedule"]
+    schedule.update(tranches=[], emissions=[], offsets=[], locked_holders=[],
+                    no_tranches_because="INVENTED no releases", no_locked_supply_because="INVENTED no locked supply")
+    schedule.update(parts)
+    return c
+
+
+def with_comparables(c, slugs, line=None, **figures):
+    """Invented annual fees of three hundred sixty-five give exact multiples."""
+    rule = FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    for slug in slugs:
+        for metric, spec in rule["comparable_metrics"].items():
+            suffix = (line + "__" if line else "") + slug
+            c["tier1"].append(dict(id=rule["comparable_prefix"] + metric + "__" + suffix,
+                value=str(figures.get(metric, "730" if metric == "market_value" else "90")),
+                unit=spec["unit"], source="INVENTED " + " ".join(rule[spec["source"]]),
+                as_of=c["captured_at"][:10], freshness_rule_days=spec["max_freshness_days"], derived=None))
+    return c
+
+
+def with_history(c, members):
+    """Each invented member carries a price-side and a fee-side figure."""
+    rule = FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    for member, multiple in members.items():
+        for metric, prefix in rule["history_prefixes"].items():
+            spec = rule["comparable_metrics"][metric]
+            c["tier1"].append(dict(id=prefix + member,
+                value=str(decimal.Decimal(multiple) * 365 if metric == "market_value" else 90),
+                unit=spec["unit"], source="INVENTED " + " ".join(rule[spec["source"]]),
+                as_of="2026-01-01", freshness_rule_days=365, derived=None))
+    return c
+
+
+def with_lines(c, lines):
+    """The invented line fees divide the token's measured total exactly."""
+    rule = FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    for line, amount in lines.items():
+        c["tier1"].append(dict(id=rule["line_prefix"] + line, value=str(amount),
+            unit=rule["comparable_metrics"]["holders_fees_90d"]["unit"],
+            source="INVENTED " + " ".join(rule["fee_source_words"]),
+            as_of=c["captured_at"][:10], freshness_rule_days=2, derived=None))
+    return c
+
+
+class TestTheProtocolSupplyReadings(ProtocolTest):
+    # Thirty tokens released in thirty days gives exactly one token each day.
+    def supply(self, c=None, floors=None):
+        return sufficiency.protocol_supply_readings(freeze.build_pack(c or self.capture()), floors or FLOORS)
+
+    def capture(self, **parts):
+        return with_schedule(protocol_capture(), **parts)
+
+    def entry(self, **fields):
+        item = copy.deepcopy(protocol_capture()["supply_schedule"]["tranches"][0])
+        item.update(amount="30", date="2026-10-09", receiving_group="invented team")
+        item.update(fields)
+        return item
+
+    def emission(self, **fields):
+        item = copy.deepcopy(protocol_capture()["supply_schedule"]["emissions"][0])
+        item.update(amount="30", period_start="2026-10-09", period_end="2026-11-07")
+        item.update(fields)
+        return item
+
+    def offset(self, **fields):
+        item = copy.deepcopy(protocol_capture()["supply_schedule"]["offsets"][0])
+        item.update(amount="30", period_start="2026-09-09", period_end="2026-10-08")
+        item.update(fields)
+        return item
+
+    def test_a_cliff_inside_the_window_counts_once(self):
+        out = self.supply(self.capture(tranches=[self.entry()]))
+        self.assertEqual([w["gross"] for w in out["windows"]], [30, 30, 30])
+
+    def test_a_cliff_after_the_window_counts_in_the_next(self):
+        out = self.supply(self.capture(tranches=[self.entry(date="2026-11-08")]))
+        self.assertEqual([w["gross"] for w in out["windows"]], [0, 30, 30])
+
+    def test_a_release_on_the_capture_day_is_already_circulating(self):
+        self.assertEqual(self.supply(self.capture(tranches=[self.entry(date="2026-10-08")]))["windows"][0]["gross"], 0)
+
+    def test_a_linear_release_counts_its_days_inside_the_window(self):
+        out = self.supply(self.capture(tranches=[self.entry(release="linear", end_date="2026-11-07")]))
+        self.assertEqual(out["windows"][0]["gross"], 30)
+
+    def test_a_linear_release_begun_before_counts_what_is_left(self):
+        out = self.supply(self.capture(tranches=[self.entry(release="linear", date="2026-09-09", end_date="2026-11-07", amount="60")]))
+        self.assertEqual(out["windows"][0]["gross"], 30)
+
+    def test_emissions_count_whoever_receives_them(self):
+        entries = [self.emission(receiving_group=g) for g in ("invented stakers", "invented incentives")]
+        self.assertEqual(self.supply(self.capture(emissions=entries))["windows"][0]["gross_by_group"],
+                         {"invented stakers": 30, "invented incentives": 30})
+
+    def test_staking_rewards_are_supply_never_fees(self):
+        c = self.capture(emissions=[self.emission()])
+        self.assertEqual(self.supply(c)["windows"][0]["gross"], 30)
+        self.assertEqual(self.facts(c)[self.rule()["roles"]["holders_90d"]["id"]]["value"], "300")
+
+    def test_offsets_carry_forward_at_their_trailing_pace(self):
+        out = self.supply(self.capture(offsets=[self.offset()]))
+        self.assertEqual(out["offset_pace"], {"amount": 1, "days": 30})
+        self.assertEqual([w["offsets"] for w in out["windows"]], self.rule()["supply_windows_days"])
+
+    def test_overlapping_offsets_refuse_naming_both(self):
+        c = self.capture(offsets=[self.offset(), self.offset(period_start="2026-10-08")])
+        self.refuses(c, self.rule()["offsets_overlap_refusal"], "offsets[0]", "offsets[1]")
+        self.assertIsNone(self.supply(c))
+
+    def test_no_offsets_read_zero(self):
+        self.assertEqual(self.supply()["offset_pace"], {"amount": 0, "days": 0})
+
+    def test_a_negative_net_stays_negative(self):
+        out = self.supply(self.capture(offsets=[self.offset()]))
+        self.assertEqual(out["windows"][0]["net"], -30)
+        self.assertEqual(out["twelve_month_supply"], decimal.Decimal(1000000) - 365)
+
+    def test_shares_are_of_circulating_supply(self):
+        out = self.supply(self.capture(tranches=[self.entry()]))["windows"][0]
+        self.assertEqual(out["gross_percent"], decimal.Decimal(30) * 100 / 1000000)
+        self.assertEqual(out["net_percent"], out["gross_percent"])
+
+    def test_daily_gross_and_net_against_turnover(self):
+        out = self.supply(self.capture(emissions=[self.emission(amount="60")], offsets=[self.offset()]))["daily"]
+        self.assertEqual((out["gross"], out["net"], out["gross_usd"], out["net_usd"]), (2, 1, 200, 100))
+        self.assertEqual(out["net_vs_turnover_percent"], decimal.Decimal(100) * 100 / 1000000)
+
+    def test_the_locked_supply_by_group(self):
+        item = protocol_capture()["supply_schedule"]["locked_holders"][0]
+        out = self.supply(self.capture(locked_holders=[dict(item, amount="30"), dict(item, group="invented investors", amount="70")]))["locked"]
+        self.assertEqual(out["total"], 100)
+        self.assertEqual([x["share_percent"] for x in out["groups"]], [30, 70])
+
+    def test_the_protocols_own_supply_beside_with_the_gap(self):
+        out = self.supply(protocol_capture(self.flagged("protocol_supply_beside")))
+        self.assertEqual(out["supply_beside"], {"value": 1100000, "gap_percent": 10})
+
+    def test_no_supply_beside_where_the_row_says_none(self):
+        token = next(k for k, r in self.registry().items() if not r["protocol_supply_beside"])
+        self.assertIsNone(self.supply(protocol_capture(token))["supply_beside"])
+
+    def test_the_twelve_month_supply_follows_the_basis(self):
+        c = self.capture(emissions=[self.emission()], offsets=[self.offset()])
+        out = self.supply(c); self.assertEqual(out["twelve_month_supply"], 1000000 + 30 - 365)
+        f = copy.deepcopy(FLOORS); self.rule(f)["twelve_month_supply_basis"] = "gross"
+        self.assertEqual(self.supply(c, f)["twelve_month_supply"], out["twelve_month_supply_gross"])
+
+    def test_the_windows_are_data(self):
+        f = copy.deepcopy(FLOORS); self.rule(f)["supply_windows_days"][0] = 10
+        self.rule(f)["supply_window_words"][0] = "invented ten days"
+        out = self.supply(self.capture(emissions=[self.emission()]), f)["windows"][0]
+        self.assertEqual((out["days"], out["words"], out["gross"]), (10, "invented ten days", 10))
+
+    def test_each_unreadable_input_reads_none_and_refuses_naming_it(self):
+        for role in ("price", "supply", "turnover"):
+            with self.subTest(role=role):
+                c = self.changed(role, value="0")
+                self.assertIsNone(self.supply(c)); self.refuses(c, self.rule()["roles"][role]["id"], "above zero")
+        other = next(r["unit"] for r in self.registry().values() if r["unit"] != self.registry()[next(iter(self.registry()))]["unit"])
+        c = self.capture(tranches=[self.entry(unit=other)])
+        self.assertIsNone(self.supply(c)); self.refuses(c, "supply_schedule.tranches", "requires")
+        for fields, words in (({"amount": "bad"}, "amount"), ({"date": "bad"}, "date"),
+                              ({"release": "linear", "end_date": None}, "end_date")):
+            c = self.capture(tranches=[self.entry(**fields)])
+            self.assertIsNone(self.supply(c)); self.refuses(c, "supply_schedule", words)
+
+        c = self.capture(offsets=[self.offset(amount="30000000")])
+        self.assertIsNone(self.supply(c)); self.refuses(c, "supply_schedule.offsets", self.rule()["readings_refusal"])
+
+    def test_readings_are_decimal_and_never_written_into_the_pack(self):
+        pack = freeze.build_pack(self.capture(emissions=[self.emission()]))
+        before = canonical.canonical_bytes(pack)
+        out = sufficiency.protocol_supply_readings(pack, FLOORS)
+        self.assertIsInstance(out["daily"]["gross"], decimal.Decimal)
+        self.assertEqual(before, canonical.canonical_bytes(pack))
+        out = sufficiency.protocol_value_readings(pack, FLOORS)
+        self.assertIsInstance(out["market_value"], decimal.Decimal)
+        self.assertEqual(before, canonical.canonical_bytes(pack))
+
+    def test_a_coin_reads_no_protocol_supply(self):
+        # CONTROL: the base has no protocol reader and coins stay outside it.
+        reader = getattr(sufficiency, "protocol_supply_readings", lambda *args: None)
+        self.assertIsNone(reader(freeze.build_pack(coin_capture()), FLOORS))
+
+    def test_a_capture_before_the_rule_reads_none(self):
+        # CONTROL: the base has no protocol reader; the old date stays outside it.
+        c = protocol_capture(); c["captured_at"] = "2026-10-07T06:00Z"
+        reader = getattr(sufficiency, "protocol_supply_readings", lambda *args: None)
+        self.assertIsNone(reader(freeze.build_pack(c), FLOORS))
+
+
+
+    def test_a_protocol_supply_not_above_zero_refuses(self):
+        for role in ("supply", "supply_total", "supply_protocol", "supply_check", "turnover"):
+            spec = self.rule()["roles"][role]
+            token = self.flagged(spec["binds"]) if spec.get("binds") else None
+            for value in ("-1", "0", "bad"):
+                with self.subTest(role=role, value=value):
+                    c = self.changed(role, token, value=value)
+                    self.refuses(c, spec["id"], value, self.rule()["readings_refusal"])
+                    self.assertIsNone(self.supply(c))
+
+    def test_a_stale_offset_period_is_not_carried_forward(self):
+        c = self.capture(offsets=[self.offset(period_start="2020-01-01", period_end="2020-01-30")])
+        out = self.supply(c)
+        self.assertEqual(out["offset_pace"], {"amount": 0, "days": 0})
+        self.assertEqual(out["windows"][-1]["offsets"], 0)
+        self.assertEqual(out["twelve_month_supply"], out["circulating"])
+        self.assertEqual(out["offsets_gap"], "offsets not carried forward: last recorded period ended 2020-01-30")
+        from datetime import date, timedelta
+        limit = self.rule()["offset_max_age_days"]
+        captured = date.fromisoformat(c["captured_at"][:10])
+        for age, carried in ((limit, True), (limit + 1, False)):
+            end = captured - timedelta(days=age)
+            c = self.capture(offsets=[self.offset(period_start=(end - timedelta(days=29)).isoformat(), period_end=end.isoformat())])
+            self.assertEqual(self.supply(c)["offset_pace"]["amount"], 1 if carried else 0)
+        c = self.capture(offsets=[self.offset(period_start="2020-01-01", period_end="2020-01-30"), self.offset()])
+        self.assertEqual(self.supply(c)["offset_pace"], {"amount": 1, "days": 30})
+
+
+class ProtocolMeasureTest(ProtocolTest):
+    def capture(self):
+        c = protocol_capture()
+        for role in ("fees", "revenue", "holders"):
+            for window, amount in (("30d", "30"), ("90d", "90")):
+                self.facts(c)[self.rule()["roles"][role + "_" + window]["id"]]["value"] = amount
+        for window, spec in self.rule()["route_roles"].items():
+            for f in c["tier1"]:
+                if f["id"].startswith(spec["prefix"]):
+                    f["value"] = "30" if window == "30d" else "90"
+        return with_schedule(c)
+
+    def value(self, c=None, in_force=None):
+        return sufficiency.protocol_value_readings(freeze.build_pack(c or self.capture()), FLOORS, in_force)
+
+    def peers(self, slugs=("invented_first", "invented_second", "invented_third"), line=None):
+        c = self.capture()
+        for n, slug in enumerate(slugs, 1):
+            with_comparables(c, [slug], line=line, market_value=str(365 * n))
+        return c
+
+
+class TestTheFeeReadings(ProtocolMeasureTest):
+    # Ninety measured fees scaled by three hundred sixty-five over ninety is exact.
+    def test_holders_fees_scaled_from_ninety_days(self):
+        self.assertEqual(self.value()["fees"]["holders"]["annual"], 365)
+
+    def test_the_thirty_day_figure_beside_with_the_gap(self):
+        c = self.capture(); self.facts(c)[self.rule()["roles"]["fees_30d"]["id"]]["value"] = "15"
+        out = self.value(c)["fees"]["users"]
+        self.assertEqual(out["annual_30d"], decimal.Decimal(365) / 2)
+        self.assertEqual(out["gap_percent"], -50)
+
+    def test_the_share_reaching_holders_and_by_route(self):
+        out = self.value()
+        self.assertEqual(out["holders_share_percent"], 100)
+        self.assertEqual(next(iter(out["routes"].values()))["share_percent"], 100)
+
+    def test_the_fee_switch_is_counted_as_a_route(self):
+        c = self.capture(); route = next(r for r in self.rule()["holders_fee_routes"] if "switch" in r)
+        for spec in self.rule()["route_roles"].values():
+            next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))["id"] = spec["prefix"] + route
+        self.assertEqual(self.value(c)["routes"][route]["d90"], 90)
+
+    def test_a_resellable_buyback_is_beside_never_counted(self):
+        c = self.capture()
+        for role in ("resellable_30d", "resellable_90d"):
+            self.added(self.rule()["optional_roles"][role], c)
+        out = self.value(c)
+        self.assertEqual(out["resellable"], {"d30": 100, "d90": 100})
+        self.assertEqual(out["fees"]["holders"]["d90"], 90)
+
+    def test_the_second_source_gap_and_flag(self):
+        limit = decimal.Decimal(self.rule()["fee_sources_disagree_percent"])
+        for window in ("30d", "90d"):
+            for excess, flag in ((limit, False), (limit + 1, True)):
+                c = self.capture(); spec = self.rule()["optional_roles"]["second_" + window]
+                self.added(spec, c)
+                first = decimal.Decimal(self.facts(c)[self.rule()["roles"]["fees_" + window]["id"]]["value"])
+                self.facts(c)[spec["id"]]["value"] = str(first * (100 + excess) / 100)
+                out = self.value(c)["second_source"]["d" + window[:-1]]
+                self.assertEqual((out["gap_percent"], out["fee_sources_disagree"]), (excess, flag))
+        c = self.capture(); self.facts(c)[self.rule()["roles"]["fees_90d"]["id"]]["value"] = "0"
+        self.facts(c)[self.rule()["roles"]["fees_30d"]["id"]]["value"] = "0"
+        for window, spec in self.rule()["route_roles"].items():
+            self.facts(c)[self.rule()["roles"][spec["total_role"]]["id"]]["value"] = "0"
+            for f in c["tier1"]:
+                if f["id"].startswith(spec["prefix"]):
+                    f["value"] = "0"
+        self.added(self.rule()["optional_roles"]["second_90d"], c)
+        out = self.value(c)["second_source"]["d90"]
+        self.assertIsNone(out["gap_percent"]); self.assertTrue(out["fee_sources_disagree"])
+
+    def test_a_thirty_day_figure_above_its_ninety_refuses(self):
+        for role in ("fees", "revenue", "holders"):
+            c = self.capture(); fid = self.rule()["roles"][role + "_30d"]["id"]
+            self.facts(c)[fid]["value"] = "91"
+            if role == "holders":
+                next(f for f in c["tier1"] if f["id"].startswith(self.rule()["route_roles"]["30d"]["prefix"]))["value"] = "91"
+            self.refuses(c, fid, self.rule()["thirty_above_ninety_refusal"])
+            self.assertIsNone(self.value(c))
+
+    def test_zero_holders_fees_is_the_scenarios_only_path(self):
+        c = self.peers()
+        for window, spec in self.rule()["route_roles"].items():
+            self.facts(c)[self.rule()["roles"][spec["total_role"]]["id"]]["value"] = "0"
+            next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))["value"] = "0"
+        out = self.value(c)
+        self.assertTrue(out["scenarios_only"])
+        self.assertTrue(all(m == {"used": False, "why": self.rule()["scenarios_only_words"]} for m in out["methods"].values()))
+
+    def test_market_value_and_fully_diluted_value(self):
+        out = self.value()
+        self.assertEqual((out["market_value"], out["fully_diluted_value"]), (100000000, 200000000))
+
+    def test_a_total_below_circulating_refuses(self):
+        c = self.changed("supply_total", value="999999")
+        self.refuses(c, self.rule()["total_below_circulating_refusal"], self.rule()["roles"]["supply_total"]["id"])
+        self.assertIsNone(self.value(c))
+
+    def test_a_missing_total_supply_refuses(self):
+        c = self.capture(); fid = "supply_total"
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        self.refuses(c, fid)
+        self.assertIsNone(self.value(c))
+
+
+    def test_a_negative_fee_figure_refuses_naming_it(self):
+        from council.lib import subjects
+        for role in ("fees_30d", "fees_90d", "revenue_30d", "revenue_90d", "holders_30d", "holders_90d"):
+            for value in ("-1", "0", "bad"):
+                with self.subTest(role=role, value=value):
+                    c = self.capture(); fid = self.rule()["roles"][role]["id"]
+                    self.facts(c)[fid]["value"] = value
+                    self.refuses(c, fid, value, self.rule()["readings_refusal"])
+                    self.assertIsNone(self.value(c))
+        for role, spec in self.rule()["optional_roles"].items():
+            if role not in self.rule()["number_roles"]["positive"] or not subjects.applies_on(spec, date(2026, 10, 8)):
+                continue
+            for value in ("-1", "0", "bad"):
+                with self.subTest(role=role, value=value):
+                    c = self.added(spec, self.capture()); self.facts(c)[spec["id"]]["value"] = value
+                    self.refuses(c, spec["id"], value, self.rule()["readings_refusal"])
+                    self.assertIsNone(self.value(c))
+        for window, spec in self.rule()["route_roles"].items():
+            c = self.capture(); f = next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))
+            f["value"] = "-1"
+            with self.subTest(route=window):
+                self.refuses(c, f["id"], "-1", self.rule()["readings_refusal"])
+        c = with_lines(self.capture(), {"invented_loss": "-1", "invented_gain": "91"})
+        with self.subTest(line="negative"):
+            self.refuses(c, self.rule()["line_prefix"] + "invented_loss", "-1", self.rule()["readings_refusal"])
+        c = with_lines(self.capture(), {"invented_empty": "0", "invented_other": "90"})
+        self.passes(c)
+        c = self.capture()
+        for spec in self.rule()["route_roles"].values():
+            f = next(f for f in c["tier1"] if f["id"].startswith(spec["prefix"]))
+            other = copy.deepcopy(f); other["id"] = spec["prefix"] + list(self.rule()["holders_fee_routes"])[1]
+            c["tier1"].append(other); f["value"] = "0"
+        self.passes(c)
+        for role in ("fees", "revenue", "holders"):
+            for window in self.rule()["route_roles"]:
+                self.facts(c)[self.rule()["roles"][role + "_" + window]["id"]]["value"] = "0"
+        for f in c["tier1"]:
+            if any(f["id"].startswith(s["prefix"]) for s in self.rule()["route_roles"].values()):
+                f["value"] = "0"
+        self.assertTrue(self.value(c)["scenarios_only"])
+
+
+class TestTheComparables(ProtocolMeasureTest):
+    # Ninety-day fees of ninety imply annual fees of three hundred sixty-five.
+    def method(self, c=None):
+        return self.value(c or self.peers())["methods"]["comparables"]
+
+    def test_three_comparables_give_low_median_high(self):
+        out = self.method()
+        self.assertEqual((out["low"], out["base"], out["high"]), (365, 730, 1095))
+
+    def test_an_even_count_takes_the_middle_two(self):
+        c = self.peers(("invented_one", "invented_two", "invented_three", "invented_four"))
+        self.assertEqual(self.method(c)["base"], decimal.Decimal(365) * 5 / 2)
+
+    def test_the_implied_value_uses_the_tokens_annual_fees(self):
+        c = self.peers()
+        self.facts(c)[self.rule()["roles"]["holders_90d"]["id"]]["value"] = "180"
+        next(f for f in c["tier1"] if f["id"].startswith(self.rule()["route_roles"]["90d"]["prefix"]))["value"] = "180"
+        self.assertEqual(self.method(c)["base"], 1460)
+
+    def test_per_token_today_and_on_the_twelve_month_supply(self):
+        c = self.peers(); c["supply_schedule"]["emissions"] = protocol_capture()["supply_schedule"]["emissions"]
+        out = self.method(c); supply = sufficiency.protocol_supply_readings(freeze.build_pack(c), FLOORS)
+        self.assertEqual(out["per_token"]["base"], out["base"] / 1000000)
+        self.assertEqual(out["per_token_twelve_months"]["base"], out["base"] / supply["twelve_month_supply"])
+
+    def test_market_value_and_fully_diluted_value_against_the_base(self):
+        out = self.method()
+        self.assertEqual(out["market_value_against_base_percent"], (decimal.Decimal(100000000) - 730) * 100 / 730)
+        self.assertEqual(out["fully_diluted_value_against_base_percent"], (decimal.Decimal(200000000) - 730) * 100 / 730)
+
+    def test_the_place_of_todays_value(self):
+        for multiples, place in ((("1", "2", "3"), "above"), (("1000000", "2000000", "3000000"), "below"), (("1", "1000000", "2000000"), "inside")):
+            c = self.capture()
+            for n, multiple in enumerate(multiples):
+                with_comparables(c, ["invented_" + str(n)], market_value=str(decimal.Decimal(multiple) * 365))
+            self.assertEqual(self.method(c)["place"], place)
+
+    def test_each_same_way_breach_leaves_the_comparable_out_by_name(self):
+        for metric in self.rule()["comparable_metrics"]:
+            for fields in (None, {"value": "bad"}, {"unit": "date"}, {"source": "INVENTED wrong source"}, {"as_of": "2026-10-06"}, {"as_of": "2026-10-09"}):
+                c = self.peers(); slug = "invented_first"
+                fid = self.rule()["comparable_prefix"] + metric + "__" + slug
+                if fields is None:
+                    c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                else:
+                    self.facts(c)[fid].update(fields)
+                out = self.value(c)
+                self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["not_same_way"]}, out["excluded"])
+                self.passes(c)
+        c = self.peers(); fid = self.rule()["comparable_prefix"] + "market_value__invented_first"
+        self.facts(c)[fid]["freshness_rule_days"] = 0; self.facts(c)[fid]["as_of"] = "2026-10-07"
+        self.assertEqual(len(self.value(c)["excluded"]), 1)
+
+    def test_each_private_venue_is_left_out_by_name(self):
+        for slug in self.rule()["private_venues"]:
+            out = self.value(with_comparables(self.peers(), [slug]))
+            self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["private_venue"]}, out["excluded"])
+            self.assertNotIn(slug, out["methods"]["comparables"]["members"])
+
+    def test_a_listed_exchange_prints_beside_never_inside(self):
+        for slug, reference in self.rule()["listed_references"].items():
+            c = with_comparables(self.peers(), [slug])
+            for _, metric in reference["measures"]:
+                fact = copy.deepcopy(next(f for f in c["tier1"] if f["id"] == self.rule()["comparable_prefix"] + "market_value__" + slug))
+                fact.update(id=self.rule()["comparable_prefix"] + metric + "__" + slug, value="365")
+                c["tier1"].append(fact)
+            out = self.value(c)
+            self.assertEqual([m["value"] for m in out["references"][0]["measures"]], [2, 2])
+            self.assertNotIn(slug, out["methods"]["comparables"]["members"])
+
+    def test_a_listed_reference_figure_not_above_zero_prints_no_measure(self):
+        # Invented one thousand divided by ten gives an exact reference measure.
+        for slug, reference in self.rule()["listed_references"].items():
+            figures = list(dict.fromkeys(metric for pair in reference["measures"] for metric in pair))
+            numerator = reference["measures"][0][0]
+            for figure in figures:
+                for amount in (None, "0", "-1000" if figure == numerator else "-5", "bad"):
+                    with self.subTest(slug=slug, figure=figure, amount=amount):
+                        c = with_comparables(self.peers(), [slug], market_value="1000")
+                        template = self.facts(c)[self.rule()["comparable_prefix"] + numerator + "__" + slug]
+                        for metric in figures:
+                            if metric != numerator:
+                                fact = copy.deepcopy(template)
+                                fact.update(id=self.rule()["comparable_prefix"] + metric + "__" + slug, value="10")
+                                c["tier1"].append(fact)
+                        fid = self.rule()["comparable_prefix"] + figure + "__" + slug
+                        if amount is None:
+                            c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                        else:
+                            self.facts(c)[fid]["value"] = amount
+                        out = self.value(c)
+                        for measure in out["references"][0]["measures"]:
+                            if figure in (measure["numerator"], measure["denominator"]):
+                                self.assertIsNone(measure["value"])
+                                self.assertEqual(measure["why"], "not meaningful: " + figure + " not above zero")
+                            else:
+                                self.assertEqual(measure["value"], 100)
+                        self.assertNotIn(slug, out["methods"]["comparables"]["members"])
+                        self.passes(c)
+
+    def test_a_comparable_without_holders_fees_is_left_out(self):
+        for amount in ("0", "-1"):
+            c = self.peers(); fid = self.rule()["comparable_prefix"] + "holders_fees_90d__invented_first"
+            self.facts(c)[fid]["value"] = amount
+            self.assertEqual(self.value(c)["excluded"][0]["why"], self.rule()["exclusions"]["no_holders_fees"])
+
+    def test_the_token_is_not_its_own_comparable(self):
+        c = self.peers(); slug = c["subject"]["product"]
+        out = self.value(with_comparables(c, [slug]))
+        self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["the_token_itself"]}, out["excluded"])
+
+    def test_fewer_than_three_drop_the_method_with_the_words(self):
+        out = self.method(self.peers(("invented_one", "invented_two")))
+        self.assertEqual(out, {"used": False, "why": self.rule()["comparables_dropped_words"], "dropped": True})
+
+    def test_a_refused_source_in_a_comparable_refuses_the_sitting(self):
+        # CONTROL: (a) already rejects these sources for every tier-one figure.
+        c = self.peers(); fid = self.rule()["comparable_prefix"] + "market_value__invented_first"
+        self.facts(c)[fid]["source"] = self.rule()["refused_source_words"][0]
+        self.refuses(c, fid, self.rule()["refused_source_refusal"])
+
+    def test_every_comparable_fact_is_in_the_one_role_set(self):
+        c = self.peers(); roles = sufficiency.protocol_role_set(freeze.build_pack(c), FLOORS)
+        for f in c["tier1"]:
+            if f["id"].startswith(self.rule()["comparable_prefix"]):
+                self.assertEqual(roles[f["id"]], {"comparable"})
+
+
+    def test_a_comparable_without_a_market_value_is_left_out(self):
+        for value in (None, "0", "-1"):
+            with self.subTest(value=value):
+                c = self.peers(); slug = "invented_first"
+                fid = self.rule()["comparable_prefix"] + "market_value__" + slug
+                if value is None:
+                    c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                else:
+                    self.facts(c)[fid]["value"] = value
+                out = self.value(c)
+                self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["not_same_way"]}, out["excluded"])
+                self.assertTrue(out["methods"]["comparables"]["dropped"])
+                self.passes(c)
+
+    def test_a_private_venue_is_refused_by_name_whatever_its_slug(self):
+        for name in self.rule()["private_venues"]:
+            with self.subTest(private=name):
+                slug = name + "_exchange"
+                c = with_comparables(self.peers(), [slug])
+                for f in c["tier1"]:
+                    if f["id"].endswith("__" + slug):
+                        f["label"] = name.upper()
+                out = self.value(c)
+                self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["private_venue"]}, out["excluded"])
+                self.assertNotIn(slug, out["methods"]["comparables"]["members"])
+                self.passes(c)
+        for key, spec in self.rule()["listed_references"].items():
+            for name in spec["names"]:
+                with self.subTest(reference=name):
+                    slug = key + "_exchange"
+                    c = with_comparables(self.peers(), [slug])
+                    for f in c["tier1"]:
+                        if f["id"].endswith("__" + slug):
+                            f["label"] = name.swapcase()
+                    out = self.value(c)
+                    self.assertIn({"slug": slug, "line": None, "why": self.rule()["exclusions"]["listed_reference"]}, out["excluded"])
+                    self.assertEqual(out["references"][0]["slug"], slug)
+                    self.assertNotIn(slug, out["methods"]["comparables"]["members"])
+
+
+class TestTheOtherMethods(ProtocolMeasureTest):
+    # Two line fees of forty-five each sum to ninety, an exact annual total.
+    def history(self):
+        return with_history(self.capture(), {"invented_one": "1", "invented_two": "2", "invented_three": "3", "invented_four": "4"})
+
+    def rates(self, growth="10", discount="20"):
+        return dict(zip(self.rule()["opening"]["rate_variables"], (growth, discount)))
+
+    def lines(self):
+        c = with_lines(self.capture(), {"invented_first_line": "45", "invented_second_line": "45"})
+        for line in ("invented_first_line", "invented_second_line"):
+            for n in range(1, 4):
+                with_comparables(c, ["invented_" + str(n)], line=line, market_value=str(365 * n))
+        return c
+
+    def test_own_history_low_median_high_and_today(self):
+        out = self.value(self.history())["methods"]["own_history"]
+        self.assertEqual((out["low"], out["base"], out["high"]), (365, decimal.Decimal(365) * 5 / 2, 1460))
+        self.assertEqual(out["today_multiple"], decimal.Decimal(100000000) / 365)
+
+    def test_own_history_short_of_the_minimum_is_not_used(self):
+        members = {"invented_" + str(n): "2" for n in range(self.rule()["own_history_min_members"] - 1)}
+        out = self.value(with_history(self.capture(), members))["methods"]["own_history"]
+        self.assertEqual(out, {"used": False, "why": self.rule()["own_history_dropped_words"]})
+
+    def test_a_history_pair_dated_apart_refuses(self):
+        c = self.history(); fid = self.rule()["history_prefixes"]["market_value"] + "invented_one"
+        self.facts(c)[fid]["as_of"] = "2026-01-03"
+        self.refuses(c, fid, "pair dates")
+        self.assertIsNone(self.value(c))
+        for fields in ({"value": "bad"}, {"unit": "date"}, {"source": "INVENTED wrong source"}, {"as_of": "2026-10-09"}, {"value": "0"}):
+            c = self.history(); fid = self.rule()["history_prefixes"]["holders_fees_90d"] + "invented_one"
+            self.facts(c)[fid].update(fields); self.refuses(c, fid); self.assertIsNone(self.value(c))
+        c = self.history(); c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        self.refuses(c, "invented_one", "both"); self.assertIsNone(self.value(c))
+
+    def test_discounted_fees_from_the_rates_in_force(self):
+        out = self.value(in_force=self.rates())["methods"]["discounted_fees"]
+        self.assertEqual(out["base"], 4015); self.assertIsNone(out["low"]); self.assertIsNone(out["high"])
+        self.assertEqual(out["place"], "inside")
+
+    def test_no_rates_no_discounted_figure(self):
+        self.assertEqual(self.value()["methods"]["discounted_fees"], {"used": False, "why": self.rule()["discounted_not_declared_words"]})
+
+    def test_a_discount_not_above_growth_is_not_used(self):
+        out = self.value(in_force=self.rates("20", "20"))["methods"]["discounted_fees"]
+        self.assertEqual(out, {"used": False, "why": self.rule()["discount_not_above_growth_words"]})
+
+    def test_sum_of_parts_from_line_fees(self):
+        out = self.value(self.lines())["methods"]["sum_of_parts"]
+        self.assertEqual((out["low"], out["base"], out["high"]), (365, 730, 1095))
+        self.assertEqual(len(out["parts"]), self.rule()["lines_min"])
+
+    def test_lines_not_adding_to_the_total_refuse(self):
+        c = self.lines(); fid = self.rule()["line_prefix"] + "invented_first_line"
+        self.facts(c)[fid]["value"] = "46"
+        self.refuses(c, fid, self.rule()["lines_sum_refusal"]); self.assertIsNone(self.value(c))
+
+    def test_a_line_short_of_comparables_is_not_used_naming_it(self):
+        c = self.lines(); line = "invented_first_line"
+        fid = self.rule()["comparable_prefix"] + "market_value__" + line + "__invented_1"
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        out = self.value(c)["methods"]["sum_of_parts"]
+        self.assertFalse(out["used"]); self.assertIn(line, out["lines"])
+        self.assertEqual(out["why"], self.rule()["sum_of_parts_unavailable_words"])
+
+    def test_the_colour_ratios_never_move_a_reading(self):
+        # CONTROL: unused background figures already leave the base's checks alone.
+        c = self.capture(); before = self.outcome(c)
+        reader = getattr(sufficiency, "protocol_value_readings", lambda *args: None)
+        value = reader(freeze.build_pack(c), FLOORS)
+        for fid in ("transaction_volume", "realised_value", "daily_active_addresses"):
+            f = copy.deepcopy(c["tier1"][0]); f.update(id=fid, value="999999999")
+            c["tier1"].append(f)
+        self.assertEqual(reader(freeze.build_pack(c), FLOORS), value)
+        self.assertEqual(self.outcome(c), before)
+
+    def test_every_method_goes_through_one_implied_function(self):
+        from unittest import mock
+        c = with_history(self.lines(), {"invented_" + str(n): "2" for n in range(self.rule()["own_history_min_members"])})
+        with_comparables(c, ["invented_one", "invented_two", "invented_three"])
+        with mock.patch.object(sufficiency, "_protocol_implied", wraps=sufficiency._protocol_implied) as implied:
+            out = self.value(c, self.rates())
+        self.assertTrue(all(m["used"] for m in out["methods"].values()))
+        self.assertEqual(implied.call_count, 4 + self.rule()["lines_min"])
+
+
+    def test_a_history_market_value_not_above_zero_refuses(self):
+        for value in ("0", "-1"):
+            with self.subTest(value=value):
+                c = self.history(); fid = self.rule()["history_prefixes"]["market_value"] + "invented_one"
+                self.facts(c)[fid]["value"] = value
+                self.refuses(c, fid, value, self.rule()["readings_refusal"])
+                self.assertIsNone(self.value(c))
+
+
+class TestTheProtocolReadingsPath(ProtocolMeasureTest):
+    # An invented holder fee of ninety scales exactly to three hundred sixty-five.
+    def test_sufficiency_reads_each_helper_once(self):
+        from unittest import mock
+        with mock.patch.object(sufficiency, "protocol_supply_readings", return_value={}) as supply, mock.patch.object(sufficiency, "protocol_value_readings", return_value={}) as value:
+            self.passes(self.capture())
+        self.assertEqual((supply.call_count, value.call_count), (1, 1))
+
+    def test_a_helper_reading_none_refuses_with_the_words(self):
+        from unittest import mock
+        for name in ("protocol_supply_readings", "protocol_value_readings"):
+            with mock.patch.object(sufficiency, name, return_value=None):
+                self.refuses(self.capture(), self.rule()["readings_refusal"])
+
+    def test_no_sufficiency_message_carries_a_reading(self):
+        # CONTROL: the base's message has no calculated protocol figure.
+        message = self.passes(self.capture())["message"]
+        for figure in ("200000000", "100000000", "4015"):
+            self.assertNotIn(figure, message)
+
+    def test_the_lifted_fault_reader_keeps_every_a_refusal(self):
+        # CONTROL: (a)'s existing source and unit words stay intact.
+        for role, spec in self.rule()["roles"].items():
+            if spec.get("binds") and not self.registry()[next(iter(self.registry()))][spec["binds"]]:
+                continue
+            c = self.changed(role, unit="INVENTED unit")
+            self.refuses(c, spec["id"], "requires")
+        for word in self.rule()["refused_source_words"]:
+            c = self.changed("price", source=word)
+            self.refuses(c, self.rule()["refused_source_refusal"])
+
+
+
+    def test_a_missing_required_fact_is_named_once(self):
+        from council.lib import subjects
+        for anchor in self.rule()["anchors"]:
+            if anchor["kind"] != "id" or anchor["level"] != "required" or not subjects.applies_on(anchor, date(2026, 10, 8)):
+                continue
+            with self.subTest(fact=anchor["id"]):
+                c = self.capture(); c["tier1"] = [f for f in c["tier1"] if f["id"] != anchor["id"]]
+                out = self.refuses(c, anchor["id"])
+                self.assertEqual(sum(m["what"] == anchor["id"] for m in out["missing"]), 1)
+                self.assertNotIn(self.rule()["readings_refusal"], out["message"])
+                self.assertIsNone(self.value(c))
+
+
+def with_derate_record(floors, case, **parts):
+    """Invented record only: a fall of fifty over ten days is exact."""
+    f = copy.deepcopy(floors)
+    record = dict(read_on="2026-10-08", record_file="INVENTED", status="usable", gaps=[], caveats=[],
+        price=dict(window=dict(start="2026-01-01", end="2026-01-11"),
+                   closes=dict(peak="20", peak_on="2026-01-01", trough="10", trough_on="2026-01-11", unit="USD", kind="fetched", source="INVENTED"),
+                   fall=dict(percent="50", days="10", kind="computed", as_of="2026-01-11", source="INVENTED")),
+        release_pace=dict(established=True, measures=[dict(id="invented_a", words="INVENTED", percent_of_trading="20", trading_source="Coin Metrics", kind="computed", as_of="2026-01-11", source="INVENTED"), dict(id="invented_b", words="INVENTED", percent_of_trading="40", trading_source="Coin Metrics", kind="claim", as_of="2026-01-11", source="INVENTED")]),
+        holders=dict(in_window=[dict(group="invented team", million_tokens="10")], in_window_kind="claim", in_window_as_of="2026-01-11", in_window_source="INVENTED"),
+        buybacks=dict(measured=False, kind="claim", as_of="2026-01-11", source="INVENTED"),
+        shape=dict(word="even_daily", kind="fetched", as_of="2026-01-11", source="INVENTED"), largest_step=None)
+    record.update(parts)
+    f["asset_classes"]["crypto"]["protocol_rule"]["derate_cases"][case]["record"] = record
+    return f
+
+
+def with_comparison_volume(c):
+    """Invented volume: one hundred dollars over ten thousand is exact."""
+    rule = FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+    fact = copy.deepcopy(next(f for f in c["tier1"] if f["id"] == rule["roles"]["turnover"]["id"]))
+    fact.update(id=rule["comparison_volume"]["id"], source="INVENTED " + " ".join(rule["comparison_volume"]["source_words"]))
+    c["tier1"].append(fact)
+    return c
+
+
+class TestTheDerateRecords(unittest.TestCase):
+    # Shipped-data tests assert structure only; no market figure is asserted.
+    def setUp(self):
+        self.rule = FLOORS["asset_classes"]["crypto"]["protocol_rule"]
+        self.entries = self.rule["derate_cases"]
+
+    def blocks(self, value):
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from self.blocks(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from self.blocks(child)
+
+    def test_every_ruled_case_carries_a_dated_record(self):
+        for entry in self.entries.values():
+            self.assertEqual(date.fromisoformat(entry["record"]["read_on"]).isoformat(), entry["record"]["read_on"])
+
+    def test_every_line_carries_its_kind_and_date(self):
+        for entry in self.entries.values():
+            record = entry["record"]
+            for block in self.blocks(record):
+                kinds = [v for k, v in block.items() if k == "kind" or k.endswith("_kind")]
+                dates = [v for k, v in block.items() if k == "as_of" or k.endswith(("_on", "_as_of"))]
+                for kind in kinds:
+                    self.assertIn(kind, self.rule["derate_kinds"]); self.assertTrue(dates)
+                for day in dates:
+                    self.assertLessEqual(date.fromisoformat(day), date.fromisoformat(record["read_on"]))
+                for family in ("allocation", "in_window"):
+                    if block.get(family):
+                        self.assertIn(block[family + "_kind"], self.rule["derate_kinds"])
+                        self.assertIn(family + "_as_of", block)
+
+    def test_each_status_is_ruled_and_names_its_gaps(self):
+        for entry in self.entries.values():
+            r = entry["record"]; self.assertIn(r["status"], self.rule["derate_statuses"])
+            self.assertEqual(bool(r["gaps"]), r["status"] != "usable")
+
+    def test_not_usable_exactly_when_the_pace_is_not_established(self):
+        for entry in self.entries.values():
+            r = entry["record"]; self.assertEqual(r["status"] == "not_usable", not r["release_pace"]["established"])
+
+    def test_every_figure_is_a_decimal_string(self):
+        for entry in self.entries.values():
+            for block in self.blocks(entry["record"]):
+                for key, value in block.items():
+                    if key.startswith(("million", "percent", "days")) or key in ("peak", "trough"):
+                        if value is not None:
+                            self.assertIsInstance(value, str); self.assertIsNotNone(gate._decimal_or_none(value))
+
+    def test_no_refused_source_is_a_figure_source(self):
+        for entry in self.entries.values():
+            for block in self.blocks(entry["record"]):
+                for key, value in block.items():
+                    if key == "source" or key.endswith("_source"):
+                        self.assertFalse(any(w.casefold() in value.casefold() for w in self.rule["refused_source_words"]))
+
+    def test_every_shape_is_a_ruled_word(self):
+        for entry in self.entries.values():
+            self.assertIn(entry["record"]["shape"]["word"], self.rule["derate_shapes"])
+
+    def test_the_guide_words_are_unchanged(self):
+        # CONTROL: hash pins the original guide words without record figures.
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes({k: v["guide_words"] for k, v in self.entries.items()})).hexdigest(), 'a7ce535160d643e2753cb67c21f7d8f37efc303e9f90656d2bafef14d2a74bef')
+
+    def test_every_default_case_has_a_record(self):
+        for row in FLOORS["asset_classes"]["crypto"]["protocols"].values():
+            self.assertIn("record", self.entries[row["default_derate_case"]])
+
+
+class TestTheDerateComparison(unittest.TestCase):
+    # Invented: thirty tokens over thirty days is one token a day.
+    def setUp(self):
+        self.case = next(iter(FLOORS["asset_classes"]["crypto"]["protocol_rule"]["derate_cases"]))
+        self.floors = with_derate_record(FLOORS, self.case)
+        self.unit = FLOORS["asset_classes"]["crypto"]["protocols"][protocol_capture()["subject"]["product"]]["unit"]
+        self.c = with_schedule(protocol_capture(), emissions=[dict(amount="365", unit=self.unit, period_start="2026-10-09", period_end="2027-10-08", receiving_group="invented stakers", source="INVENTED", as_of="2026-10-08")])
+        if self._testMethodName not in {"test_a_coin_reads_no_comparison", "test_sufficiency_never_calls_the_comparison"}:
+            with_comparison_volume(self.c)
+        self.pack = freeze.build_pack(self.c)
+
+    def read(self):
+        return sufficiency.protocol_derate_comparison(self.pack, self.floors, self.case)
+
+    def measure(self, key):
+        return next(m for m in self.read()["measures"] if m["id"] == key)
+
+    def test_the_four_measures_in_their_order(self):
+        self.assertEqual([m["id"] for m in self.read()["measures"]], [m["id"] for m in self.floors["asset_classes"]["crypto"]["protocol_rule"]["derate_measures"]])
+
+    def test_the_supply_readings_are_read_once(self):
+        from unittest import mock
+        with mock.patch.object(sufficiency, "protocol_supply_readings", wraps=sufficiency.protocol_supply_readings) as reading:
+            self.read(); reading.assert_called_once_with(self.pack, self.floors)
+
+    def test_every_recorded_pace_line_is_shown(self):
+        self.assertEqual(self.measure("release_pace")["case"], self.floors["asset_classes"]["crypto"]["protocol_rule"]["derate_cases"][self.case]["record"]["release_pace"]["measures"])
+
+    def test_the_next_month_and_twelve_month_pace_side_by_side(self):
+        rule = self.floors["asset_classes"]["crypto"]["protocol_rule"]
+        fact = next(f for f in self.c["tier1"] if f["id"] == rule["comparison_volume"]["id"])
+        fact["value"] = "2000000"
+        fact["derived"]["operands"][0].update(fact_id=None, value="60000000")
+        self.c["supply_schedule"].update(no_tranches_because=None, tranches=[dict(date="2027-01-08", end_date=None, receiving_group="invented team", release="cliff", amount="365", unit=self.unit, source="INVENTED", as_of="2026-10-08", dated_by="protocol", rule_source=None)])
+        self.pack = freeze.build_pack(self.c)
+        target = self.measure("release_pace")["target"]
+        self.assertEqual(target["next_month_percent"], decimal.Decimal("0.005")); self.assertEqual(target["twelve_month_percent"], decimal.Decimal("0.01"))
+
+    def test_the_holders_of_the_coming_releases_by_share(self):
+        self.assertEqual(self.measure("holders")["target"][0]["share_percent"], 100)
+
+    def test_no_coming_gross_leaves_the_holders_side_missing(self):
+        self.c["supply_schedule"]["emissions"] = []; self.pack = freeze.build_pack(self.c)
+        self.assertFalse(self.measure("holders")["both_sides"])
+
+    def test_unmeasured_buybacks_are_a_named_gap(self):
+        self.assertIn("case", self.measure("offsets")["gap"])
+
+    def test_the_largest_coming_cliff_in_days_of_trading(self):
+        self.c["supply_schedule"]["tranches"] = [dict(date=d, end_date=None, receiving_group="invented team", release="cliff", amount="100", unit=self.unit, source="INVENTED", as_of="2026-10-08", dated_by="protocol", rule_source=None) for d in ("2027-01-08", "2026-11-08")]
+        self.pack = freeze.build_pack(self.c); largest = self.measure("shape")["target"]["largest_step"]
+        self.assertEqual(largest["date"], "2026-11-08"); self.assertEqual(largest["days_of_trading"], decimal.Decimal("0.01"))
+
+    def test_no_coming_cliff_reads_none(self):
+        self.assertIsNone(self.measure("shape")["target"]["largest_step"])
+
+    def test_a_shape_not_established_is_a_named_gap(self):
+        self.floors = with_derate_record(self.floors, self.case, shape=dict(word="not_established"))
+        self.assertIn("case", self.measure("shape")["gap"])
+
+    def test_volume_sources_that_differ_are_flagged_never_rescaled(self):
+        record = self.floors["asset_classes"]["crypto"]["protocol_rule"]["derate_cases"][self.case]["record"]
+        record["release_pace"]["measures"][0]["trading_source"] = "INVENTED other service"
+        self.assertTrue(self.read()["volume_sources_differ"]); self.assertEqual(self.measure("release_pace")["case"][0]["percent_of_trading"], "20")
+
+    def test_the_machine_draws_no_conclusion(self):
+        result = self.read(); self.assertEqual(set(result), {"context", "measures", "status", "gaps", "caveats", "volume_sources_differ", "volume_sources_differ_words"})
+        rule = self.floors["asset_classes"]["crypto"]["protocol_rule"]
+        self.assertFalse(any(w in str(result) for w in list(rule["comparison_words"].values()) + list(rule["supply_words"].values())))
+
+    def test_the_comparison_is_never_written_into_the_pack(self):
+        before = canonical.canonical_bytes(self.pack); self.read(); self.assertEqual(before, canonical.canonical_bytes(self.pack))
+
+    def test_an_unknown_case_reads_none(self):
+        self.assertIsNone(sufficiency.protocol_derate_comparison(self.pack, self.floors, "INVENTED"))
+
+    def test_a_coin_reads_no_comparison(self):
+        # CONTROL when the helper exists: kind isolation.
+        helper = getattr(sufficiency, "protocol_derate_comparison", None)
+        self.assertIsNone(helper(freeze.build_pack(coin_capture()), self.floors, self.case) if helper else None)
+
+    def test_sufficiency_never_calls_the_comparison(self):
+        from unittest import mock
+        with mock.patch.object(sufficiency, "protocol_derate_comparison", create=True) as comparison:
+            sufficiency_of(self.pack, self.floors); comparison.assert_not_called()
+
+    def test_missing_or_invalid_like_for_like_volume_is_a_gap(self):
+        spec = self.floors["asset_classes"]["crypto"]["protocol_rule"]["comparison_volume"]
+        fact = next(f for f in self.c["tier1"] if f["id"] == spec["id"])
+        for field, value in (("value", "0"), ("value", "-1"), ("unit", "INVENTED"), ("source", "INVENTED"), ("as_of", "2026-10-06"), ("as_of", "2026-10-09")):
+            bad = copy.deepcopy(self.c); next(f for f in bad["tier1"] if f["id"] == spec["id"])[field] = value
+            self.pack = freeze.build_pack(bad); self.assertIn(spec["missing_words"], self.measure("release_pace")["gap"])
+        self.c["tier1"].remove(fact); self.pack = freeze.build_pack(self.c)
+        self.assertFalse(self.measure("release_pace")["both_sides"])
+
+
+
+class ProtocolPageTest(ProtocolTest):
+    # Ninety dollars over ninety days annualises to exactly three hundred sixty-five.
+    def setUp(self):
+        from unittest import mock
+        self.c = with_comparison_volume(with_comparables(protocol_capture(),
+            ["invented_a", "invented_b", "invented_c"]))
+        self.r = self.rule()
+        self.case = self.registry()[self.c["subject"]["product"]]["default_derate_case"]
+        self.floors = with_derate_record(FLOORS, self.case, gaps=["INVENTED recorded gap"])
+        self.patch = mock.patch.object(brief, "_FLOORS", self.floors)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        self.force = dict(derate_case=self.case, derate_case_basis="default",
+            claim=self.r["opening"]["no_claim"], range_method=self.r["opening"]["range_methods"][0],
+            fee_growth_percent="10", discount_rate_percent="20", changed=[], opening_changes=[])
+
+    def summary(self):
+        return brief.protocol_summary(freeze.build_pack(self.c), self.force)
+
+    def full(self, force=True):
+        return brief.render_full(freeze.build_pack(self.c), "0" * 64,
+                                 in_force=self.force if force else None)
+
+    def tables(self):
+        return "\n".join(lead + "\n" + "\n".join(brief.table_lines(table, []))
+                          for lead, table in brief.protocol_tables(self.summary()))
+
+    def optional(self, role, value="100"):
+        spec = self.r["optional_roles"][role]
+        fact = copy.deepcopy(self.c["tier1"][0])
+        fact.update(id=spec["id"], value=value, unit=spec["unit"],
+                    source="INVENTED " + " ".join(self.r[spec["source"]]), derived=None)
+        self.c["tier1"].append(fact)
+
+    def claim(self):
+        return dict(words="INVENTED claim", measure=self.r["opening"]["claim_measures"][0],
+                    level="1000", unit=self.r["opening"]["claim_unit"])
+
+
+class TestTheProtocolHead(ProtocolPageTest):
+    def test_the_head_names_the_token_in_its_words(self):
+        for token, row in self.registry().items():
+            text = brief.render(freeze.build_pack(protocol_capture(token)), "0" * 64)
+            self.assertIn("**" + row["names"][0] + ", " + row["brief_words"] + ".**", text)
+            self.assertNotIn(", protocol_token.", text)
+
+    def test_a_coin_head_is_unchanged(self):
+        # CONTROL: passes on base by design.
+        c = coin_capture()
+        row = FLOORS["asset_classes"]["crypto"]["products"][c["subject"]["product"]]
+        self.assertIn(row["brief_words"], brief._head_lines(freeze.build_pack(c), "0" * 64)[2])
+
+
+class TestTheMethodDeclaration(ProtocolPageTest):
+    def test_the_declaration_opens_the_full_evidence(self):
+        lines = self.full().splitlines()
+        at = lines.index("# The full evidence - the document approved in reviewed mode")
+        self.assertEqual(lines[at + 2], self.r["declaration_heading"])
+
+    def test_the_one_page_points_to_it(self):
+        self.assertIn(self.r["declaration_pointer_words"], brief.render(
+            freeze.build_pack(self.c), "0" * 64, in_force=self.force))
+
+    def test_every_method_with_its_standing_and_why(self):
+        with_history(self.c, {"invented_a": "2", "invented_b": "3", "invented_c": "4", "invented_d": "5"})
+        with_lines(self.c, {"invented_first": "150", "invented_second": "150"})
+        for line in ("invented_first", "invented_second"):
+            with_comparables(self.c, ["invented_a", "invented_b", "invented_c"], line=line)
+        summary = self.summary()
+        for method, reading in summary["value"]["methods"].items():
+            line = next(x for x in summary["method_lines"] if x.startswith(self.r["method_words"][method]))
+            self.assertIn(self.r["method_standing_words" if reading["used"] else "method_not_standing_words"], line)
+            if not reading["used"]: self.assertIn(reading["why"], line)
+        self.assertTrue(all(r["used"] for r in summary["value"]["methods"].values()))
+        self.assertIn(brief._words_of_id("invented_first"), "\n".join(summary["method_lines"]))
+        self.assertIn(brief._words_of_id("invented_second"), "\n".join(summary["method_lines"]))
+
+    def test_a_standing_method_prints_its_range_per_token_twice(self):
+        line = self.summary()["method_lines"][0]
+        self.assertIn(self.r["page_words"]["labels"]["per_token"], line)
+        self.assertIn(self.r["page_words"]["labels"]["per_token_twelve_months"], line)
+        self.assertEqual(line.count("low / base / high"), 1)
+        self.assertGreaterEqual(line.count("(calculated)"), 9)
+
+    def test_discounted_fees_print_beside_the_range_never_as_it(self):
+        summary = self.summary()
+        line = next(x for x in summary["method_lines"] if self.r["discounted_beside_words"] in x)
+        self.assertIn(self.r["page_words"]["labels"]["market_value"] + " base:", line)
+        self.assertNotIn("low / base / high", line)
+        self.assertEqual(summary["range"]["method"], self.force["range_method"])
+
+    def test_the_rates_are_the_councils_judgment(self):
+        summary = self.summary()
+        self.assertEqual(len(summary["rate_lines"]), 2)
+        for line in summary["rate_lines"]:
+            self.assertIn(self.r["chair"]["judgment_words"], line)
+
+    def test_the_range_method_in_force_and_its_why(self):
+        change = dict(variable="range_method", **{"from": self.r["opening"]["no_method"],
+            "to": self.force["range_method"], "why": "INVENTED chosen reason"})
+        self.force["opening_changes"] = [change]
+        self.assertIn(self.r["range_method_named_words"] % (
+            self.r["method_words"][change["to"]], change["why"]), self.full())
+
+    def test_a_method_named_at_the_opening_has_an_unchanged_reason(self):
+        line = self.summary()["range_line"]
+        reason = self.r["page_words"]["range_method_opening_words"]
+        self.assertTrue(line.endswith(reason + "."), line)
+        self.assertEqual(line, self.r["range_method_opening_line_words"] % (
+            self.r["method_words"][self.force["range_method"]], reason))
+        self.assertIn(line, self.full())
+
+    def test_no_range_method_named_says_so(self):
+        self.force["range_method"] = self.r["opening"]["no_method"]
+        self.assertIn(self.r["range_method_none_words"], self.full())
+
+    def test_the_comparables_refused_by_name(self):
+        slug = self.r["private_venues"][0]
+        with_comparables(self.c, [slug])
+        text = self.full()
+        self.assertIn(slug, text)
+        self.assertIn(self.r["exclusions"]["private_venue"], text)
+
+    def test_a_listed_exchange_prints_beside_on_its_equity_measures(self):
+        slug, spec = next(iter(self.r["listed_references"].items()))
+        with_comparables(self.c, [slug], revenue_ttm="365", net_income_ttm="365")
+        text = self.full()
+        self.assertIn(slug, text)
+        self.assertIn(self.r["exclusions"]["listed_reference"], text)
+        self.assertIn(self.r["page_words"]["labels"]["numerator"], text)
+
+    def test_the_derate_case_in_force_with_its_status_and_gaps(self):
+        self.assertIn(self.case + ":", self.full())
+        self.assertIn("INVENTED recorded gap", self.full())
+        self.assertIn(self.r["derate_statuses"]["usable"], self.summary()["case_line"])
+        self.assertIn("Read on:", self.full())
+
+    def test_the_claim_in_force(self):
+        self.force["claim"] = self.claim()
+        self.assertIn(self.force["claim"]["words"], self.summary()["claim_line"])
+        self.assertIn(brief._format_number("1000", "USD"), self.summary()["claim_line"])
+
+    def test_no_claim_tested(self):
+        self.assertEqual(self.summary()["claim_line"], self.r["opening"]["no_claim_words"])
+
+    def test_the_unverified_items_from_the_labels(self):
+        self.optional("second_30d", "400")
+        items = self.summary()["unverified"]
+        self.assertTrue(any(self.r["single_source_words"] in x for x in items))
+        self.assertTrue(any(self.r["fee_sources_disagree_words"] in x for x in items))
+        self.assertIn("INVENTED recorded gap", items)
+        self.assertIn("What this record admits it does not carry", self.full())
+
+    def test_the_pause_says_never_unattended(self):
+        self.assertIn(self.r["pause_words"], self.full())
+        self.assertIn("never runs unattended", self.r["pause_words"])
+
+    def test_a_redirect_remakes_the_document_with_the_change(self):
+        before = self.full()
+        self.force["claim"] = self.claim()
+        self.force["opening_changes"] = [dict(variable="claim", **{"from": self.r["opening"]["no_claim"],
+            "to": self.claim(), "why": "INVENTED redirect"})]
+        after = self.full()
+        self.assertNotEqual(before, after)
+        self.assertIn("INVENTED redirect", after)
+        self.assertIn("Changed at the pause:", after)
+
+    def test_no_opening_prints_the_refusal_never_a_default(self):
+        text = self.full(False)
+        self.assertIn(self.r["opening_missing_refusal"], text)
+        self.assertNotIn(self.r["derate_basis_words"]["default"], text)
+
+    def test_the_scenarios_only_token_says_so(self):
+        ids = {self.r["roles"][r]["id"] for r in ("holders_30d", "holders_90d")}
+        prefixes = [v["prefix"] for v in self.r["route_roles"].values()]
+        for fact in self.c["tier1"]:
+            if fact["id"] in ids or any(fact["id"].startswith(p) for p in prefixes): fact["value"] = "0"
+        self.force["range_method"] = self.r["opening"]["no_method"]
+        self.assertIn(self.r["scenarios_only_words"], self.full())
+
+    def test_every_figure_comes_from_the_helpers(self):
+        from unittest import mock
+        from council.engine import protocol_chair
+        pack = freeze.build_pack(self.c)
+        supply = sufficiency.protocol_supply_readings(pack, self.floors)
+        value = sufficiency.protocol_value_readings(pack, self.floors, self.force)
+        compared = sufficiency.protocol_derate_comparison(pack, self.floors, self.case)
+        ranged = protocol_chair.declared_range(pack, self.floors, self.force)
+        supply["windows"][0]["net"] = Decimal("876543")
+        value["market_value"] = Decimal("765432")
+        value["holders_share_percent"] = Decimal("42")
+        compared["context"]["fall"]["percent"] = "33"
+        ranged = dict(ranged, low=Decimal("654321"), high=Decimal("765432"))
+        with mock.patch.object(sufficiency, "protocol_supply_readings", return_value=supply) as s, \
+             mock.patch.object(sufficiency, "protocol_value_readings", return_value=value) as v, \
+             mock.patch.object(sufficiency, "protocol_derate_comparison", return_value=compared) as d, \
+             mock.patch.object(protocol_chair, "declared_range", return_value=ranged) as r:
+            summary = brief.protocol_summary(pack, self.force)
+        for mocked in (s, v, d, r): mocked.assert_called_once()
+        self.assertIn("876,543 " + self.registry()[supply["token"]]["unit"], "\n".join(summary["lines"]))
+        self.assertIn({"value": "876543", "unit": supply["unit"]}, summary["figures"])
+        self.assertIn(brief._format_number("765432", "USD"), "\n".join(summary["lines"]))
+        self.assertIn(brief._format_number("42", "percent"), "\n".join(summary["lines"]))
+        self.assertIn({"value": "33", "unit": "percent"}, summary["figures"])
+        self.assertEqual(summary["range"], ranged)
+        self.assertEqual(set(summary["facts"]), set(value["facts"]) | set(supply["facts"].values()) |
+                         {self.r["comparison_volume"]["id"]})
+        pairs = [(f["value"], f["unit"]) for f in summary["figures"]]
+        self.assertEqual(len(pairs), len(set(pairs)))
+
+    def test_an_unreadable_helper_prints_no_figure(self):
+        from unittest import mock
+        from council.engine import protocol_chair
+        reading = self.summary()
+        values = [reading[k] for k in ("supply", "value", "comparison", "range")]
+        for absent in range(len(values)):
+            replacements = [None if index == absent else v for index, v in enumerate(values)]
+            with mock.patch.object(sufficiency, "protocol_supply_readings", return_value=replacements[0]), \
+                 mock.patch.object(sufficiency, "protocol_value_readings", return_value=replacements[1]), \
+                 mock.patch.object(sufficiency, "protocol_derate_comparison", return_value=replacements[2]), \
+                 mock.patch.object(protocol_chair, "declared_range", return_value=replacements[3]):
+                summary = self.summary()
+            self.assertEqual(summary["figures"], [])
+            self.assertEqual(summary["tables"], [])
+            self.assertIn(self.r["readings_refusal"], "\n".join(brief.protocol_lines(summary)))
+            self.assertIn(self.r["absent_sentence"], "\n".join(brief.protocol_lines(summary)))
+
+    def test_a_capture_string_is_neutralised(self):
+        self.force["claim"] = dict(self.claim(), words="<script>INVENTED</script>\n# forged")
+        self.c["supply_schedule"]["tranches"][0]["receiving_group"] = "![forged](bad) | <script>"
+        text = self.full()
+        self.assertNotIn("<script>", text)
+        self.assertNotIn("\n# forged", text)
+        self.assertIn("&lt;script&gt;", text)
+
+
+class TestTheProtocolEvidenceTables(ProtocolPageTest):
+    def test_a_protocol_full_document_carries_the_record_key_line(self):
+        text = self.full()
+        self.assertIn("- Record key: `price_last`", text)
+        for item in self.c["tier1"] + self.c["tier2"]:
+            line = brief.RECORD_KEY_LINE + "`" + item["id"] + "`"
+            self.assertEqual(text.splitlines().count(line), 1, item["id"])
+
+    def test_capture_text_on_a_protocol_page_is_escaped_once(self):
+        from council.report import evidence_page
+        self.c["supply_schedule"]["tranches"][0]["receiving_group"] = "A & B"
+        self.c["supply_schedule"]["locked_holders"][0]["group"] = "A & B"
+        text = self.full()
+        page = evidence_page.render_page(text)
+        self.assertIn("A &amp; B", page)
+        self.assertNotIn("A &amp;amp; B", page)
+        self.assertIn("| A & B |", text)
+        scripts = page.count("<script>")
+        for field, value in (("receiving_group", "A &amp; B"),
+                             ("receiving_group", "<script>![forged](bad) | `code`")):
+            self.c["supply_schedule"]["tranches"][0][field] = value
+            text = self.full()
+            page = evidence_page.render_page(text)
+            if value.startswith("A"):
+                self.assertIn("A &amp;amp; B", page)
+            else:
+                self.assertNotIn("<script>", text)
+                self.assertEqual(page.count("<script>"), scripts)
+                self.assertIn("&lt;script&gt;", page)
+                self.assertNotIn("&amp;lt;script", page)
+                self.assertIn("\\|", text)
+
+    def test_protocol_table_headings_are_read_from_page_words(self):
+        import ast
+        import inspect
+        heads = self.r["page_words"]["heads"]
+        summary = self.summary()
+        self.assertEqual({lead for lead, _ in brief.protocol_tables(summary)}, set(heads.values()))
+        for printer in (brief.protocol_summary, brief.protocol_tables, brief.render_full):
+            literals = {node.value for node in ast.walk(ast.parse(inspect.getsource(printer)))
+                        if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+            self.assertFalse(literals & set(heads.values()))
+        words = self.floors["asset_classes"]["crypto"]["protocol_rule"]["page_words"]
+        for key in heads:
+            self.assertIn("owner ruling", words["why"]["heads." + key].casefold())
+        replacements = {key: "INVENTED heading " + str(i) for i, key in enumerate(heads)}
+        words["heads"] = replacements
+        self.assertEqual({lead for lead, _ in brief.protocol_tables(self.summary())},
+                         set(replacements.values()))
+
+    def test_holders_row_prints_share_and_annualised_gap_separately(self):
+        summary = self.summary()
+        table = next(t for lead, t in brief.protocol_tables(summary) if lead == self.r["fees_lead"])
+        row = table["rows"][2]
+        share = brief._format_number(str(summary["value"]["holders_share_percent"]), "percent")
+        self.assertEqual(row[-1]["text"], share + " (calculated)")
+        gap = brief._format_number(str(summary["value"]["fees"]["holders"]["gap_percent"]), "percent")
+        self.assertIn("30-day against 90-day annualised: " + gap,
+                      "\n".join(brief.table_lines(table, [])))
+
+    def test_protocol_page_uses_words_and_prints_short_history_once(self):
+        self.optional("second_30d", "400")
+        self.optional("second_90d", "400")
+        text = self.full()
+        # The ruled key line names the record; display labels remain plain words.
+        display = "\n".join(line for line in text.splitlines()
+                            if not line.startswith(brief.RECORD_KEY_LINE))
+        for raw in ("None", "False", "_usd", "_d30", "Gross usd", "Artemis d30", "| history |"):
+            self.assertNotIn(raw, display)
+        sentence = self.r["short_history_words"] % brief._format_number("1000", None)
+        self.assertEqual(text.count(sentence), 1)
+        label = self.r["page_words"]["labels"]["shape"]
+        self.assertNotIn(label + ": " + label + ":", display)
+
+    def test_the_fees_by_route(self):
+        text = self.tables()
+        for route in self.summary()["value"]["routes"]:
+            self.assertIn(self.r["holders_fee_routes"][route], text)
+        self.assertIn("90 days scaled to a year", text)
+        self.assertIn("30 days scaled to a year", text)
+
+    def test_resellable_buybacks_shown_not_counted(self):
+        before = self.summary()["value"]["holders_share_percent"]
+        self.optional("resellable_30d"); self.optional("resellable_90d")
+        self.assertIn(self.r["resellable_words"], self.tables())
+        self.assertEqual(self.summary()["value"]["holders_share_percent"], before)
+
+    def test_fee_sources_disagree_above_the_line_only(self):
+        self.optional("second_30d", "375")
+        self.assertFalse(any(self.r["fee_sources_disagree_words"] in x for x in self.summary()["unverified"]))
+        self.facts(self.c)[self.r["optional_roles"]["second_30d"]["id"]]["value"] = "400"
+        self.assertIn(self.r["fee_sources_disagree_words"], self.tables())
+
+    def test_the_supply_windows_and_who_receives(self):
+        for word in self.r["supply_window_words"]: self.assertIn(word, self.tables())
+        self.assertIn("invented stakers", self.tables())
+        self.assertIn(self.r["turnover_label_words"], self.tables())
+
+    def test_a_negative_net_prints_as_it_is(self):
+        summary = self.summary()
+        window = summary["supply"]["windows"][0]
+        self.assertLess(window["net"], 0)
+        self.assertIn(brief._format_number(str(window["net"]), None) + " " + summary["row"]["unit"], self.tables())
+
+    def test_the_schedule_and_the_aggregator_label(self):
+        self.c["supply_schedule"]["tranches"][0]["dated_by"] = "aggregator"
+        self.c["supply_schedule"]["tranches"][0].update(source="INVENTED aggregator", rule_source="INVENTED protocol documentation of totals and vesting")
+        self.assertIn(self.r["aggregator_label_words"], self.tables())
+        self.assertIn("invented team", self.tables())
+        self.assertIn("8 Jan 2027", self.tables())
+
+    def test_who_has_the_still_locked_supply(self):
+        self.assertIn("Who has the still-locked supply", self.tables())
+        self.assertIn("100.0%", self.tables())
+
+    def test_single_source_labels_follow_the_row(self):
+        for token, row in self.registry().items():
+            self.c = protocol_capture(token)
+            summary = self.summary()
+            texts = "\n".join(summary["unverified"])
+            for role in ("price", "supply"):
+                self.assertEqual(self.r["page_words"]["labels"][role] + ": " + self.r["single_source_words"] in texts,
+                                 not row[role + "_cross_check"])
+            sources = next(t for lead, t in brief.protocol_tables(summary)
+                           if lead == "Price and supply, with their sources")
+            for cells in sources["rows"][:2]:
+                self.assertIn("INVENTED", cells[2]["text"])
+                self.assertEqual(cells[3]["text"], brief._format_date(self.c["captured_at"][:10]))
+
+    def test_the_protocols_own_supply_beside_with_its_gap(self):
+        token = self.flagged("protocol_supply_beside")
+        self.c = protocol_capture(token)
+        self.assertIn(self.r["supply_beside_words"], self.tables())
+        self.assertIn("10.0%", self.tables())
+
+    def test_the_four_measures_side_by_side_with_their_volume_sources(self):
+        tables = brief.protocol_tables(self.summary())
+        table = next(t for lead, t in tables if lead == self.r["derate_lead"])
+        self.assertEqual([r[0]["text"] for r in table["rows"]], [m["words"] for m in self.r["derate_measures"]])
+        for cell in table["rows"][0][1:3]:
+            self.assertIn(self.r["volume_source_words"] % self.r["comparison_volume"]["source_words"][0], cell["text"])
+
+    def test_a_missing_side_is_a_named_gap(self):
+        self.assertIn(self.r["derate_gap_words"], self.tables())
+
+    def test_not_comparable_without_like_for_like_volume(self):
+        self.c["tier1"] = [f for f in self.c["tier1"] if f["id"] != self.r["comparison_volume"]["id"]]
+        self.assertIn(self.r["comparison_volume"]["missing_words"], self.tables())
+
+    def test_the_short_history_day_count(self):
+        self.assertIn(self.r["short_history_words"] % brief._format_number("1000", None), self.tables())
+        self.assertIn("Volatility window", self.tables())
+
+    def test_the_block_is_cut_last_on_the_one_page(self):
+        summary = self.summary()
+        for line in brief.protocol_lines(summary): self.assertTrue(line.startswith(brief.SHAPE_PREFIXES), line)
+        dropped, rows = brief._rows_to_cut(["first row", "ordinary detail", *brief.protocol_lines(summary)], 1)
+        self.assertEqual(dropped, {1})
+
+    def test_a_coin_full_document_keeps_its_bytes(self):
+        # CONTROL: passes on base by design; expected bytes recorded before edits.
+        rendered = brief.render_full(freeze.build_pack(coin_capture()), "0" * 64)
+        self.assertEqual(hashlib.sha256(rendered.encode()).hexdigest(), "dfe41b3f6f30260403aae97710ba14090fda9fb9a8c7e77af23d8bfec04e9aec")
+
+
+
+
+
+class TestTheProtocolHelperExtensions(ProtocolPageTest):
+    # Invented: one, two and three dollars divided by one dollar are exact multiples.
+    def test_the_comparables_carry_their_multiples_low_median_high(self):
+        from decimal import Decimal
+        for count in (3, 4):
+            c = protocol_capture()
+            for n in range(1, count + 1):
+                with_comparables(c, ["invented_" + str(n)], market_value=str(n * 365), holders_fees_90d="90")
+            reading = sufficiency.protocol_value_readings(freeze.build_pack(c), self.floors, self.force)
+            self.assertEqual(reading["methods"]["comparables"]["multiples_range"],
+                             dict(low=Decimal(1), median=Decimal(count + 1) / 2, high=Decimal(count)))
+
+    def test_the_range_reads_the_same_multiples(self):
+        from unittest import mock
+        with mock.patch.object(sufficiency, "_protocol_multiples_range", wraps=sufficiency._protocol_multiples_range) as reader:
+            value = self.summary()["value"]
+        self.assertGreaterEqual(reader.call_count, 2)
+        method = value["methods"]["comparables"]
+        for level, multiple in zip(("low", "base", "high"), ("low", "median", "high")):
+            self.assertEqual(method[level], method["multiples_range"][multiple] * value["fees"]["holders"]["annual"])
+        args = [c.args[0] for c in reader.call_args_list]
+        self.assertGreaterEqual(args.count(method["multiples"]), 2)
+
+    def test_the_other_methods_keep_their_keys(self):
+        # CONTROL: passes on base by design; no new aggregate in the other methods.
+        with_history(self.c, {"invented_a": "1", "invented_b": "2", "invented_c": "3", "invented_d": "4"})
+        with_lines(self.c, {"invented_one": "150", "invented_two": "150"})
+        for line in ("invented_one", "invented_two"):
+            with_comparables(self.c, ["invented_a", "invented_b", "invented_c"], line=line)
+        value = self.summary()["value"]
+        self.assertEqual(set(value["methods"]["own_history"]), {
+            "used", "low", "base", "high", "members", "per_token", "per_token_twelve_months",
+            "place", "market_value_against_base_percent", "fully_diluted_value_against_base_percent", "today_multiple"})
+        for part in value["methods"]["sum_of_parts"]["parts"].values():
+            self.assertEqual(set(part), {
+                "used", "low", "base", "high", "members", "per_token", "per_token_twelve_months",
+                "place", "market_value_against_base_percent", "fully_diluted_value_against_base_percent"})
+
+    def test_every_tranche_carries_its_provenance(self):
+        for source in (None, "INVENTED primary rule"):
+            self.c["supply_schedule"]["tranches"][0]["rule_source"] = source
+            tranche = self.summary()["supply"]["tranches"][0]
+            for key in ("source", "rule_source", "as_of"):
+                self.assertEqual(tranche[key], self.c["supply_schedule"]["tranches"][0][key])
+
+    def test_the_comparison_does_not_move(self):
+        # CONTROL: the helper extensions do not enter the derate comparison.
+        pack = freeze.build_pack(self.c)
+        expected = sufficiency.protocol_derate_comparison(pack, self.floors, self.case)
+        self.summary()
+        self.assertEqual(sufficiency.protocol_derate_comparison(pack, self.floors, self.case), expected)
+
+
+class TestTheSummaryForTheReport(ProtocolPageTest):
+    # Invented: ninety over ninety days annualises to three hundred sixty-five.
+    def test_a_method_chosen_at_the_opening_is_unchanged_at_the_pause(self):
+        self.assertEqual(self.summary()["range_line"], self.r["range_method_opening_line_words"] % (
+            self.r["method_words"][self.force["range_method"]], self.r["page_words"]["range_method_opening_words"]))
+
+    def test_a_method_named_at_the_pause_keeps_its_why(self):
+        # CONTROL: the existing named-at-pause sentence keeps its reason.
+        self.force["opening_changes"] = [dict(variable="range_method", **{"from": self.force["range_method"]}, to=self.force["range_method"], why="INVENTED reason")]
+        self.assertEqual(self.summary()["range_line"], self.r["range_method_named_words"] % (
+            self.r["method_words"][self.force["range_method"]], "INVENTED reason"))
+
+    def test_the_comparables_table_prints_the_multiples_row(self):
+        summary = self.summary()
+        self.assertIn(self.r["multiples_range_words"], self.tables())
+        multiples = summary["value"]["methods"]["comparables"]["multiples_range"]
+        for number in multiples.values():
+            self.assertIn(dict(value=str(number), unit="multiple"), summary["figures"])
+
+    def test_the_release_table_prints_its_provenance(self):
+        for rule_source in (None, "INVENTED rule & *source*"):
+            self.c["supply_schedule"]["tranches"][0]["rule_source"] = rule_source
+            summary = self.summary()
+            table = next(t for lead, t in summary["tables"] if lead == self.r["page_words"]["heads"]["schedule"])
+            self.assertEqual(table["head"][-3:], self.r["schedule_provenance_heads"])
+            raw = self.c["supply_schedule"]["tranches"][0]
+            self.assertEqual([brief.cell_text(cell) for cell in table["rows"][0][-3:]],
+                             [raw["source"], rule_source or "", brief._format_date(raw["as_of"])])
+
+    def test_the_summary_keeps_its_kind_line_case_basis_and_short_history(self):
+        for role in ("history", "volatility_window"):
+            self.facts(self.c)[self.r["roles"][role]["id"]]["value"] = "1000"
+        summary = self.summary()
+        self.assertEqual(summary["lines"][0], "- " + self.r["front_lead"] + ": " + summary["kind_line"])
+        self.assertIn(summary["case_basis"], summary["case_line"])
+        self.assertEqual(summary["short_history_line"], self.r["short_history_words"] % "1,000")
+
+    def test_a_coin_full_document_keeps_its_bytes(self):
+        # CONTROL: pinned by the independent base/head byte probe as well.
+        c = coin_capture()
+        pack = freeze.build_pack(c)
+        self.assertEqual(brief.render_full(pack, "a" * 64, in_force=self.force), brief.render_full(pack, "a" * 64))
+
+
+class TestProtocolNumberForms(ProtocolPageTest):
+    def setUp(self):
+        super().setUp()
+        self.c = with_comparison_volume(with_comparables(protocol_capture("solana"),
+            ["invented_a", "invented_b", "invented_c"]))
+        self.case = self.registry()["solana"]["default_derate_case"]
+        self.floors = with_derate_record(FLOORS, self.case, gaps=["INVENTED recorded gap"])
+        self.patch.stop()
+        from unittest import mock
+        self.patch = mock.patch.object(brief, "_FLOORS", self.floors)
+        self.patch.start(); self.addCleanup(self.patch.stop)
+        self.force["derate_case"] = self.case
+
+    def one(self):
+        return brief.render(freeze.build_pack(self.c), "a" * 64, in_force=self.force)
+
+    def full(self):
+        return brief.render_full(freeze.build_pack(self.c), "a" * 64, in_force=self.force)
+
+    def large_price(self):
+        for role in ("price", "price_check"):
+            self.facts(self.c)[self.r["roles"][role]["id"]]["value"] = "4321.55"
+
+    def test_d1_per_token_range_has_currency_and_short_precision(self):
+        text = self.full()
+        self.assertIn("$0.00243", text)
+        self.assertNotRegex("\n".join(self.summary()["method_lines"]), r"\.\d{7,}")
+
+    def test_d2_supply_shares_keep_one_percent_sign(self):
+        for text in (self.one(), self.full()):
+            self.assertIn("-0.009%", text)
+            self.assertNotIn("%%", text)
+            self.assertNotRegex(text, r"-0\.008855\d+")
+
+    def test_d3_large_shares_are_grouped(self):
+        self.large_price()
+        text = self.full()
+        self.assertRegex(text, r"\d{1,3}(?:,\d{3})+\.\d%")
+        self.assertNotRegex(text, r"(?<![\d,])\d{4,}\.\d%")
+
+    def test_d4_per_token_price_keeps_cents_and_grouping(self):
+        self.large_price()
+        for text in (self.one(), self.full()):
+            self.assertIn("$4,321.55", text)
+
+    def test_token_amount_is_followed_by_its_symbol(self):
+        text = self.full()
+        self.assertIn("-88.56 SOL", text)
+        self.assertNotIn("-SOL 88.56", text)
+
+    def test_full_fact_token_counts_put_the_symbol_last(self):
+        text = self.full().split("## Every fact, in full", 1)[1]
+        self.assertIn("1.00M SOL", text)
+        self.assertIn("2.00M SOL", text)
+        self.assertNotIn("SOL 1.00M", text)
+        self.assertNotIn("SOL 2.00M", text)
+
+    def test_no_exact_fallback_reaches_an_evidence_reader(self):
+        from council.engine import briefs
+        from council.report import evidence_page
+        pack = freeze.build_pack(self.c)
+        texts = [self.one(), self.full(), evidence_page.render_page(self.full())]
+        texts += [briefs.render_casefile(pack, {}, "INVENTED question", self.c["subject"],
+            seat_kind=seat, in_force=self.force) for seat in [*briefs.ADVISOR_SEATS, None]]
+        for text in texts:
+            self.assertNotRegex(text, r"\d{20}")
+
+    def test_coin_and_equity_pages_keep_their_base_hashes(self):
+        # CONTROL: independently captured base hashes, no repository calls.
+        for c, hashes in ((coin_capture(), (
+            "5529ad65295d12fd1ea6bb0f2c78d8b5e93d7b3d3d46f6b83d608c4403b96d7f",
+            "c01c411903fd288deaa1b4fe7add72f6d2a41d10e7e43af2873bb74dc4bd97df")),
+            (load_fixture("aapl-pass.json"), (
+            "5e66e66adc760f7c3810a16ccf15172ae0c4a71779a265c418fc83b8b7b16d70",
+            "5bb7e5f8772f7db1d8486d58a33b6e7ab9fc537da4680791980c397b73f5a359"))):
+            pack = freeze.build_pack(c)
+            for renderer, expected in zip((brief.render, brief.render_full), hashes):
+                self.assertEqual(hashlib.sha256(renderer(pack, "a" * 64).encode()).hexdigest(), expected)
+
+
+class TestProfitFixTracing(unittest.TestCase):
+    def test_compound_terms_and_suspended_terms_are_exempt(self):
+        from council.engine import chair_fields
+        from council.tests.test_engine import fixture
+        capture = fixture("pack.json")["capture"]
+        for text in ("the 200-day average", "52-week low",
+                     "its 50-, 100- and 200-day averages"):
+            with self.subTest(text=text):
+                capture["captured_at"] = "2026-10-10T12:00:00Z"
+                self.assertTrue(chair_fields.answer_line_untraced(
+                    text, [], capture, brief._marks_config()))
+                capture["captured_at"] = "2026-10-11T12:00:00Z"
+                self.assertEqual(chair_fields.answer_line_untraced(
+                    text, [], capture, brief._marks_config()), [])
+
+    def test_ruled_terms_are_data_and_default_to_none(self):
+        from council.evidence import trace
+        cfg = trace.capture_config(trace.config(FLOORS),
+                                   {"captured_at": "2026-10-11T12:00:00Z"})
+        for word in FLOORS["prose_figure_marks"]["hyphen_term_words"]:
+            self.assertFalse(trace.untraced("987-" + word, [], cfg))
+        self.assertTrue(trace.untraced("987-day", [], trace.config({})))
+
+    def test_ordinary_numbers_currency_scales_and_percent_ranges_stay_marked(self):
+        # Controls: terms never exempt a measured figure or a range.
+        from council.engine import chair_fields
+        from council.tests.test_engine import fixture
+        capture = fixture("pack.json")["capture"]
+        capture["captured_at"] = "2026-10-11T12:00:00Z"
+        for text in ("200 days", "$200-million", "$987-day", "987%-day",
+                     "987-million-day", "40-50%", "987-, $988-day", "987-daybreak"):
+            with self.subTest(text=text):
+                self.assertTrue(chair_fields.answer_line_untraced(
+                    text, [], capture, brief._marks_config()))
+
+
+
+# AC84(1)-(8): invented captures; all ruled ids and tickers read from data.
+FC_RULE = FLOORS["archetype_measures"].get("float_compounder_rule", {})
+FC_CAPTURE_ROW = FLOORS["archetype_measures"]["table"]["financial_institution"]["subtypes"].get(FC_RULE.get("compounder_subtype"), {})
+
+
+def compounder_capture(**overrides):
+    """Ten invented year-ends, including losses and zero dividends."""
+    c = fi_capture("insurer")
+    f = frame_of(c)
+    f["fi_subtype"] = FC_RULE["compounder_subtype"]
+    row = FC_CAPTURE_ROW
+    book = FC_RULE["yardstick_book"]
+    fi_fact(c, book, "24000", "USD_m")
+    compounder_assets(c)
+    fi_fact(c, FC_RULE["fiscal_year_end_id"], "12-31", "month_day")
+    compounder_history(c, range(2016, 2026))
+    f["decisive_metrics"][3]["answered_by"] = [book]
+    peer_ids = []
+    for peer, spec in zip(f["peers"], FC_RULE["compounder_peers"].values()):
+        peer.update(ticker=spec["tickers"][0], name=spec["names"][0], metrics=[])
+        for metric, amount in ((row["peer_numerator_metric"], "36000"), (book, "18000")):
+            fid = "peer_%s__%s" % (metric, sufficiency.subjects.slug(peer["ticker"]))
+            fi_fact(c, fid, amount, "USD_m")
+            peer["metrics"].append(fid)
+            peer_ids.append(fid)
+    target = FC_RULE["solvency"]["target_prefix"] + "q"
+    fi_fact(c, target, "14", "%")
+    f["fi_capital"]["target_fact"] = target
+    for prefix in (FC_RULE["operating_roe_prefix"], FC_RULE["adjusted_book"]["prefix"], FC_RULE["segments"]["sales"]):
+        absent_by_design(c, prefix)
+    for r in c["sufficiency"]["requirements"]:
+        if r["id"] == "profit_growth":
+            r["answered_by"] = [p + "fy2025" for p in list(FC_RULE["history"].values())[:2]]
+        if r["id"] == "rating_vs_history_or_peers":
+            r.update(measure=row["measure"], subject_denominator_facts=[book], peer_denominator_metrics=[book], answered_by=[row["subject_numerator"], book, FC_RULE["history"]["year_end_price"] + "fy2025"] + peer_ids)
+    c["sufficiency"]["requirements"].append(dict(id="underwriting_record", kind="canonical_test", description="INVENTED annual underwriting record", status="answered", answered_by=[FC_RULE["history"]["underwriting_result"] + "fy2025"]))
+    f.update(overrides)
+    return compounder_bound(c)
+
+
+def compounder_bound(c):
+    block = c.get("evidence_challenge")
+    if block:
+        for key in ("evidence_sha256", "post_audit_sha256"):
+            block[key] = gate.evidence_body_sha256(c)
+    return c
+
+
+def compounder_assets(c, share="30", owned="10", total="90"):
+    for fid, amount in zip(FC_RULE["classification"].values(), (share, owned, total)):
+        fi_fact(c, fid, amount, "USD_m")
+    return c
+
+
+def compounder_history(c, years):
+    prefixes = list(FC_RULE["history"].values())
+    c["tier1"] = [x for x in c["tier1"] if not any(x["id"].startswith(p) for p in prefixes)]
+    for year in years:
+        amounts = ("100", "0" if year % 2 else "2", "120", "-10" if year in (2018, 2022) else "20", "-5" if year == 2020 else "15")
+        for index, (prefix, amount) in enumerate(zip(prefixes, amounts)):
+            fi_fact(c, prefix + "fy" + str(year), amount, "USD_per_share" if index < 3 else "USD_m")
+            c["tier1"][-1].update(as_of="2026-07-15", freshness_rule_days=FLOORS["freshness_ceiling"]["closed_period_record_rule_days"])
+    return c
+
+
+def compounder_segments(c, year=2025):
+    prefix = FC_RULE["segments"]["sales"]
+    c["gaps"] = [g for g in c["gaps"] if g["fact_class"] != prefix]
+    for p in FC_RULE["segments"].values():
+        fi_fact(c, p + "invented_factory_fy" + str(year), "10", "USD_m")
+    if not any(x["id"] == FC_RULE["fiscal_year_end_id"] for x in c["tier1"]):
+        fi_fact(c, FC_RULE["fiscal_year_end_id"], "12-31", "month_day")
+    return c
+
+
+def compounder_page_capture():
+    """Invented published adjustment, segment, plain peer and low solvency."""
+    c = compounder_segments(compounder_capture())
+    c["gaps"] = [g for g in c["gaps"] if g["fact_class"] not in
+                 (FC_RULE["adjusted_book"]["prefix"], FC_RULE["operating_roe_prefix"])]
+    fid = list(FC_RULE["adjusted_book"]["members"])[1]
+    fi_fact(c, fid, "25", "USD_per_share")
+    c["tier1"][-1].update(label="INVENTED fair-value excess", source="INVENTED annual report")
+    fi_fact(c, FC_RULE["operating_roe_prefix"] + "q", "12", "%")
+    frame = frame_of(c)
+    target = frame["fi_capital"]["target_fact"]
+    next(f for f in c["tier1"] if f["id"] == target)["value"] = "18"
+    peer = frame["peers"][-1]
+    peer.update(ticker=frame_of(fi_capture("insurer"))["peers"][-1]["ticker"], name="INVENTED plain insurer")
+    slug = sufficiency.subjects.slug(peer["ticker"])
+    peer[FC_RULE["peer_reason_field"]] = "INVENTED similar underwriting mix"
+    for metric in (FC_CAPTURE_ROW["peer_numerator_metric"], FC_RULE["yardstick_book"]):
+        fid = FC_RULE["peer_gap_class"] + metric + "__" + slug
+        c["tier1"] = [fact for fact in c["tier1"] if fact["id"] != fid]
+        fi_fact(c, fid, "100", "USD_m")
+    peer["metrics"] = [FC_RULE["peer_gap_class"] + m + "__" + slug for m in
+                       (FC_CAPTURE_ROW["peer_numerator_metric"], FC_RULE["yardstick_book"])]
+    rating = next(r for r in c["sufficiency"]["requirements"] if r["id"] == "rating_vs_history_or_peers")
+    rating["answered_by"] = [fid for fid in rating["answered_by"] if not fid.startswith(FC_RULE["peer_gap_class"])] + [fid for p in frame["peers"] for fid in p["metrics"]]
+    compounder_bound(c)
+    outcome = gate.validate_capture(c, SCHEMA, FLOORS)
+    assert outcome["result"] == "accepted", outcome["reasons"]
+    return c
+
+
+class TestCompounderReadings(unittest.TestCase):
+    def read(self, c=None):
+        return brief.float_compounder_readings(freeze.build_pack(c or compounder_capture()))
+
+    def test_price_to_book_is_market_value_over_book(self):
+        c = compounder_capture()
+        facts = {f["id"]: f for f in c["tier1"]}
+        self.assertEqual(self.read(c)["price_to_book"], Decimal(facts[FC_CAPTURE_ROW["subject_numerator"]]["value"]) / Decimal(facts[FC_RULE["yardstick_book"]]["value"]))
+
+    def test_the_growth_adds_dividends_paid_after_the_first_year_end(self):
+        c = compounder_history(compounder_capture(), range(2023, 2026))
+        absent_by_design(c, FC_RULE["younger_record_gap_class"])
+        facts = {f["id"]: f for f in c["tier1"]}
+        for y, book, dividend in ((2023, "100", "90"), (2024, "150", "20"), (2025, "200", "30")):
+            facts[FC_RULE["history"]["book_value_per_share"] + "fy" + str(y)]["value"] = book
+            facts[FC_RULE["history"]["dividends_per_share"] + "fy" + str(y)]["value"] = dividend
+        expected = ((Decimal(250) / 100).sqrt() - 1) * 100
+        chained = ((Decimal(170) / 100 * Decimal(230) / 150).sqrt() - 1) * 100
+        self.assertEqual(self.read(c)["growth"].quantize(Decimal("0.1")), expected.quantize(Decimal("0.1")))
+        self.assertNotEqual(expected.quantize(Decimal("0.1")), chained.quantize(Decimal("0.1")))
+
+    def test_the_growth_reads_the_latest_ten_of_more(self):
+        r = self.read(compounder_history(compounder_capture(), range(2014, 2026)))
+        self.assertEqual((len(r["years"]), r["older"], r["steps"]), (10, 2, 9))
+        self.assertEqual(r["years"][-1]["year"], "fy2016")
+
+    def test_a_younger_record_reads_what_it_has(self):
+        c = compounder_history(compounder_capture(), range(2020, 2026))
+        absent_by_design(c, FC_RULE["younger_record_gap_class"])
+        self.assertEqual((len(self.read(c)["years"]), self.read(c)["steps"]), (6, 5))
+
+    def test_the_profit_count_is_strictly_above_zero(self):
+        c = compounder_capture()
+        prefix = FC_RULE["history"]["underwriting_result"]
+        next(f for f in c["tier1"] if f["id"] == prefix + "fy2025")["value"] = "0"
+        self.assertEqual(self.read(c)["profit_years"], 7)
+
+    def test_each_year_end_has_its_price_to_book(self):
+        r = self.read()
+        self.assertEqual(len(r["price_to_book_by_year"]), 10)
+        self.assertEqual(set(r["price_to_book_by_year"].values()), {Decimal("1.2")})
+
+    def test_a_published_adjustment_gives_the_one_sum(self):
+        a = self.read(compounder_page_capture())["adjusted"][0]
+        self.assertEqual((a["sum"], a["year"]), (Decimal(125), "fy2025"))
+
+    def test_a_published_value_is_read_as_recorded(self):
+        c = compounder_capture()
+        fid = list(FC_RULE["adjusted_book"]["members"])[0]
+        fi_fact(c, fid, "170", "USD_per_share")
+        c["tier1"][-1].update(label="INVENTED published value", source="INVENTED report")
+        c["gaps"] = [g for g in c["gaps"] if g["fact_class"] != FC_RULE["adjusted_book"]["prefix"]]
+        a = self.read(c)["adjusted"][0]
+        self.assertEqual((a["id"], a["label"], a["source"], a["sum"]), (fid, "INVENTED published value", "INVENTED report", None))
+
+    def test_below_target_only_when_the_ratio_is_below(self):
+        c = compounder_capture(); target = frame_of(c)["fi_capital"]["target_fact"]
+        facts = {f["id"]: f for f in c["tier1"]}
+        ratio = FC_RULE["solvency"]["ratio_prefix"] + "q"
+        for amount, below in (("14", False), ("15", False), ("13", True)):
+            facts[ratio]["value"] = amount
+            self.assertEqual(self.read(c)["solvency"]["below"], below)
+
+    def test_a_peer_in_two_units_is_not_comparable(self):
+        from council.tests import test_report as report_tests, test_engine as engine_tests
+        words = FC_RULE["page_words"]["not_comparable_words"]
+        for kind in ("peer", "year"):
+            with self.subTest(kind=kind):
+                c = compounder_capture()
+                fid = (frame_of(c)["peers"][0]["metrics"][0] if kind == "peer" else
+                       FC_RULE["history"]["year_end_price"] + "fy2025")
+                units = ("EUR_m", "USD_m") if kind == "peer" else ("EUR_per_share", "USD_per_share")
+                fact_in(c, fid)["unit"] = units[0]
+                r = self.read(c)
+                number = r["peers"][0]["multiple"] if kind == "peer" else r["price_to_book_by_year"]["fy2025"]
+                self.assertIsNone(number)
+                front = report_tests._front(report_tests._compounder_page(lambda doc: doc.update(copy.deepcopy(c))))
+                self.assertNotIn(">" + words + "</div>", front)
+                pack = freeze.build_pack(c)
+                full = brief.render_full(pack, "a" * 64)
+                self.assertNotIn(words, full.splitlines())
+                self.assertNotIn("- " + words, full.splitlines())
+                tables = brief.float_compounder_tables(pack, frame_of(c), r)
+                row = tables[-1][1]["rows"][1] if kind == "peer" else tables[0][1]["rows"][0]
+                reason = brief.cell_text(row[4])
+                for text in (words, *units):
+                    self.assertIn(text, reason)
+                    self.assertIn(text, full)
+                for text in engine_tests.fi_case_texts(c):
+                    self.assertNotIn(words, text.splitlines())
+                    self.assertIn(reason, text)
+
+    def test_a_plain_insurer_peer_carries_its_reason(self):
+        peer = self.read(compounder_page_capture())["peers"][-1]
+        self.assertFalse(peer["compounder"])
+        self.assertEqual(peer["reason"], "INVENTED similar underwriting mix")
+
+    def test_every_fact_read_is_in_the_role_set(self):
+        from unittest import mock
+        p = freeze.build_pack(compounder_page_capture())
+        with mock.patch.object(sufficiency, "float_compounder_role_set", wraps=sufficiency.float_compounder_role_set) as roles:
+            with mock.patch.object(sufficiency, "_holding_history", wraps=sufficiency._holding_history) as history:
+                r = brief.float_compounder_readings(p)
+        self.assertEqual(roles.call_count, 1)
+        # The rule also uses the annual reader; the page adds exactly one call.
+        with mock.patch.object(sufficiency, "float_compounder_role_set", return_value=r["roles"]):
+            with mock.patch.object(sufficiency, "_holding_history", wraps=sufficiency._holding_history) as history:
+                brief.float_compounder_readings(p)
+                self.assertEqual(history.call_count, 1)
+        ids = {y[k] for y in r["years"] for k in ("bvps", "dps", "price", "underwriting", "gains")}
+        ids.update(a["id"] for a in r["adjusted"]); ids.update(r["operating_roe"])
+        ids.update(s[k] for s in r["segments"] for k in ("sales", "operating_profit"))
+        self.assertLessEqual(ids, set(r["roles"]))
+        self.assertTrue(all("history:" in " ".join(r["roles"][fid]) for y in r["years"] for fid in [y["bvps"]]))
+
+    def test_every_calculated_figure_is_in_figures(self):
+        r = self.read(compounder_page_capture())
+        figures = {Decimal(f["value"]) for f in r["figures"]}
+        numbers = [r["price_to_book"], r["growth"], r["profit_years"], r["adjusted"][0]["sum"]]
+        numbers += list(r["price_to_book_by_year"].values()) + [p["multiple"] for p in r["peers"]]
+        self.assertLessEqual(set(numbers), figures)
+
+    def test_no_other_subject_has_readings(self):
+        # Control: no compounder API on the base is also no readings.
+        read = getattr(brief, "float_compounder_readings", lambda p: None)
+        insurer = fi_capture("insurer"); insurer["captured_at"] = FC_RULE["applies_from"] + "T12:00:00Z"
+        for c in (fi_capture("bank"), fi_capture("insurer"), insurer, holding_capture(), load_fixture("exmp-pass.json")):
+            self.assertIsNone(read(freeze.build_pack(c)))
+
+
+class TestCompounderOnTheBrief(unittest.TestCase):
+    def texts(self, c=None):
+        p = freeze.build_pack(c or compounder_capture())
+        return brief.render(p, "a" * 64), brief.render_full(p, "a" * 64)
+
+    def test_the_one_page_names_the_kind_and_the_yardstick(self):
+        text = self.texts()[0]
+        self.assertIn(brief.FI_SUBTYPE_WORDS[FC_RULE["compounder_subtype"]], text)
+        self.assertIn(FC_RULE["page_words"]["yardstick_line_lead"], text)
+        self.assertIn("2.08x (calculated)", text)
+
+    def test_the_yardstick_line_is_cut_last(self):
+        line = "- " + FC_RULE["page_words"]["yardstick_line_lead"] + "INVENTED " * 100
+        dropped, rows = brief._rows_to_cut(["**INVENTED**", line, "- What it does: INVENTED"], 1)
+        self.assertNotIn(1, dropped); self.assertIn(2, dropped)
+
+    def test_the_one_page_stays_within_its_bound(self):
+        self.assertLessEqual(len(self.texts(compounder_page_capture())[0].splitlines()), brief.PAGE_LINES)
+        self.assertIn(FC_RULE["page_words"]["yardstick_line_lead"], self.texts(compounder_page_capture())[0])
+
+    def test_the_full_document_prints_every_year_read(self):
+        text = self.texts()[1]
+        self.assertIn(FC_RULE["page_words"]["ten_year_lead"], text)
+        for y in range(2016, 2026): self.assertIn("| " + str(y) + " |", text)
+
+    def test_the_gains_print_every_year_with_their_sentence(self):
+        text = self.texts()[1]
+        self.assertIn(FC_RULE["gains_sentence"], text)
+        self.assertEqual(sum("1.20x" in line for line in text.splitlines()), 10)
+        self.assertIn("-$5.00M", text)
+
+    def test_the_segments_table_says_not_valued_separately(self):
+        c = compounder_page_capture()
+        outcome = gate.validate_capture(c, SCHEMA, FLOORS)
+        self.assertEqual(outcome["result"], "accepted", outcome["reasons"])
+        self.assertIn(FC_RULE["segments_sentence"], self.texts(c)[1])
+
+    def test_no_segments_no_segment_table(self):
+        # Control: the base has no compounder tables.
+        self.assertNotIn("**The businesses outside insurance.**", self.texts()[1])
+
+    def test_the_peers_table_carries_each_reason(self):
+        text = self.texts(compounder_page_capture())[1]
+        self.assertIn("a plain insurer: INVENTED similar underwriting mix", text)
+        for spec in list(FC_RULE["compounder_peers"].values())[:1]: self.assertIn(spec["tickers"][0], text)
+
+    def test_the_adjusted_book_prints_in_the_companys_words_and_source(self):
+        text = self.texts(compounder_page_capture())[1]
+        self.assertIn("INVENTED fair-value excess", text); self.assertIn("INVENTED annual report", text)
+        self.assertIn("$125.00 per share (calculated", text)
+
+    def test_no_published_adjusted_book_prints_nothing(self):
+        # Control: no adjusted display line on the base either.
+        self.assertNotIn("Adjusted book value -", self.texts()[1])
+        self.assertNotIn("Adjusted book value,", self.texts()[1])
+
+    def test_operating_roe_is_shown_not_rated(self):
+        self.assertIn(FC_RULE["operating_roe_sentence"], self.texts(compounder_page_capture())[1])
+
+    def test_the_three_tests_print_in_the_floors_words(self):
+        text = self.texts()[1]
+        tests = text.split("**" + FC_RULE["page_words"]["tests_lead"] + ".**", 1)[1].split("\n**", 1)[0]
+        self.assertEqual(tests.count("Book value per share"), 1)
+        terms = sufficiency._canonical_test_terms(FLOORS, (FC_RULE["fi_archetype"], FC_RULE["compounder_subtype"]))
+        for key in ("profit_growth", "underwriting_record", "rating_vs_history_or_peers"):
+            self.assertIn(terms[key]["words"][0], text)
+
+    def test_the_cash_test_stays_distributable_capital(self):
+        # Control: this FI lift is already built.
+        self.assertIn(brief.FI_FREE_CASH_WORDS, self.texts()[1])
+
+    def test_capture_text_is_escaped_once(self):
+        c = compounder_page_capture(); fid = list(FC_RULE["adjusted_book"]["members"])[1]
+        next(f for f in c["tier1"] if f["id"] == fid)["label"] = "<b>INVENTED & label</b>"
+        full = self.texts(c)[1]
+        self.assertIn("$125.00 per share (calculated", full)
+        self.assertIn("&lt;b&gt;INVENTED &amp; label&lt;/b&gt;", full)
+        self.assertNotIn("&amp;amp;", full); self.assertNotIn("<b>INVENTED", full)
+
+    def test_the_word_tables_agree(self):
+        from council.report import render_report as report
+        measure = FC_CAPTURE_ROW["measure"]
+        self.assertEqual(brief.MEASURE_WORDS[measure], report.MEASURE_WORDS[measure])
+
+    def test_an_insurers_pages_are_unchanged(self):
+        # Control: compounder-only prose stays absent before and after the date.
+        for day in ("2026-07-15", FC_RULE["applies_from"]):
+            c = fi_capture("insurer"); c["captured_at"] = day + "T12:00:00Z"
+            for text in self.texts(c):
+                self.assertNotIn("Book value per share growth with dividends added back:", text)
+
+
+class CompounderTest(FISufficiencyTest):
+    def outcome(self, c, floors=None):
+        return sufficiency_of(freeze.build_pack(c), floors or FLOORS)
+
+    def rejects(self, c, word=None, floors=None):
+        out = self.outcome(c, floors)
+        self.assertEqual(out["result"], "refuse", out["message"])
+        if word:
+            self.assertTrue(any(FC_RULE[word] in m["why_needed"] for m in out["missing"]), out["missing"])
+        else:
+            self.assertFalse(any(m["what"] == "the sub-type of the declared archetype" for m in out["missing"]), out["missing"])
+        declared = sufficiency._declared_archetype(floors or FLOORS, c)
+        failures = sufficiency._float_compounder_failures(
+            floors or FLOORS, declared, frame_of(c, c["subject"]["ticker"]), c,
+            {x["id"]: x for x in c["tier1"]},
+            sufficiency._as_of_moment(c["captured_at"]).date(),
+            {g["fact_class"]: [g.get("reason_kind")] for g in c["gaps"]})
+        for what, why, where in failures:
+            self.assertIn("archetype_measures.float_compounder_rule", where)
+            selectors = list(FC_RULE["classification"].values()) + list(FC_RULE["history"].values()) + list(FC_RULE["segments"].values()) + list(FC_RULE["solvency"].values()) + [FC_RULE["adjusted_book"]["prefix"], FC_RULE["peer_gap_class"], FC_RULE["fiscal_year_end_id"], FC_RULE["operating_roe_prefix"], FC_RULE["yardstick_book"]] + FLOORS["archetype_measures"]["holding_rule"]["marker_prefixes"]
+            self.assertTrue(any(s in where for s in selectors), (what, why, where))
+        return out
+
+    def remove(self, c, fid):
+        c["tier1"] = [x for x in c["tier1"] if x["id"] != fid]
+        return c
+
+    def history(self, years, gap=False):
+        years = list(years)
+        c = compounder_history(compounder_capture(), years)
+        for row in c["sufficiency"]["requirements"]:
+            row["answered_by"] = [re.sub(r"fy2025$", "fy" + str(max(years)), fid)
+                                  if any(fid.startswith(p) for p in FC_RULE["history"].values()) else fid
+                                  for fid in row["answered_by"]]
+        if gap:
+            absent_by_design(c, FC_RULE["younger_record_gap_class"])
+        return c
+
+    def reverse(self, subtype="insurer", share="30", segments=False):
+        c = compounder_assets(fi_capture(subtype), share, "10", "90")
+        if segments:
+            compounder_segments(c)
+        floors = copy.deepcopy(FLOORS)
+        floors["archetype_measures"]["float_compounder_rule"]["applies_from"] = c["captured_at"][:10]
+        return c, floors
+
+    def adjusted(self, kind="value", **changes):
+        c = compounder_capture()
+        fid = next(k for k in FC_RULE["adjusted_book"]["members"] if k.endswith("_" + kind))
+        fi_fact(c, fid, "110" if kind == "value" else "10", "USD_per_share")
+        c["tier1"][-1].update(label="INVENTED company published figure", **changes)
+        c["gaps"] = [g for g in c["gaps"] if g["fact_class"] != FC_RULE["adjusted_book"]["prefix"]]
+        return c
+
+
+class TestFloatCompounderData(unittest.TestCase):
+    def setUp(self):
+        self.rule = FLOORS["archetype_measures"].get("float_compounder_rule", {})
+
+    def test_the_seventh_sub_type_is_in_the_table(self):
+        self.assertEqual(len(FLOORS["archetype_measures"]["table"]["financial_institution"]["subtypes"]), len(FI_SUBTYPES) + 1)
+
+    def test_its_measure_divides_by_book_value_once(self):
+        row = FLOORS["archetype_measures"]["table"][self.rule["fi_archetype"]]["subtypes"][self.rule["compounder_subtype"]]
+        self.assertEqual((row["denominators_required"], row["denominator_roles"], row["denominator_ids"]), (1, ["capital"], [[self.rule["yardstick_book"]]]))
+
+    def test_every_rule_constant_carries_its_why(self):
+        self.assertTrue(self.rule)
+        for key in self.rule:
+            if not key.endswith("_why"):
+                self.assertTrue(self.rule[key + "_why"], key)
+
+    def test_the_threshold_is_one_third_as_data(self):
+        from fractions import Fraction
+        self.assertEqual(Fraction(self.rule["asset_share_threshold"]), Fraction(1, 3))
+
+    def test_the_history_floor_and_the_rule_name_the_same_prefixes(self):
+        entry = next(e for e in FLOORS["archetype_floors"]["financial_institution"][self.rule["compounder_subtype"]] if e["kind"] == "parallel_prefixes")
+        self.assertEqual(entry["prefixes"], list(self.rule["history"].values()))
+
+    def test_the_minimum_year_ends_agree(self):
+        entry = next(e for e in FLOORS["archetype_floors"]["financial_institution"][self.rule["compounder_subtype"]] if e["kind"] == "parallel_prefixes")
+        self.assertEqual(entry["min_members"], self.rule["history_min_year_ends"])
+
+    def test_the_four_ruled_compounders_are_the_peers(self):
+        self.assertEqual(len(self.rule["compounder_peers"]), 4)
+        for row in self.rule["compounder_peers"].values():
+            self.assertTrue(row["names"] and row["tickers"])
+
+    def test_the_lift_reaches_the_compounder(self):
+        self.assertIn(self.rule["compounder_subtype"], FLOORS["archetype_floors"]["financial_institution"]["lifts"]["subtypes"])
+
+    def test_the_three_tests_are_data(self):
+        terms = FLOORS["archetype_floors"]["financial_institution"]["subtype_canonical_tests"][self.rule["compounder_subtype"]]
+        self.assertEqual(set(terms), {"profit_growth", "underwriting_record", "rating_vs_history_or_peers"})
+
+    def test_no_compounder_floor_carries_a_date(self):
+        self.assertTrue(all("applies_from" not in e for e in FLOORS["archetype_floors"]["financial_institution"][self.rule["compounder_subtype"]]))
+
+    def test_the_holding_rule_is_unchanged(self):
+        # CONTROL: passes on the base by design.
+        rule = FLOORS["archetype_measures"]["holding_rule"]
+        self.assertNotIn("financial_institution", rule["refuses"])
+        self.assertEqual(rule["history_year_ends"], 5)
+
+
+class TestTheCompounderFrame(CompounderTest):
+    def accepted(self, c):
+        out = gate_check(compounder_bound(c))
+        self.assertEqual(out["result"], "accepted", out["reasons"])
+
+    def gate_refuses(self, c, needle):
+        out = gate_check(compounder_bound(c))
+        self.assertEqual(out["result"], "refused", out)
+        self.assertTrue(any(needle in r for r in out["reasons"]), out)
+
+    def test_the_contract_admits_the_sub_type(self):
+        c = fi_capture("insurer", fi_subtype=FC_RULE["compounder_subtype"])
+        self.accepted(c)
+
+    def test_the_contract_admits_the_measure(self):
+        self.accepted(compounder_capture())
+
+    def test_a_peer_reason_on_a_compounder_passes(self):
+        c = compounder_capture()
+        frame_of(c)["peers"][0][FC_RULE["peer_reason_field"]] = "INVENTED shared underwriting cycle"
+        self.accepted(c)
+
+    def test_a_peer_reason_on_an_insurer_refuses(self):
+        c = fi_capture("insurer")
+        frame_of(c)["peers"][0][FC_RULE["peer_reason_field"]] = "INVENTED common underwriting"
+        self.gate_refuses(c, "this frame is not a float compounder")
+
+    def test_a_long_peer_reason_refuses(self):
+        c = compounder_capture()
+        frame_of(c)["peers"][0][FC_RULE["peer_reason_field"]] = words(26)
+        self.gate_refuses(c, "ruled limit")
+
+    def test_a_credit_cost_of_risk_refuses(self):
+        c = compounder_capture()
+        frame_of(c)["fi_risk_cost"]["kind"] = "credit"
+        self.gate_refuses(c, "underwriting")
+
+    def test_a_bridge_on_a_compounder_refuses(self):
+        # CONTROL: the existing non-holding bridge refusal remains.
+        c = with_nav_bridge(compounder_capture())
+        self.gate_refuses(c, "nav_bridge")
+
+    def test_the_secondary_sub_type_cannot_be_a_compounder(self):
+        # CONTROL: this enum remains unchanged on the base.
+        self.gate_refuses(fi_capture("insurer", fi_secondary_subtype=FC_RULE["compounder_subtype"]), "fi_secondary_subtype")
+
+
+class TestWhoIsAFloatCompounder(CompounderTest):
+    def test_above_a_third_passes(self):
+        self.passes(compounder_capture())
+
+    def test_exactly_a_third_is_not_a_compounder(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["classification"]["share_portfolio"])["value"] = "20"
+        self.rejects(c, "not_a_compounder_refusal")
+
+    def test_below_a_third_without_segments_refuses(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["classification"]["share_portfolio"])["value"] = "10"
+        self.rejects(c, "not_a_compounder_refusal")
+
+    def test_its_own_segments_qualify_it(self):
+        for year in (2024, 2025):
+            with self.subTest(year=year):
+                c = compounder_segments(compounder_capture(), year)
+                fact_in(c, FC_RULE["classification"]["share_portfolio"])["value"] = "10"
+                self.passes(c)
+
+    def test_each_classification_fact_refuses_when_missing(self):
+        for fid in FC_RULE["classification"].values():
+            with self.subTest(fid=fid):
+                self.rejects(self.remove(compounder_capture(), fid), "classification_missing_refusal")
+
+    def test_parts_above_the_total_refuse(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["classification"]["total"])["value"] = "30"
+        self.rejects(c, "classification_missing_refusal")
+
+    def test_classification_facts_in_two_units_refuse(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["classification"]["total"])["unit"] = "EUR_m"
+        self.rejects(c, "one_unit_refusal")
+
+    def test_an_insurer_above_a_third_refuses(self):
+        c, floors = self.reverse()
+        self.rejects(c, "is_a_compounder_refusal", floors)
+
+    def test_an_insurer_with_its_own_segments_refuses(self):
+        c, floors = self.reverse(share="10", segments=True)
+        self.rejects(c, "is_a_compounder_refusal", floors)
+
+    def test_an_insurer_with_segments_for_the_year_before_refuses(self):
+        for subtype in FC_RULE["plain_subtypes"]:
+            with self.subTest(subtype=subtype):
+                c, floors = self.reverse(subtype, share="10")
+                compounder_segments(c, 2024)
+                self.rejects(c, "is_a_compounder_refusal", floors)
+
+    def test_an_insurer_with_an_undated_segment_refuses(self):
+        for subtype in FC_RULE["plain_subtypes"]:
+            for suffix in ("invented_factory", "invented_factory_fy2023"):
+                with self.subTest(subtype=subtype, suffix=suffix):
+                    c, floors = self.reverse(subtype, share="10", segments=True)
+                    ids = []
+                    for prefix in FC_RULE["segments"].values():
+                        fact = fact_in(c, prefix + "invented_factory_fy2025")
+                        fact["id"] = prefix + suffix
+                        ids.append(fact["id"])
+                    out = self.rejects(c, "segment_year_refusal", floors)
+                    for fid in ids:
+                        self.assertTrue(any(fid == m["what"] and FC_RULE["segment_year_refusal"] in m["why_needed"] for m in out["missing"]), out["missing"])
+
+    def test_an_insurer_below_a_third_passes(self):
+        c, floors = self.reverse(share="10")
+        self.assertEqual(self.outcome(c, floors)["result"], "pass")
+
+    def test_an_insurer_without_the_facts_refuses(self):
+        c, floors = self.reverse()
+        for fid in FC_RULE["classification"].values():
+            self.remove(c, fid)
+        self.rejects(c, "classification_missing_refusal", floors)
+
+    def test_a_reinsurer_reads_the_same_rule(self):
+        c, floors = self.reverse("reinsurer")
+        self.rejects(c, "is_a_compounder_refusal", floors)
+
+    def test_an_insurer_before_the_ruling_day_is_unchanged(self):
+        # CONTROL: the capture predates the ruling.
+        self.passes(fi_capture("insurer"))
+
+    def test_a_bank_never_reads_the_rule(self):
+        # CONTROL: a bank is outside this rule.
+        self.passes(fi_capture("bank"))
+
+    def test_each_existing_sub_type_is_unchanged(self):
+        # CONTROL: all existing declarations read the same floors and terms.
+        base = copy.deepcopy(FLOORS)
+        base["archetype_measures"].pop("float_compounder_rule", None)
+        for subtype in FI_SUBTYPES:
+            c = fi_capture(subtype)
+            self.assertEqual(self.outcome(c), self.outcome(c, base), subtype)
+            declared = ("financial_institution", subtype)
+            self.assertEqual(sufficiency._merged_floors(FLOORS, c["subject"], c), sufficiency._merged_floors(base, c["subject"], c))
+            self.assertEqual(sufficiency._canonical_test_terms(FLOORS, declared), sufficiency._canonical_test_terms(base, declared))
+
+
+class TestTheHoldingIsNotACompounder(CompounderTest):
+    def test_each_holding_marker_refuses_naming_both_holdings(self):
+        for prefix in FLOORS["archetype_measures"]["holding_rule"]["marker_prefixes"]:
+            c = compounder_capture()
+            fi_fact(c, prefix + "invented", "10", "USD_m")
+            self.rejects(c, "holding_refusal")
+
+    def test_without_its_own_underwriting_record_it_refuses(self):
+        c = compounder_capture()
+        p = FC_RULE["history"]["underwriting_result"]
+        c["tier1"] = [x for x in c["tier1"] if not x["id"].startswith(p)]
+        self.rejects(c)
+
+    def test_an_insurer_with_a_marker_is_unchanged(self):
+        # CONTROL: an insurer before the ruling never reads this rule.
+        c = fi_capture("insurer")
+        fi_fact(c, FLOORS["archetype_measures"]["holding_rule"]["marker_prefixes"][0] + "invented", "10", "USD_m")
+        self.passes(c)
+
+
+class TestTheTenYearRecord(CompounderTest):
+    def test_ten_year_ends_pass(self):
+        self.passes(compounder_capture())
+
+    def test_more_than_ten_read_the_latest_ten(self):
+        self.passes(self.history(range(2014, 2026)))
+
+    def test_a_younger_record_with_its_gap_passes(self):
+        self.passes(self.history(range(2020, 2026), True))
+
+    def test_a_younger_record_without_its_gap_refuses(self):
+        self.rejects(self.history(range(2020, 2026)), "history_short_refusal")
+
+    def test_a_gap_beside_ten_year_ends_refuses(self):
+        self.rejects(self.history(range(2016, 2026), True), "history_gap_contradiction_refusal")
+
+    def test_a_hole_in_the_years_refuses(self):
+        self.rejects(self.history([y for y in range(2015, 2026) if y != 2020]), "history_order_refusal")
+
+    def test_a_year_missing_one_part_refuses(self):
+        self.rejects(self.remove(compounder_capture(), FC_RULE["history"]["dividends_per_share"] + "fy2020"))
+
+    def test_a_latest_year_too_old_refuses(self):
+        self.rejects(self.history(range(2014, 2024)), "history_order_refusal")
+
+    def test_the_year_before_the_latest_passes(self):
+        self.passes(self.history(range(2015, 2025)))
+
+    def test_a_member_not_a_financial_year_refuses(self):
+        c = compounder_capture()
+        fi_fact(c, FC_RULE["history"]["book_value_per_share"] + "calendar", "100", "USD_per_share")
+        self.rejects(c, "history_member_refusal")
+
+    def test_one_year_end_refuses(self):
+        self.rejects(self.history([2025], True), "history_short_refusal")
+
+    def test_zero_dividends_pass(self):
+        self.passes(compounder_capture())
+
+    def test_an_underwriting_loss_passes(self):
+        self.passes(compounder_capture())
+
+    def test_a_book_value_of_zero_refuses(self):
+        for role, value, words in (("book_value_per_share", "0", "positive number"), ("dividends_per_share", "-1", "zero or above")):
+            with self.subTest(role=role):
+                c = compounder_capture()
+                fid = FC_RULE["history"][role] + "fy2020"
+                fact_in(c, fid)["value"] = value
+                out = self.outcome(c)
+                self.assertEqual(out["result"], "refuse")
+                item = next(m for m in out["missing"] if m["what"] == fid)
+                self.assertIn(fid, item["why_needed"])
+                self.assertIn(words, item["why_needed"])
+                self.assertNotIn(FC_RULE["classification_missing_refusal"], item["why_needed"])
+                self.assertIn("archetype_measures.float_compounder_rule", item["where_it_likely_lives"])
+                self.assertIn(FC_RULE["history"][role], item["where_it_likely_lives"])
+
+    def test_per_share_figures_in_two_units_refuse(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["history"]["dividends_per_share"] + "fy2020")["unit"] = "EUR_per_share"
+        self.rejects(c, "one_unit_refusal")
+
+    def test_without_the_financial_year_end_refuses(self):
+        self.rejects(self.remove(compounder_capture(), FC_RULE["fiscal_year_end_id"]), "history_order_refusal")
+
+
+class TestTheAdjustedBook(CompounderTest):
+    def test_no_published_figure_with_its_gap_passes(self):
+        self.passes(compounder_capture())
+
+    def test_a_published_value_passes(self):
+        self.passes(self.adjusted())
+
+    def test_a_published_adjustment_passes(self):
+        self.passes(self.adjusted("adjustment"))
+
+    def test_a_derived_adjusted_value_refuses(self):
+        c = self.adjusted(derived=dict(operation="multiply", operands=[]))
+        self.rejects(c, "constructed_value_refusal")
+
+    def test_an_unlabelled_adjusted_value_refuses(self):
+        c = self.adjusted()
+        c["tier1"][-1].pop("label")
+        self.rejects(c, "adjusted_label_refusal")
+
+    def test_another_member_refuses(self):
+        c = self.adjusted()
+        c["tier1"][-1]["id"] = FC_RULE["adjusted_book"]["prefix"] + "invented"
+        self.rejects(c, "constructed_value_refusal")
+
+    def test_an_adjusted_value_in_another_unit_refuses(self):
+        self.rejects(self.adjusted(unit="EUR_per_share"), "one_unit_refusal")
+
+
+class TestTheCompounderPeers(CompounderTest):
+    def test_compounder_peers_pass(self):
+        self.passes(compounder_capture())
+
+    def test_a_plain_insurer_with_its_reason_passes(self):
+        c = compounder_capture()
+        frame_of(c)["peers"][0]["ticker"] = "INVENTED"
+        # Keep the metric convention in step with the invented ticker.
+        old = frame_of(c)["peers"][0]["metrics"]
+        for fid in old:
+            new = fid.split("__")[0] + "__invented"
+            fact_in(c, fid)["id"] = new
+        frame_of(c)["peers"][0]["metrics"] = [fid.split("__")[0] + "__invented" for fid in old]
+        fi_rating(c)["answered_by"] = [fid.split("__")[0] + "__invented" if fid in old else fid for fid in fi_rating(c)["answered_by"]]
+        frame_of(c)["peers"][0][FC_RULE["peer_reason_field"]] = "INVENTED common underwriting cycle"
+        self.passes(c)
+
+    def test_a_plain_insurer_without_its_reason_refuses(self):
+        c = compounder_capture()
+        frame_of(c)["peers"][0]["ticker"] = "INVENTED"
+        self.rejects(c, "peer_refusal")
+
+    def test_no_other_compounder_refuses(self):
+        c = compounder_capture()
+        for p in frame_of(c)["peers"]:
+            p.update(ticker="INVENTED", **{FC_RULE["peer_reason_field"]: "INVENTED common underwriting"})
+        self.rejects(c, "peer_no_compounder_refusal")
+
+    def test_the_subject_is_not_its_own_compounder_peer(self):
+        for spec in FC_RULE["compounder_peers"].values():
+            for alias in spec["tickers"]:
+                with self.subTest(alias=alias):
+                    c = compounder_capture()
+                    c["subject"]["ticker"] = alias
+                    f = c["business_frame"].pop("EXMP")
+                    c["business_frame"][alias] = f
+                    f["peers"] = f["peers"][:1]
+                    f["peers"][0]["ticker"] = spec["tickers"][0]
+                    self.rejects(c, "peer_no_compounder_refusal")
+
+    def test_a_peer_gap_still_lifts(self):
+        # CONTROL: the existing peer-gap lift still applies.
+        c = compounder_capture(peers=[])
+        absent_by_design(c, FC_RULE["peer_gap_class"])
+        self.passes(c)
+
+
+class TestTheCompounderTests(CompounderTest):
+    def terms(self, subtype=None):
+        return sufficiency._canonical_test_terms(FLOORS, ("financial_institution", subtype or FC_RULE["compounder_subtype"]))
+
+    def test_the_book_value_test_reads_the_record(self):
+        self.assertEqual(self.terms()["profit_growth"]["answered_by_prefix"], FC_RULE["history"]["book_value_per_share"])
+        c = compounder_capture()
+        next(r for r in c["sufficiency"]["requirements"] if r["id"] == "profit_growth")["answered_by"] = ["net_income_q"]
+        self.rejects(c)
+
+    def test_the_underwriting_test_is_on_the_checklist(self):
+        self.assertIn("underwriting_record", self.terms())
+        self.passes(compounder_capture())
+
+    def test_a_checklist_without_the_underwriting_test_refuses(self):
+        c = compounder_capture()
+        c["sufficiency"]["requirements"] = [r for r in c["sufficiency"]["requirements"] if r["id"] != "underwriting_record"]
+        self.rejects(c)
+
+    def test_the_rating_test_reads_the_year_end_prices(self):
+        self.assertEqual(self.terms()["rating_vs_history_or_peers"]["answered_by_prefix"], FC_RULE["history"]["year_end_price"])
+
+    def test_the_cash_test_is_distributable_capital(self):
+        self.assertEqual(self.terms()["free_cash_flow"], self.terms("insurer")["free_cash_flow"])
+
+    def test_the_capital_spending_floor_is_lifted(self):
+        lift = sufficiency._archetype_lifts(FLOORS, ("financial_institution", FC_RULE["compounder_subtype"]))
+        self.assertEqual(lift["single_stock_floor_ids_lifted"], ["capital_expenditure_q"])
+
+    def test_an_insurers_tests_are_unchanged(self):
+        # CONTROL: the insurer keeps its cash-test terms.
+        self.assertEqual(set(self.terms("insurer")), {"free_cash_flow"})
+
+
+class TestTheSegmentsAndSolvency(CompounderTest):
+    def test_each_numeric_reading_must_be_a_number_and_fresh(self):
+        c = compounder_segments(self.adjusted())
+        roles = sufficiency.float_compounder_role_set(freeze.build_pack(compounder_bound(c)), FLOORS)
+        for fid, kinds in roles.items():
+            if "fiscal_year_end" in kinds:
+                continue
+            for change in ({"value": "not a number"}, {"as_of": "2000-01-01"}):
+                with self.subTest(fid=fid, change=change):
+                    mutated = copy.deepcopy(c)
+                    fact_in(mutated, fid).update(change)
+                    out = self.outcome(mutated)
+                    self.assertEqual(out["result"], "refuse")
+                    # The rule's row follows any shared class-floor refusal.
+                    item = next(m for m in reversed(out["missing"]) if m["what"] == fid)
+                    self.assertIn(fid, item["why_needed"])
+                    self.assertIn("not a number" if "value" in change else "stale", item["why_needed"])
+                    self.assertNotIn(FC_RULE["classification_missing_refusal"], item["why_needed"])
+                    self.assertIn("archetype_measures.float_compounder_rule", item["where_it_likely_lives"])
+                    for prefix in FC_RULE["history"].values():
+                        if fid.startswith(prefix):
+                            self.assertIn(prefix, item["where_it_likely_lives"])
+
+    def test_the_classification_requires_one_report_day(self):
+        c = compounder_capture()
+        fact_in(c, FC_RULE["classification"]["total"])["as_of"] = "2026-07-14"
+        self.rejects(c, "classification_missing_refusal")
+
+    def test_other_archetypes_have_no_compounder_roles(self):
+        # The new helper must return no class for another archetype.
+        self.assertEqual(sufficiency.float_compounder_role_set(freeze.build_pack(framed()), FLOORS), {})
+
+    def test_segments_at_the_latest_year_pass(self):
+        self.passes(compounder_segments(compounder_capture()))
+
+    def test_segments_only_for_an_older_year_refuse(self):
+        self.rejects(compounder_segments(compounder_capture(), 2023), "segment_year_refusal")
+
+    def test_solvency_ratio_and_target_use_one_unit(self):
+        for field in ("target_fact", "ratio_facts", "requirement_facts"):
+            with self.subTest(field=field):
+                c = compounder_capture()
+                capital = frame_of(c)["fi_capital"]
+                fid = capital[field] if field == "target_fact" else capital[field][0]
+                fact_in(c, fid)["unit"] = "fraction_annualized"
+                out = self.rejects(c, "one_unit_refusal")
+                item = next(m for m in out["missing"] if FC_RULE["one_unit_refusal"] in m["why_needed"])
+                self.assertIn("%", item["why_needed"])
+                self.assertIn("fraction_annualized", item["why_needed"])
+
+    def test_a_target_beside_its_ratio_passes(self):
+        self.passes(compounder_capture())
+
+    def test_a_target_without_its_ratio_refuses(self):
+        c = compounder_capture()
+        frame_of(c)["fi_capital"]["target_fact"] = frame_of(c)["fi_capital"]["target_fact"] + "other"
+        self.rejects(c, "target_pair_refusal")
+
+    def test_a_ratio_below_its_target_does_not_refuse(self):
+        c = compounder_capture()
+        fact_in(c, frame_of(c)["fi_capital"]["target_fact"])["value"] = "20"
+        self.passes(c)
+
+    def test_operating_roe_is_never_a_denominator(self):
+        c = compounder_capture()
+        fid = FC_RULE["operating_roe_prefix"] + "q"
+        fi_fact(c, fid, "10", "%")
+        fi_rating(c)["subject_denominator_facts"] = [fid]
+        self.rejects(c)
+
+    def test_every_input_is_in_the_one_role_set(self):
+        c = compounder_segments(self.adjusted())
+        fi_fact(c, FC_RULE["operating_roe_prefix"] + "q", "10", "%")
+        roles = sufficiency.float_compounder_role_set(freeze.build_pack(compounder_bound(c)), FLOORS)
+        expected = set(FC_RULE["classification"].values()) | {FC_RULE["yardstick_book"], FC_RULE["fiscal_year_end_id"], "market_cap"}
+        prefixes = list(FC_RULE["history"].values()) + list(FC_RULE["segments"].values()) + [FC_RULE["adjusted_book"]["prefix"], FC_RULE["operating_roe_prefix"]] + list(FC_RULE["solvency"].values())
+        expected |= {x["id"] for x in c["tier1"] if any(x["id"].startswith(p) for p in prefixes)}
+        expected.update(frame_of(c)["fi_capital"]["requirement_facts"])
+        self.assertEqual(set(roles), expected)
+        self.assertTrue(all(roles.values()))
+
+
+class TestTheCompounderRecordsUnchanged(CoinTest):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        base = copy.deepcopy(FLOORS)
+        base["archetype_measures"].pop("float_compounder_rule")
+        base["archetype_measures"]["table"]["financial_institution"]["subtypes"].pop("float_compounder")
+        block = base["archetype_floors"]["financial_institution"]
+        block.pop("float_compounder")
+        block.pop("subtype_canonical_tests")
+        block["lifts"]["subtypes"].remove("float_compounder")
+        gated = checked = frozen = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                for c in (canonical.read_json(path), to_contract_1_17_0(canonical.read_json(path), run_id)):
+                    old = gate.validate_capture(copy.deepcopy(c), SCHEMA, base)
+                    self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, FLOORS), old)
+                gated += 1
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path):
+                continue
+            pack = canonical.read_json(path)
+            with open(path, "rb") as handle:
+                self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])), handle.read())
+            frozen += 1
+            try:
+                old = sufficiency.check(copy.deepcopy(pack), base)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught:
+                    sufficiency.check(copy.deepcopy(pack), FLOORS)
+                self.assertEqual(str(caught.exception), str(exc))
+                continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack), FLOORS), old)
+            checked += 1
+        self.assertGreater(min(gated, checked, frozen), 0)
+
+
+
+
+def protocol_derivatives_capture(day="2026-10-11", rate="funding_rate"):
+    """AC83: invented figures on one capture day, with a full release horizon."""
+    c = protocol_capture("solana")
+    c["captured_at"] = day + "T06:00Z"
+    c["tier1"] = [f for f in c["tier1"] if f["id"] not in
+                  ("open_interest", "funding_rate", "futures_basis_annualised")]
+    for fact in c["tier1"] + c["tier2"]:
+        fact["as_of"] = day
+    c["supply_schedule"]["covers_through"] = "2027" + day[4:]
+    for fid, unit in (("open_interest", "USD"),
+                      (rate, "fraction per 8 hours" if rate == "funding_rate" else "%")):
+        if fid:
+            c["tier1"].append(dict(id=fid, value="100", unit=unit,
+                source="INVENTED CoinGecko derivatives; single source", as_of=day,
+                freshness_rule_days=1, derived=None))
+    return c
+
+
+class TestAavesRuledDefault(ProtocolTest):
+    def test_aave_defaults_to_apt(self):
+        self.assertEqual(self.registry()["aave"]["default_derate_case"], "APT")
+
+    def test_unis_record_is_unchanged(self):
+        # CONTROL: AC83 leaves the entire unusable record untouched.
+        record = self.rule()["derate_cases"]["UNI"]
+        self.assertEqual(record["record"]["status"], "not_usable")
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes(record)).hexdigest(),
+                         "e9c642ec31916c701b15b1a26f4a0fdd92bd284f7df07bbc16c9924517ca1cf1")
+
+
+class TestTheRequiredProtocolDerivatives(ProtocolTest):
+    def test_open_interest_missing_refuses_with_the_ruled_reason(self):
+        c = protocol_derivatives_capture()
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "open_interest"]
+        out = self.refuses(c, "open_interest")
+        misses = [m for m in out["missing"] if m["what"] == "open_interest"]
+        self.assertEqual(len(misses), 1)
+        self.assertIn("Traders' positioning is required evidence for a protocol token: the near-term table is weighted to it (owner rulings AC83(3), AC81(1)).", misses[0]["why_needed"])
+        self.assertIn("CoinGecko", misses[0]["where_it_likely_lives"])
+        self.assertIn("single source", misses[0]["where_it_likely_lives"])
+
+    def test_both_rate_alternatives_missing_refuse(self):
+        c = protocol_derivatives_capture(rate=None)
+        out = self.refuses(c, "funding_rate", "futures_basis_annualised")
+        misses = [m for m in out["missing"] if "funding_rate" in m["what"]]
+        self.assertEqual(len(misses), 1)
+        self.assertIn("AC83(3)", misses[0]["why_needed"])
+        self.assertIn("single source", misses[0]["where_it_likely_lives"])
+
+    def test_either_valid_rate_passes(self):
+        # CONTROL: complete evidence already passes on the base.
+        for rate in ("funding_rate", "futures_basis_annualised"):
+            with self.subTest(rate=rate):
+                self.passes(protocol_derivatives_capture(rate=rate))
+
+    def test_open_interest_without_coingecko_refuses(self):
+        c = protocol_derivatives_capture()
+        self.facts(c)["open_interest"]["source"] = "INVENTED other source"
+        self.refuses(c, "open_interest", "must name", "CoinGecko")
+
+    def test_funding_two_days_old_refuses(self):
+        c = protocol_derivatives_capture()
+        self.facts(c)["funding_rate"].update(as_of="2026-10-09", freshness_rule_days=30)
+        self.refuses(c, "funding_rate", "fresh within 1 days")
+
+    def test_open_interest_in_tokens_refuses(self):
+        c = protocol_derivatives_capture()
+        self.facts(c)["open_interest"]["unit"] = self.registry()["solana"]["unit"]
+        self.refuses(c, "open_interest", "requires USD")
+
+    def test_open_interest_zero_refuses(self):
+        c = protocol_derivatives_capture()
+        self.facts(c)["open_interest"]["value"] = "0"
+        self.refuses(c, "open_interest = 0")
+
+    def test_every_derivatives_role_checks_the_same_fact_properties(self):
+        # AC83: membership comes from the dated roles, not a second id list.
+        specs = {r: s for r, s in self.rule()["optional_roles"].items()
+                 if s.get("applies_from") == "2026-10-11"}
+        self.assertEqual(set(specs), {"open_interest", "funding_rate", "futures_basis"})
+        for role, spec in specs.items():
+            rate = spec["id"] if role != "open_interest" else "funding_rate"
+            for fields, words in ((dict(value="unknown"), "must be a number"),
+                                  (dict(as_of="2026-10-12"), "dated no later"),
+                                  (dict(source="INVENTED other"), "CoinGecko"),
+                                  (dict(unit="SOL"), "requires")):
+                with self.subTest(role=role, fields=fields):
+                    c = protocol_derivatives_capture(rate=rate)
+                    self.facts(c)[spec["id"]].update(fields)
+                    self.refuses(c, spec["id"], words)
+
+    def test_rates_may_be_zero_or_negative(self):
+        # CONTROL: no sign bar is added to either rate.
+        for rate in ("funding_rate", "futures_basis_annualised"):
+            for value in ("0", "-1"):
+                c = protocol_derivatives_capture(rate=rate)
+                self.facts(c)[rate]["value"] = value
+                self.passes(c)
+
+    def test_the_day_before_needs_neither_figure(self):
+        # CONTROL: AC46 leaves an earlier capture's floors unchanged.
+        c = protocol_derivatives_capture(day="2026-10-10", rate=None)
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != "open_interest"]
+        self.passes(c)
+
+    def test_earlier_open_interest_keeps_its_source_unchecked(self):
+        # CONTROL: the new role does not bind before its own start day.
+        c = protocol_derivatives_capture(day="2026-10-08", rate=None)
+        self.facts(c)["open_interest"]["source"] = "INVENTED other source"
+        self.assertNotIn("open_interest", sufficiency.protocol_role_set(freeze.build_pack(c), FLOORS))
+        self.passes(c)
+
+    def test_bitcoins_required_derivatives_anchors_are_unchanged(self):
+        # CONTROL: the coin's own required anchors still refuse missing figures.
+        c = coin_capture("bitcoin")
+        self.passes(c)
+        for ids in (("open_interest",), ("funding_rate", "futures_basis_annualised")):
+            missing = copy.deepcopy(c)
+            missing["tier1"] = [f for f in missing["tier1"] if f["id"] not in ids]
+            self.refuses(missing, *ids)
+
+
+
+
+OLD_ANCHOR_HASHES = [({'asset_class': 'commodity', 'product': 'copper', 'kind': 'commodity'}, '27f3715db5381959f7b53fec9541941c8035bfa4324f324053e51a179e6d505a'), ({'asset_class': 'gold', 'product': None, 'kind': 'gold'}, '3cb107da46aa8440a17d423eda15325661caff98ab58cedd2908a7fc55c1b0df'), ({'asset_class': 'crypto', 'product': 'bitcoin', 'kind': 'bitcoin'}, '73d93ec582bbcc8d17f5414d3b82d2baec569a52fb270db6126024a61c412d80'), ({'asset_class': 'crypto', 'product': 'zcash', 'kind': 'bitcoin'}, '7431df47e123b40ca3350e9a9ccecc98d84997a6500c16b1d4e151922c46096b'), ({'asset_class': 'crypto', 'product': 'solana', 'kind': 'protocol_token'}, 'f58a90d4759bb133a1c9194d494e0f6af425288d5a7314ae2e2ace8f7721d155'), ({'asset_class': 'crypto', 'product': 'aave', 'kind': 'protocol_token'}, 'f58a90d4759bb133a1c9194d494e0f6af425288d5a7314ae2e2ace8f7721d155'), ({'asset_class': 'crypto', 'product': 'hyperliquid', 'kind': 'protocol_token'}, 'f58a90d4759bb133a1c9194d494e0f6af425288d5a7314ae2e2ace8f7721d155'), ({'asset_class': 'crypto', 'product': 'ethereum', 'kind': 'protocol_token'}, 'f58a90d4759bb133a1c9194d494e0f6af425288d5a7314ae2e2ace8f7721d155')]
+
+def add_uranium_role_facts(c, vehicle):
+    """AC85-AC88: shared invented role facts for the two test builders."""
+    row = FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+    rule, holder = row["rule"], row["physical_holders"][vehicle]
+    existing = {f["id"]: f for f in c["tier1"]}
+    for fid, roles in sufficiency._holder_product_roles({"capture": c}, FLOORS).items():
+        role, spec = next(iter(roles.items()))
+        h = row["physical_holders"].get(spec.get("h"), row["physical_holders"][rule["daily_value_holder"]])
+        unit = h.get(spec["unit"], row.get(spec["unit"], rule.get(spec["unit"], spec["unit"])))
+        unit = unit[0] if isinstance(unit, list) else unit
+        selector = spec["source"]
+        words = (row["physical_holders"][rule["daily_value_holder"]]["source_words"] if selector == "daily_source_words" else
+                 row["physical_holders"][holder["swings_series_holder"]]["series_source_words"] if selector == "swings_source_words" else
+                 rule["largest_producers"][spec["p"]]["names"] if selector == "producer_names" else h.get(selector, rule.get(selector, [])))
+        source = "INVENTED " + " ".join(words) + (" " + rule["guidance_basis_words"][0] if role == "guidance" else "")
+        fc = spec["freshness_class"]
+        limit = (h["nav_max_age_days"] if fc == "nav_frequency" else h["pounds_max_age_days"] if fc == "pounds_frequency" else
+                 FLOORS["freshness_ceiling"]["closed_period_record_rule_days"] if fc == "window_start" else rule["freshness_classes"][fc])
+        day = date(2026, 10, 11)
+        if role in ("spot_month_end", "term_month_end"):
+            day = date(2026, 9, 30)
+        elif role == "pounds_start":
+            day -= timedelta(days=spec["window"]["days"])
+        value = "120.00" if role in ("spot", "spot_proxy", "spot_check", "spot_month_end", "term_month_end") else "10"
+        if role == "holder_value": value = "1200"
+        if role in ("history", "window"): value = "900"
+        fact = dict(id=fid, value=value, unit=unit, source=source, as_of=day.isoformat(), freshness_rule_days=limit, derived=None)
+        if fid in existing: existing[fid].update(fact)
+        else: c["tier1"].append(fact)
+    facts = {f["id"]: f for f in c["tier1"]}
+    spec = rule["roles"]["spot_proxy"]
+    operands = [fid.format(daily=rule["daily_value_holder"]) for fid in spec["operands"]]
+    facts[spec["id"]]["derived"] = dict(operation=spec["operation"], rounded_places=spec["rounded_places"],
+        operands=[dict(fact_id=fid, label="invented input", value=facts[fid]["value"]) for fid in operands])
+
+
+def uranium_producer_capture(**overrides):
+    """AC85-AC87: a miner with invented pounds and the published book shapes."""
+    c = producer_capture("miner")
+    c = json.loads(json.dumps(c).replace('"gold"', '"uranium"')
+                   .replace("_gold", "_uranium"))
+    c["captured_at"] = "2026-10-11T06:00Z"
+    block = producer_block(c)
+    block["reserves_standard"] = "ni_43_101"
+    block["reference_price_fact"] = "uranium_term_month_end"
+    for metric in frame_of(c)["decisive_metrics"]:
+        metric["answered_by"] = ["uranium_term_month_end" if fid == "reference_price_uranium"
+                                 else fid for fid in metric["answered_by"]]
+    for series in c["cycle"]["series"]:
+        series["as_of"] = "2026-10-11"
+    grower_fact(c, "fiscal_year_end", "12-31", unit="month_day", as_of="2026-10-11")
+    for f in c["tier1"]:
+        if f["unit"] == "oz": f["unit"] = "lb"
+        if f["unit"] == "USD per ounce": f["unit"] = "USD per lb"
+        if f["id"] not in ("reserve_report_date", "reserves_pp_attributable",
+                           "reserve_price_uranium"):
+            f["as_of"] = "2026-10-11"
+    c["tier1"] = [f for f in c["tier1"] if f["id"] != "reference_price_uranium"]
+    rule = FLOORS["archetype_measures"]["uranium_producer_rule"]
+    for peer in frame_of(c)["peers"]:
+        fid = "peer_%s__%s" % (rule["peer_product_metric"], peer["ticker"].lower())
+        grower_fact(c, fid, rule["product"], unit="name", as_of="2026-10-11")
+        peer["metrics"].append(fid)
+    market = uranium_capture()
+    roles = sufficiency._holder_product_roles({"capture": market}, FLOORS)
+    c["tier1"] += [copy.deepcopy(f) for f in market["tier1"]
+                  if set(roles.get(f["id"], {})) & set(rule["producer_roles"])]
+    book, beside = rule["contract_book"], rule["price_received_beside"]
+    grower_fact(c, book["per_year_prefix"] + "2027", "200", unit="lb", as_of="2026-10-11")
+    grower_fact(c, book["pricing_id"], "INVENTED: market price with a floor",
+                unit=book["statement_unit"], as_of="2026-10-11")
+    for key in ("spot", "term"):
+        grower_fact(c, beside[key], "80", unit="USD per lb", as_of="2026-10-11")
+    grower_fact(c, rule["mine_country_prefix"] + "example", "INVENTED country",
+                unit="name", as_of="2026-10-11")
+    for prefix in (rule["bought_prefix"], rule["segment_prefix"]):
+        absent_by_design(c, prefix)
+    for fid, changes in overrides.items():
+        fact_in(c, fid).update(changes)
+    return c
+
+
+def uranium_capture(vehicle="sput", **overrides):
+    """AC85-AC88: invented figures only, built from the commodity fixture."""
+    from council.lib import subjects
+    row = FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+    rule, holder = row["rule"], row["physical_holders"][vehicle]
+    c = load_fixture("copper-pass.json")
+    c["captured_at"] = "2026-10-11T06:00Z"
+    c["subject"].update(product="uranium", name=row["names"][0], vehicle={
+        "name": holder["names"][0], "ticker": holder["vehicle_ticker"],
+        "listing": holder["listing"], "currency": holder["currency"]})
+    c["question_line"] = "Is uranium worth committing new capital to?"
+    c["question_verbatim"] = c["question_line"] + " (INVENTED FIXTURE)"
+    absent = [a.get("id") or a.get("prefix") for a in FLOORS["asset_classes"]["commodity"]["anchors"]
+              if a["level"] == "conditional"]
+    removed = set(row["class_anchors_lifted"]) | set(absent)
+    c["tier1"] = [f for f in c["tier1"] if f["id"] not in removed and
+                  not any(f["id"].startswith(p) for p in absent)]
+    c["tier2"] = []
+    c["gaps"] = [dict(fact_class=fid, reason_kind="absent_by_design",
+        reason="INVENTED: one free composite and no exchange stocks", weakened_test="no separate venue or stocks read") for fid in absent]
+    for f in c["tier1"]:
+        f["as_of"] = "2026-10-11"
+    add_uranium_role_facts(c, vehicle)
+    for prefix in (rule["roles"]["history_nav"]["prefix"], rule["roles"]["history_price"]["prefix"]):
+        for year in range(2021, 2026):
+            # Last completed financial year-end, including the younger March year.
+            actual = year if holder["year_end"] > "10-11" else year + 1
+            c["tier1"].append(dict(id=prefix+"fy"+str(actual), value="10", unit=holder["nav_unit"],
+                source="INVENTED " + " ".join(holder["source_words"]), as_of=str(actual)+"-"+holder["year_end"],
+                freshness_rule_days=FLOORS["freshness_ceiling"]["closed_period_record_rule_days"], derived=None))
+    facts = {f["id"]: f for f in c["tier1"]}
+    for req in c["sufficiency"]["requirements"]:
+        if req["status"] == "answered": req["answered_by"] = [rule["roles"]["spot"]["id"]]
+    for fid, value in overrides.items(): facts[fid]["value"] = value
+    h = gate.evidence_body_sha256(c)
+    c["evidence_challenge"].update(evidence_sha256=h, post_audit_sha256=h)
+    return c
+
+
+class UraniumTest(unittest.TestCase):
+    def row(self, floors=None):
+        return (floors or FLOORS)["asset_classes"]["commodity"]["products"]["uranium"]
+
+    def rule(self, floors=None): return self.row(floors)["rule"]
+    def facts(self, c): return {f["id"]: f for f in c["tier1"]}
+    def fid(self, role, h="sput", **parts):
+        spec = self.rule()["roles"][role]
+        return (spec.get("id") or spec["id_pattern"]).format(h=h, daily=self.rule()["daily_value_holder"], **parts)
+    def drop(self, c, fid): c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+    def gap(self, c, fid, reason):
+        c["gaps"].append(dict(fact_class=fid, reason_kind="absent_by_design", reason=reason, weakened_test="INVENTED gap"))
+    def outcome(self, c, floors=None): return sufficiency_of(freeze.build_pack(c), floors or FLOORS)
+    def passes(self, c=None, floors=None):
+        out = self.outcome(c or uranium_capture(), floors)
+        self.assertEqual(out["result"], "pass", out["message"])
+        return out
+    def refuses(self, c, *words, floors=None):
+        out = self.outcome(c, floors)
+        self.assertEqual(out["result"], "refuse", out["message"])
+        for word in words: self.assertIn(word, out["message"])
+        return out
+    def fault(self, role, field, value, words=None, h="sput", **parts):
+        c = uranium_capture(); fid = self.fid(role, h, **parts)
+        self.facts(c)[fid][field] = value
+        return self.refuses(c, fid, words or "")
+    def gate(self, c):
+        from unittest import mock
+        from datetime import datetime, timezone
+        with mock.patch.object(gate, "datetime", wraps=gate.datetime) as clock:
+            clock.now.return_value = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
+            return gate_check(c)
+
+
+class TestUraniumRegistryData(UraniumTest):
+    def test_uranium_is_a_ruled_product(self):
+        self.assertEqual(self.row()["names"], ["Uranium"])
+        self.assertEqual(self.row()["unit"], "lb")
+        self.assertEqual(self.row()["price_unit"], "USD per lb")
+    def test_the_two_holders_are_registered(self):
+        self.assertEqual(set(self.row()["physical_holders"]), {"sput", "yca"})
+    def test_every_holder_row_carries_the_ruled_fields(self):
+        required = set("names vehicle_ticker other_tickers listing currency nav_unit nav_frequency nav_max_age_days pounds_max_age_days year_end publishes_daily_value swings_series_holder source_words series_source_words costs_units price_words why".split())
+        for holder in self.row()["physical_holders"].values(): self.assertEqual(set(holder), required)
+    def test_every_rule_constant_carries_its_why(self):
+        rule = self.rule()
+        self.assertEqual(set(rule)-{"why"}, set(rule["why"]))
+        self.assertTrue(all(rule["why"].values()))
+        for spec in rule["roles"].values(): self.assertTrue(spec["why"])
+        self.assertEqual(rule["company_words"], [n for r in list(self.row()["physical_holders"].values()) + list(rule["largest_producers"].values()) for n in r["names"]])
+    def test_every_new_anchor_carries_applies_from(self):
+        for a in self.row()["anchors"]: self.assertEqual(a["applies_from"], "2026-10-11")
+    def test_every_role_and_anchor_matches_its_freshness_class(self):
+        classes = self.rule()["freshness_classes"]
+        for a in self.row()["anchors"]:
+            expected = classes.get(a["freshness_class"], FLOORS["freshness_ceiling"]["closed_period_record_rule_days"])
+            self.assertEqual(a["max_freshness_days"], expected)
+        c = uranium_capture()
+        for fid, roles in sufficiency._holder_product_roles({"capture": c}, FLOORS).items():
+            for spec in roles.values():
+                if spec["freshness_class"] in classes:
+                    self.assertEqual(spec["max_freshness_days"], classes[spec["freshness_class"]])
+                    self.assertEqual(self.facts(c)[fid]["freshness_rule_days"], classes[spec["freshness_class"]])
+        for h in self.row()["physical_holders"].values():
+            nav_class = "daily" if h["nav_frequency"] == "daily" else h["nav_frequency"] + "_published"
+            self.assertEqual(h["nav_max_age_days"], classes[nav_class])
+            self.assertIn(h["pounds_max_age_days"], classes.values())
+    def test_the_term_is_in_the_monthly_class(self):
+        spec = self.rule()["roles"]["term_month_end"]
+        self.assertEqual(spec["freshness_class"], "monthly_published")
+        self.assertEqual(self.rule()["freshness_classes"][spec["freshness_class"]], 35)
+    def test_the_horizon_is_three_years_annualised(self):
+        self.assertEqual(self.row()["horizon_months"], 36); self.assertIs(self.row()["horizon_annualised"], True)
+    def test_the_tonnes_factor_is_the_ruled_one(self):
+        self.assertEqual(Decimal(self.rule()["tonnes_to_pounds"]["factor"]), Decimal("2599.8"))
+    def test_the_commodity_template_is_unchanged(self):
+        # Control: the commodity template remains the base's exact bytes.
+        self.assertEqual(hashlib.sha256(canonical.canonical_bytes(FLOORS["asset_classes"]["commodity"]["anchors"])).hexdigest(), "f16a3c4da2a29304cb02af76da568d684e81002814b14d5b7eaa5d096cec8cd8")
+    def test_coppers_anchor_list_is_unchanged(self):
+        # Control: every older product retains its ordered list.
+        from council.lib import subjects
+        for subject, digest in OLD_ANCHOR_HASHES:
+            self.assertEqual(hashlib.sha256(canonical.canonical_bytes(subjects.class_anchors(FLOORS, subject))).hexdigest(), digest)
+    def test_uranium_is_not_confirmed_for_the_hand_off(self):
+        from council.engine import publisher
+        self.assertNotIn("uranium", FLOORS["atlas_handoff"]["confirmed"]["products"])
+        self.assertIsNotNone(publisher.handoff_withheld(uranium_capture()["subject"], FLOORS))
+    def test_the_three_units_are_allowed(self):
+        self.assertTrue({"tU", "million_lb", "thousand_lb"} <= set(FLOORS["allowed_units"]))
+    def test_the_toronto_calendar_reaches_2021(self):
+        calendar = FLOORS["price_series"]["exchange_calendars"]["XTSE"]
+        self.assertEqual(calendar["holidays"][0], "2021-01-01")
+        self.assertEqual(calendar["holidays"], sorted(calendar["holidays"]))
+
+
+class TestUraniumIsSatThroughAHolder(UraniumTest):
+    def test_the_gate_admits_a_holder_vehicle(self):
+        self.assertEqual(self.gate(uranium_capture())["result"], "accepted")
+    def test_copper_with_a_vehicle_keeps_todays_refusal(self):
+        # Control: the old kind sentence is unchanged.
+        c = load_fixture("copper-pass.json"); c["subject"]["vehicle"] = dict(name="Invented",ticker="INV",listing="NYSE",currency="USD")
+        self.assertEqual(gate_check(c)["reasons"], ["the subject's kind is 'commodity' but the capture carries 'vehicle' - that field belongs to basket, theme and collective-vehicle subjects only"])
+    def test_uranium_without_a_vehicle_refuses(self):
+        c = uranium_capture(); c["subject"].pop("vehicle")
+        self.refuses(c, self.rule()["holder_needed"]["what"])
+    def test_an_unregistered_vehicle_refuses(self):
+        c = uranium_capture(); c["subject"]["vehicle"]["ticker"] = "INV"
+        self.refuses(c, self.rule()["holder_unregistered"])
+        for field, value in (("kind", "etf"), ("ticker", "INV"), ("listing", "NYSE"), ("currency", "GBP")):
+            c = uranium_capture(); c["subject"][field] = value
+            if field == "kind": c["subject"]["ticker"] = "INV"
+            self.refuses(c, self.rule()["unit_pair_refusal"] if field == "currency" else self.rule()["holder_guard"])
+    def test_the_canadian_dollar_line_refuses(self):
+        c = uranium_capture(); c["subject"]["vehicle"]["ticker"] = self.row()["physical_holders"]["sput"]["other_tickers"][0]
+        self.refuses(c, self.rule()["holder_unregistered"])
+    def test_yellow_cake_takes_the_trusts_swings(self):
+        c = uranium_capture("yca"); self.passes(c)
+        self.facts(c)[self.fid("history")]["source"] = "INVENTED Yellow Cake net asset value"
+        self.refuses(c, self.rule()["swings_source_refusal"])
+        c = uranium_capture("yca"); c["price_series"] = dict(source="INVENTED Yellow Cake market price")
+        faults = sufficiency._holder_product_failures({"capture": c}, FLOORS, date(2026, 10, 11), lambda fid: True)
+        self.assertTrue(any(self.rule()["swings_source_refusal"] in why for _, why, _ in faults))
+    def test_the_series_binds_to_the_vehicle(self):
+        c = uranium_capture(); calendars, refusal = gate._series_calendars(c["subject"], c["subject"]["vehicle"]["ticker"], FLOORS["price_series"], FLOORS)
+        self.assertIsNone(refusal); self.assertEqual(calendars, ["XTSE"])
+    def test_another_instruments_series_refuses(self):
+        c = uranium_capture(); calendars, refusal = gate._series_calendars(c["subject"], "INV", FLOORS["price_series"], FLOORS)
+        self.assertIsNone(calendars); self.assertIn("another instrument", refusal)
+    def test_a_series_that_is_not_the_net_asset_value_refuses(self):
+        c = uranium_capture(); c["price_series"] = dict(source="INVENTED market price")
+        # The sufficiency helper reads the source; series shape remains the gate's.
+        faults = sufficiency._holder_product_failures({"capture":c}, FLOORS, date(2026,10,11), lambda fid: True)
+        self.assertTrue(any(self.rule()["swings_source_refusal"] in why for _,why,_ in faults))
+    def test_an_unruled_product_keeps_its_refusal(self):
+        # Control: an unruled product still cannot use the template alone.
+        c = load_fixture("copper-pass.json"); c["subject"]["product"] = "invented_product"
+        self.refuses(c, "the owner's ruling on what invented_product needs beyond the template")
+
+
+class TestTheHolderGuard(UraniumTest):
+    def test_the_trust_as_a_fund_refuses(self):
+        c = load_fixture("etf-pass.json"); h = self.row()["physical_holders"]["sput"]
+        c["subject"].update(ticker=h["vehicle_ticker"],listing=h["listing"],name=h["names"][0]); self.refuses(c,self.rule()["holder_guard"])
+    def test_yellow_cake_as_a_single_name_refuses(self):
+        c = load_fixture("exmp-pass.json"); h = self.row()["physical_holders"]["yca"]
+        c["subject"].update(ticker=h["vehicle_ticker"],listing=h["listing"],name=h["names"][0]); self.refuses(c,self.rule()["holder_guard"])
+    def test_a_theme_through_a_holder_refuses(self):
+        c = load_fixture("theme-pass.json"); h = self.row()["physical_holders"]["sput"]
+        c["subject"].pop("constituents",None); c["subject"]["vehicle"] = dict(name=h["names"][0],ticker=h["vehicle_ticker"],listing=h["listing"],currency=h["currency"])
+        self.refuses(c,self.rule()["holder_guard"])
+    def test_a_basket_member_holder_is_untouched(self):
+        # Control: the guard never reads basket members.
+        from council.lib import subjects
+        c = load_fixture("basket-pass.json"); c["subject"]["constituents"][0]["ticker"] = "U.U"
+        self.assertEqual(sufficiency._holder_guard_failures(c["subject"],FLOORS), [])
+    def test_an_unrelated_fund_is_untouched(self):
+        # Controls: the older fund and a holder ticker on another calendar pass.
+        self.passes(load_fixture("etf-pass.json"))
+        c = load_fixture("etf-pass.json")
+        c["subject"].update(ticker=self.row()["physical_holders"]["sput"]["vehicle_ticker"], listing="NYSE")
+        self.assertEqual(sufficiency._holder_guard_failures(c["subject"], FLOORS), [])
+        self.passes(c)
+
+
+class TestUraniumFixRoundTwo(UraniumTest):
+    def test_a_fund_on_the_toronto_alias_refuses(self):
+        c = load_fixture("etf-pass.json"); h = self.row()["physical_holders"]["sput"]
+        c["subject"].update(ticker=h["vehicle_ticker"], listing="TSX", name=h["names"][0])
+        self.refuses(c, self.rule()["holder_guard"])
+
+    def test_a_single_name_on_the_london_alias_refuses(self):
+        c = load_fixture("exmp-pass.json"); h = self.row()["physical_holders"]["yca"]
+        c["subject"].update(ticker=h["vehicle_ticker"], listing="LSE", name=h["names"][0])
+        self.refuses(c, self.rule()["holder_guard"])
+
+    def test_a_theme_on_the_toronto_alias_refuses(self):
+        c = load_fixture("theme-pass.json"); h = self.row()["physical_holders"]["sput"]
+        c["subject"].pop("constituents", None)
+        c["subject"]["vehicle"] = dict(name=h["names"][0], ticker=h["vehicle_ticker"], listing="TSX", currency=h["currency"])
+        self.refuses(c, self.rule()["holder_guard"])
+
+    def test_the_next_year_gap_names_its_own_clause(self):
+        self.assertIn("AC88(3)", self.rule()["why"]["next_year_guidance_gap_allowed"])
+
+    def test_every_rule_why_is_distinct(self):
+        def whys(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key == "why":
+                        yield from item.values() if isinstance(item, dict) else [item]
+                    else:
+                        yield from whys(item)
+            elif isinstance(value, list):
+                for item in value: yield from whys(item)
+        words = list(whys(self.rule()))
+        self.assertEqual(len(words), len(set(words)))
+
+    def test_a_missing_pattern_role_names_the_runbook(self):
+        c = uranium_capture(); fid = self.fid("costs"); self.drop(c, fid)
+        out = self.refuses(c, fid)
+        self.assertIn("council/RUNBOOK.md §1.0h", out["message"])
+
+    def test_every_recorded_lift_refuses(self):
+        original = self.facts(load_fixture("copper-pass.json"))
+        for fid, why in self.row()["class_anchors_lifted"].items():
+            with self.subTest(fact=fid):
+                c = uranium_capture(); c["tier1"].append(copy.deepcopy(original[fid]))
+                self.refuses(c, fid, why)
+
+
+class TestTheUraniumPrice(UraniumTest):
+    def test_the_uranium_capture_passes(self): self.passes()
+    def test_a_price_not_from_the_holder_refuses(self): self.fault("spot","source","INVENTED other source")
+    def test_a_price_unequal_to_the_worked_price_refuses(self): self.fault("spot","value","121",self.rule()["spot_refusal"])
+    def test_a_worked_price_rounded_wrongly_refuses(self):
+        c = uranium_capture(); self.facts(c)[self.fid("spot_proxy")]["value"] = "121.00"
+        out=self.gate(c); self.assertEqual(out["result"],"refused"); self.assertTrue(any("arithmetic" in r or "comput" in r for r in out["reasons"]))
+    def test_a_worked_price_from_other_operands_refuses(self):
+        c = uranium_capture(); self.facts(c)[self.fid("spot_proxy")]["derived"]["operands"][0]["fact_id"] = self.fid("spot_check")
+        self.refuses(c,self.rule()["spot_refusal"])
+    def test_a_cross_check_beyond_the_tolerance_refuses(self): self.fault("spot_check","value","123",self.rule()["cross_check_refusal"])
+    def test_a_cross_check_within_the_tolerance_passes(self): self.passes(uranium_capture(uranium_spot_cross_check="122"))
+    def test_a_cross_check_from_the_holder_refuses(self): self.fault("spot_check","source","INVENTED COMEX Sprott")
+    def test_cross_checks_days_apart_refuse(self): self.fault("spot_check","as_of","2026-10-09",self.rule()["cross_check_refusal"])
+    def test_a_stale_spot_refuses_naming_it(self): self.fault("spot","as_of","2026-10-07",self.rule()["spot_refusal"])
+    def test_a_stale_term_refuses_naming_it(self): self.fault("term_month_end","as_of","2026-08-31",self.rule()["term_refusal"])
+    def test_a_term_of_thirty_five_days_passes(self):
+        c=uranium_capture(); c["captured_at"]="2026-11-04T06:00Z"
+        for f in c["tier1"]:
+            if f["as_of"]=="2026-10-11": f["as_of"]="2026-11-04"
+            if f["id"] in (self.fid("spot_month_end"),self.fid("term_month_end")): f["as_of"]="2026-09-30"
+        for key in self.row()["physical_holders"]:
+            for w in self.rule()["pound_windows"]: self.facts(c)[self.fid("pounds_start",key,point=w["point"])]["as_of"]=(date(2026,11,4)-timedelta(days=w["days"])).isoformat()
+        self.passes(c)
+    def test_month_ends_of_two_months_refuse(self): self.fault("spot_month_end","as_of","2026-08-31",self.rule()["month_end_pair_refusal"])
+    def test_a_date_not_a_month_end_refuses(self):
+        c=uranium_capture()
+        for role in ("spot_month_end","term_month_end"): self.facts(c)[self.fid(role)]["as_of"]="2026-09-29"
+        self.refuses(c,self.rule()["month_end_pair_refusal"])
+    def test_a_month_end_not_from_cameco_refuses(self): self.fault("spot_month_end","source","INVENTED other publisher")
+    def test_the_daily_operands_name_one_day_and_pounds(self):
+        for role,field,value in (("holder_value","as_of","2026-10-10"),("pounds_now","unit","million_lb")):
+            self.fault(role,field,value,self.rule()["spot_refusal"])
+
+
+class TestTheHoldersFigures(UraniumTest):
+    def test_a_nav_past_its_limit_refuses(self): self.fault("nav","as_of","2026-10-07",self.rule()["nav_stale_refusal"])
+    def test_a_derived_nav_refuses(self): self.fault("nav","derived",dict(operation="add",operands=[dict(label="invented",value="10")]),self.rule()["derived_nav_refusal"])
+    def test_nav_and_price_in_two_units_refuse(self):
+        for role in ("holder_price","history_price"):
+            c=uranium_capture(); fid=self.fid(role,suffix="fy2024") if role=="history_price" else self.fid(role)
+            self.facts(c)[fid]["unit"]="GBP_per_share"; self.refuses(c,self.rule()["unit_pair_refusal"])
+    def test_missing_costs_refuse(self):
+        c=uranium_capture(); fid=self.fid("costs"); self.drop(c,fid); self.refuses(c,fid)
+    def test_four_year_ends_without_the_gap_refuse(self):
+        c=uranium_capture()
+        for role in ("history_nav","history_price"): self.drop(c,self.fid(role,suffix="fy2021"))
+        self.refuses(c,"at least 5 members")
+    def test_a_younger_listing_declares_the_gap(self):
+        # Control for the existing conditional family; holder admission is new.
+        c=uranium_capture()
+        for role in ("history_nav","history_price"): self.drop(c,self.fid(role,suffix="fy2021"))
+        self.gap(c,self.rule()["roles"]["history_nav"]["prefix"],"INVENTED younger listing"); self.passes(c)
+    def test_the_other_holders_figures_are_not_read(self):
+        # Control: only the vehicle's NAV, price and costs enter the role set.
+        c=uranium_capture(); fid=self.fid("nav","yca")
+        c["tier1"].append(dict(self.facts(c)[self.fid("nav")],id=fid,value="not a number",unit="count",source="INVENTED other",as_of="2020-01-01"))
+        self.passes(c); self.assertNotIn(fid,sufficiency.holder_product_role_set(freeze.build_pack(c),FLOORS))
+    def test_history_members_name_their_latest_financial_year_ends(self):
+        self.fault("history_nav","as_of","2024-12-30",suffix="fy2024")
+
+
+class TestTheMarketFacts(UraniumTest):
+    def guidance(self,c,year=2026,end="low",p="cameco"):
+        return self.fid("guidance",p=p,yyyy=year,end=end)
+    def test_every_required_fact_refuses_when_missing(self):
+        c=uranium_capture()
+        for fid,roles in sufficiency.holder_product_role_set(freeze.build_pack(c),FLOORS).items():
+            if roles & {"history_nav","history_price"}: continue
+            with self.subTest(fact=fid):
+                changed=copy.deepcopy(c); self.drop(changed,fid); self.refuses(changed,fid)
+    def test_reactors_not_from_the_iaea_refuse(self): self.fault("reactors_operating_count","source","INVENTED other source")
+    def test_one_end_of_a_range_refuses(self):
+        c=uranium_capture(); fid=self.guidance(c,end="high"); self.drop(c,fid); self.refuses(c,fid)
+    def test_a_midpoint_refuses(self):
+        c=uranium_capture(); fid=self.guidance(c); c["tier1"].append(dict(self.facts(c)[fid],id=fid.replace("_low","_midpoint")))
+        self.refuses(c,self.rule()["guidance_range_refusal"])
+    def test_low_above_high_refuses(self):
+        c=uranium_capture(); self.facts(c)[self.guidance(c)]["value"]="11"; self.refuses(c,self.rule()["guidance_range_refusal"])
+    def test_guidance_in_an_unruled_unit_refuses(self): self.fault("guidance","unit","count",p="cameco",yyyy=2026,end="low")
+    def test_guidance_without_its_basis_refuses(self): self.fault("guidance","source","INVENTED Cameco",self.rule()["guidance_range_refusal"],p="cameco",yyyy=2026,end="low")
+    def next_gaps(self,c,year=2027):
+        for p,producer in self.rule()["largest_producers"].items():
+            for end in self.rule()["roles"]["guidance"]["ends"]:
+                fid=self.guidance(c,year,end,p); self.drop(c,fid); self.gap(c,fid,"INVENTED "+producer["names"][0]+" "+self.rule()["next_year_gap_words"])
+    def test_next_year_as_a_gap_passes(self):
+        c=uranium_capture(); self.next_gaps(c); self.passes(c)
+    def test_next_year_as_a_gap_refuses_with_the_flag_off(self):
+        c=uranium_capture(); self.next_gaps(c); floors=copy.deepcopy(FLOORS); self.rule(floors)["next_year_guidance_gap_allowed"]=False
+        self.refuses(c,self.rule()["next_year_refusal"],floors=floors)
+    def test_this_year_as_a_gap_refuses(self):
+        c=uranium_capture(); self.next_gaps(c,2026); self.refuses(c,self.rule()["next_year_refusal"])
+    def test_next_year_pair_and_its_gap_together_refuse(self):
+        c=uranium_capture(); self.gap(c,self.guidance(c,2027),"INVENTED Cameco not yet published"); self.refuses(c,"fact and gap together")
+    def test_a_range_with_one_end_and_one_gap_refuses(self):
+        c=uranium_capture(); fid=self.guidance(c,2027,"high"); self.drop(c,fid)
+        self.gap(c,fid,"INVENTED Cameco not yet published"); self.refuses(c,self.rule()["next_year_refusal"])
+    def test_the_needs_figure_not_from_the_eia_refuses(self): self.fault("uncontracted_us","source","INVENTED other source")
+    def test_a_global_figure_without_a_company_refuses(self):
+        c=uranium_capture(); c["tier1"].append(dict(self.facts(c)[self.fid("uncontracted_us")],id=self.fid("uncontracted_global"),source="INVENTED UxC"))
+        self.refuses(c,self.rule()["paid_publisher_refusal"])
+    def test_a_paid_publisher_without_a_company_refuses(self): self.fault("reactors_operating_count","source","INVENTED IAEA UxC",self.rule()["paid_publisher_refusal"])
+    def test_each_never_a_council_figure_refuses(self):
+        for prefix in self.rule()["never_a_council_figure_prefixes"]:
+            c=uranium_capture(); c["tier1"].append(dict(self.facts(c)[self.fid("uncontracted_us")],id=prefix+"invented")); self.refuses(c,self.rule()["never_a_council_figure_refusal"])
+    def test_background_facts_are_advisory(self):
+        # Control: advisory anchors do not refuse an absent fact.
+        self.passes()
+
+
+class TestTheHoldersPounds(UraniumTest):
+    def test_every_holders_pounds_now_is_required(self):
+        for h in self.row()["physical_holders"]:
+            c=uranium_capture(); fid=self.fid("pounds_now",h); self.drop(c,fid); self.refuses(c,fid)
+    def test_a_start_in_its_window_passes(self): self.passes()
+    def test_a_start_too_early_refuses(self):
+        for w in self.rule()["pound_windows"]:
+            day=(date(2026,10,11)-timedelta(days=w["days"]+w["start_tolerance_days"]+1)).isoformat()
+            self.fault("pounds_start","as_of",day,self.rule()["window_start_refusal"],point=w["point"])
+    def test_a_start_after_the_window_opens_refuses(self):
+        for w in self.rule()["pound_windows"]:
+            self.fault("pounds_start","as_of",(date(2026,10,11)-timedelta(days=w["days"]-1)).isoformat(),self.rule()["window_start_refusal"],point=w["point"])
+    def test_a_declared_start_gap_passes(self):
+        c=uranium_capture(); fid=self.fid("pounds_start",point="m1"); self.drop(c,fid); self.gap(c,fid,self.rule()["no_start_words"]); self.passes(c)
+    def test_no_start_and_no_gap_refuses(self):
+        c=uranium_capture(); fid=self.fid("pounds_start",point="m1"); self.drop(c,fid); self.refuses(c,self.rule()["window_start_refusal"])
+    def test_a_start_and_its_gap_together_refuse(self):
+        c=uranium_capture(); self.gap(c,self.fid("pounds_start",point="m1"),self.rule()["no_start_words"]); self.refuses(c,"fact and gap together")
+    def test_pounds_in_another_unit_refuse(self): self.fault("pounds_now","unit","count")
+
+
+class TestTheSwingsWindow(UraniumTest):
+    def test_under_a_year_refuses(self): self.fault("history","value","364",self.rule()["short_history_refusal"])
+    def test_the_whole_history_passes(self): self.passes()
+    def test_a_window_shorter_than_the_history_refuses(self): self.fault("window","value","899",self.rule()["window_refusal"])
+    def test_five_years_or_more_uses_five_years(self): self.passes(uranium_capture(swings_history_days="2000",volatility_window_days="1826"))
+    def test_swings_not_on_the_net_asset_value_refuse(self):
+        for role in ("history","window","volatility"): self.fault(role,"source","INVENTED Sprott market price",self.rule()["swings_source_refusal"])
+    def test_copper_is_untouched(self):
+        # Control: the commodity fixture keeps its original volatility rule.
+        self.passes(load_fixture("copper-pass.json"))
+
+
+class TestTheUraniumRecordsUnchanged(UraniumTest):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_capture_and_pack_is_unchanged(self):
+        base=copy.deepcopy(FLOORS); base["asset_classes"]["commodity"]["products"].pop("uranium")
+        gated=checked=frozen=0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path=os.path.join(LIVE_RUNS,run_id,"evidence","capture.json")
+            if os.path.exists(path):
+                c=canonical.read_json(path)
+                for capture in (c,to_contract_1_17_0(copy.deepcopy(c),run_id)):
+                    self.assertEqual(gate.validate_capture(copy.deepcopy(capture),SCHEMA,FLOORS),gate.validate_capture(copy.deepcopy(capture),SCHEMA,base))
+                gated+=1
+            path=os.path.join(LIVE_RUNS,run_id,"pack","pack.json")
+            if not os.path.exists(path): continue
+            pack=canonical.read_json(path)
+            with open(path,"rb") as handle: self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])),handle.read())
+            frozen+=1
+            try: old=sufficiency.check(copy.deepcopy(pack),base)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught: sufficiency.check(copy.deepcopy(pack),FLOORS)
+                self.assertEqual(str(caught.exception),str(exc)); continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack),FLOORS),old); checked+=1
+        self.assertGreater(min(gated,checked,frozen),0)
+
+
+class UraniumProducerTest(UraniumTest):
+    def producer_rule(self, floors=None):
+        return (floors or FLOORS)["archetype_measures"]["uranium_producer_rule"]
+
+    def open_floors(self):
+        floors = copy.deepcopy(FLOORS)
+        self.row(floors)["sitting_open"] = True
+        return floors
+
+    def outcome(self, c, floors=None):
+        return sufficiency_of(freeze.build_pack(c), floors or self.open_floors())
+
+    def passes(self, c=None, floors=None):
+        c = c or uranium_producer_capture()
+        gated = self.gate(c)
+        self.assertEqual(gated["result"], "accepted", gated["reasons"])
+        return super().passes(c, floors)
+
+    def add(self, c, fid, value="10", unit="lb", **changes):
+        grower_fact(c, fid, value, unit=unit, as_of="2026-10-11")
+        self.facts(c)[fid].update(changes)
+        return c
+
+    def book(self, shape):
+        c = uranium_producer_capture()
+        book = self.producer_rule()["contract_book"]
+        self.drop(c, book["per_year_prefix"] + "2027")
+        if shape == "not_published_id":
+            return self.add(c, book[shape], "INVENTED: the report publishes no volume",
+                            book["statement_unit"])
+        return self.add(c, book[shape] + "2027_2031")
+
+    def outside(self, product):
+        c = uranium_producer_capture()
+        peer = frame_of(c)["peers"][0]
+        slug = peer["ticker"].lower()
+        fid = "peer_%s__%s" % (self.producer_rule()["peer_product_metric"], slug)
+        self.facts(c)[fid]["value"] = product
+        self.facts(c)["peer_reserves_pp_attributable__" + slug]["unit"] = (
+            FLOORS["archetype_measures"]["resource_products"][product]["unit"])
+        return c
+
+    def output(self, c, values):
+        facts = self.facts(c)
+        members = [fid for fid in facts if fid.startswith("production_quarter_")]
+        for fid, value in zip(members, values): facts[fid]["value"] = str(value)
+        facts["production_q"]["value"] = str(values[-1])
+        trailing = facts["production_ttm"]
+        trailing["value"] = str(sum(values))
+        trailing["derived"]["operands"] = [dict(fact_id=fid, label="invented output",
+            value=facts[fid]["value"]) for fid in members]
+        return c
+
+
+class TestUraniumProducerData(UraniumProducerTest):
+    def test_every_added_string_uses_the_ruled_segment_words(self):
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, dict):
+                for member in value.values():
+                    yield from strings(member)
+            elif isinstance(value, list):
+                for member in value:
+                    yield from strings(member)
+
+        measures = FLOORS["archetype_measures"]
+        values = list(strings(measures["uranium_producer_rule"]))
+        values += list(strings(FLOORS["archetype_floors"][PRODUCER]["product_floors"]))
+        values += list(strings(measures["resource_products"]["uranium"]))
+        values.append(measures["resource_rule"]["block_families_by_product_why"])
+        with open(os.path.join(ROOT, "council", "RUNBOOK.md"), encoding="utf-8") as source:
+            paragraph = source.read().split("**A uranium producer", 1)[1].split("\n### ", 1)[0]
+        values.append(paragraph)
+        for value in values:
+            with self.subTest(words=value):
+                self.assertNotIn("outside mining", value.casefold())
+
+    def test_uranium_is_on_the_product_list_in_pounds(self):
+        row = FLOORS["archetype_measures"]["resource_products"]["uranium"]
+        self.assertEqual((row["unit"], row["price_unit"]), ("lb", "USD per lb"))
+        self.assertEqual(row["class_source"], "asset_classes.commodity.products.uranium")
+
+    def test_the_term_limit_equals_the_monthly_class(self):
+        self.assertEqual(FLOORS["archetype_measures"]["resource_products"]["uranium"]
+                         ["max_price_freshness_days"], self.rule()["freshness_classes"]["monthly_published"])
+
+    def test_the_gate_reads_the_one_factor_from_the_product_row(self):
+        c = tonnes_conversion_capture()
+        floors = copy.deepcopy(FLOORS)
+        self.rule(floors)["tonnes_to_pounds"]["factor"] = "2600"
+        self.assertTrue(gate._check_unit_conversions(c, floors))
+        self.assertFalse(gate._check_unit_conversions(c, FLOORS))
+
+    def test_every_rule_constant_carries_its_why(self):
+        rule = self.producer_rule()
+        whys = [rule[key + "_why"] for key in rule if not key.endswith("_why")]
+        whys.append(FLOORS["archetype_measures"]["resource_rule"]["block_families_by_product_why"])
+        block = FLOORS["archetype_floors"][PRODUCER]["product_floors"]
+        whys += [block["why"]] + [f["why"] for f in block["uranium"]]
+        self.assertTrue(all("AC" in why for why in whys))
+        self.assertEqual(len(whys), len(set(whys)))
+        expected = {role for role, spec in self.rule()["roles"].items()
+                    if spec["binds"] in ("all", "every_holder", "every_producer")}
+        expected -= {"spot", "history", "window", "volatility"}
+        expected.add("uncontracted_global")
+        self.assertEqual(set(rule["producer_roles"]), expected)
+
+    def test_every_new_floor_carries_applies_from_and_a_ruling(self):
+        for floor in FLOORS["archetype_floors"][PRODUCER]["product_floors"]["uranium"]:
+            self.assertEqual(floor["applies_from"], "2026-10-11")
+            self.assertIn("AC", floor["why"])
+            self.assertTrue(floor["likely_source"])
+
+    def test_every_unit_the_rule_names_is_allowed(self):
+        rule = self.producer_rule()
+        units = [rule["country_unit"], rule["contract_book"]["statement_unit"]]
+        units += list(self.rule()["tonnes_to_pounds"][key] for key in ("from_unit", "to_unit"))
+        for unit in units: self.assertIn(unit, FLOORS["allowed_units"])
+
+
+def tonnes_conversion_capture(factor=None, source_unit=None, result_unit=None,
+                              operation="multiply", third=False):
+    """AC85(1): independent invented arithmetic for the provenance gate."""
+    c = producer_capture("miner")
+    conversion = FLOORS["asset_classes"]["commodity"]["products"]["uranium"]["rule"]["tonnes_to_pounds"]
+    grower_fact(c, "original_quantity", "10", unit=source_unit or conversion["from_unit"])
+    operands = [dict(fact_id="original_quantity", label="invented quantity", value="10")]
+    if operation == "multiply":
+        operands.append(dict(label="published factor", value=factor or conversion["factor"]))
+    else:
+        grower_fact(c, "another_quantity", "2", unit=source_unit or conversion["from_unit"])
+        operands.append(dict(fact_id="another_quantity", label="invented quantity", value="2"))
+    if third: operands.append(dict(label="invented third input", value="1"))
+    value = gate._compute(operation, [Decimal(o["value"]) for o in operands])
+    grower_fact(c, "converted_quantity", str(value), unit=result_unit or conversion["to_unit"],
+                derived=dict(operation=operation, operands=operands))
+    return c
+
+
+class TestTheTonnesConversionAtTheGate(UraniumTest):
+    def conversion_refuses(self, **changes):
+        out = self.gate(tonnes_conversion_capture(**changes))
+        self.assertEqual(out["result"], "refused", out)
+        self.assertTrue(any("AC85(1)" in reason and "converted_quantity" in reason
+                            and "original_quantity" in reason for reason in out["reasons"]), out)
+
+    def test_tonnes_times_the_factor_into_pounds_passes(self):
+        # CONTROL: correct arithmetic already passes the base.
+        self.assertEqual(self.gate(tonnes_conversion_capture())["result"], "accepted")
+
+    def test_another_factor_refuses(self): self.conversion_refuses(factor="2600")
+    def test_a_third_operand_refuses(self): self.conversion_refuses(third=True)
+    def test_tonnes_into_another_unit_refuses(self): self.conversion_refuses(result_unit="oz")
+    def test_tonnes_added_into_pounds_refuses(self): self.conversion_refuses(operation="add")
+    def test_the_factor_on_a_figure_not_in_tonnes_refuses(self): self.conversion_refuses(source_unit="lb")
+
+    def test_tonnes_added_to_tonnes_passes(self):
+        # CONTROL: arithmetic within the original unit stays admitted.
+        self.assertEqual(self.gate(tonnes_conversion_capture(operation="add", result_unit="tU"))
+                         ["result"], "accepted")
+
+    def test_a_capture_without_tonnes_is_unchanged(self):
+        # CONTROL: uranium guidance is evidence, never an operand.
+        self.assertEqual(self.gate(uranium_capture())["result"], "accepted")
+
+
+class TestUraniumProducerRule(UraniumProducerTest):
+    def test_every_added_unit_check_uses_the_one_units_reader(self):
+        from unittest import mock
+        original = sufficiency._producer_units
+        rule = self.producer_rule()
+        c = self.outside("copper")
+        bought = rule["bought_prefix"] + "q"
+        self.add(c, bought)
+        self.passes(c)
+        seen = []
+
+        def units(floors, declared, frame):
+            result = original(floors, declared, frame)
+            if result is not None:
+                seen.append(result["product"])
+                result.update(unit="oz", price_unit="USD per ounce",
+                              quantities={"oz"}, costs={"USD per ounce"})
+            return result
+
+        with mock.patch.object(sufficiency, "_producer_units", side_effect=units):
+            out = self.outcome(c)
+        wanted = {bought: "requires unit oz",
+                  rule["contract_book"]["per_year_prefix"] + "2027": "requires unit oz",
+                  rule["price_received_beside"]["spot"]: "requires unit USD per ounce",
+                  rule["price_received_beside"]["term"]: "requires unit USD per ounce"}
+        for fid, words in wanted.items():
+            with self.subTest(fact=fid):
+                self.assertTrue(any(fid in item["why_needed"] and words in item["why_needed"]
+                                    for item in out["missing"]), fid)
+        peer = frame_of(c)["peers"][0]
+        fid = "peer_reserves_pp_attributable__" + peer["ticker"].lower()
+        with self.subTest(fact=fid):
+            self.assertTrue(any(fid in item["why_needed"] and "- oz -" in item["why_needed"]
+                                for item in out["missing"]), fid)
+        with self.subTest(reader="outside peer"):
+            self.assertIn("copper", seen)
+
+    def test_a_uranium_producer_passes(self): self.passes()
+
+    def test_the_term_price_is_todays_price(self):
+        # CONTROL: resource_readings already reads the block's cited price.
+        c = uranium_producer_capture()
+        self.facts(c)[self.fid("term_month_end")]["value"] = "70"
+        readings = producer_readings(c)
+        self.assertEqual(readings["today_price"], Decimal("70"))
+        self.assertTrue(readings["today_below_reserve_price"])
+        self.facts(c)[self.fid("term_month_end")]["value"] = "120"
+        self.facts(c)[self.fid("spot_proxy")]["value"] = "10"
+        self.assertFalse(producer_readings(c)["today_below_reserve_price"])
+
+    def test_the_term_id_is_admitted_for_uranium_only(self):
+        self.passes()
+        wrong = uranium_producer_capture()
+        self.add(wrong, "reference_price_uranium", "120", "USD per lb")
+        producer_block(wrong)["reference_price_fact"] = "reference_price_uranium"
+        self.refuses(wrong, "AC86(1)", "term price")
+        c = other_producer_capture("copper")
+        grower_fact(c, self.fid("term_month_end"), "80", unit="USD per lb")
+        producer_block(c)["reference_price_fact"] = self.fid("term_month_end")
+        out = sufficiency_of(freeze.build_pack(c), producer_rule_floors())
+        self.assertEqual(out["result"], "refuse")
+        self.assertIn("a fact of its own family", out["message"])
+
+    def test_a_term_rule_looser_than_the_monthly_limit_refuses(self):
+        c = uranium_producer_capture()
+        self.facts(c)[self.fid("term_month_end")]["freshness_rule_days"] = 36
+        self.refuses(c, self.fid("term_month_end"), "no looser than 35 days")
+
+    def test_no_daily_spot_refuses_in_as_words(self):
+        c = uranium_producer_capture(); self.drop(c, self.fid("spot_proxy"))
+        self.refuses(c, self.rule()["spot_refusal"])
+
+    def test_a_stale_spot_refuses_naming_it(self):
+        c = uranium_producer_capture()
+        self.facts(c)[self.fid("spot_proxy")]["as_of"] = "2026-10-07"
+        self.refuses(c, self.fid("spot_proxy"), self.rule()["spot_refusal"])
+
+    def test_the_month_end_pair_binds_a_producer(self):
+        c = uranium_producer_capture()
+        self.facts(c)[self.fid("spot_month_end")]["as_of"] = "2026-09-29"
+        self.refuses(c, self.rule()["month_end_pair_refusal"])
+
+    def test_the_share_price_is_never_read_as_spot(self):
+        c = uranium_producer_capture()
+        self.facts(c)["price_last"]["value"] = "1"
+        self.passes(c)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        self.assertNotIn("spot", roles.get("price_last", set()))
+
+    def test_no_vehicle_role_binds_a_producer(self):
+        c = uranium_producer_capture(); self.passes(c)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        self.assertFalse(any(set(tags) & {"nav", "holder_price", "costs", "history",
+            "window", "volatility", "history_nav", "history_price"} for tags in roles.values()))
+
+    def test_the_door_is_open_since_d_merged(self):
+        # The architect's merge-time edit after (d2) (owner ruling AC88): the flag is true on the floors as
+        # merged; a producer capture no longer refuses on the shut door. Shut it in memory to see the refusal.
+        self.assertTrue(self.row()["sitting_open"])
+        self.passes()
+        shut = copy.deepcopy(FLOORS)
+        self.row(shut)["sitting_open"] = False
+        self.refuses(uranium_producer_capture(), self.row(shut)["sitting_closed"], floors=shut)
+
+    def test_bought_pounds_beside_output_pass_and_are_never_output(self):
+        c = uranium_producer_capture(); before = producer_readings(c)
+        self.add(c, self.producer_rule()["bought_prefix"] + "q", "900")
+        without_gap(c, self.producer_rule()["bought_prefix"])
+        self.passes(c); self.assertEqual(producer_readings(c), before)
+        self.output(c, [0, 0, 0, 0])
+        self.refuses(c, "AC85(4)", "output in at least one")
+
+    def test_a_bought_member_without_its_output_companion_refuses(self):
+        c = self.add(uranium_producer_capture(), self.producer_rule()["bought_prefix"] + "missing")
+        self.refuses(c, "production_missing", "AC85(4)")
+
+    def test_no_bought_pounds_and_no_gap_refuses(self):
+        c = uranium_producer_capture(); without_gap(c, self.producer_rule()["bought_prefix"])
+        self.refuses(c, self.producer_rule()["bought_prefix"], "AC85(4)")
+
+    def test_a_non_mine_business_is_recorded_not_valued(self):
+        c = uranium_producer_capture(); before = producer_readings(c)
+        self.add(c, self.producer_rule()["segment_prefix"] + "example", "300",
+                 "USD_m", label="INVENTED services business")
+        without_gap(c, self.producer_rule()["segment_prefix"])
+        self.passes(c); self.assertEqual(producer_readings(c), before)
+
+    def test_a_non_mine_carrying_value_in_another_money_unit_refuses(self):
+        fid = self.producer_rule()["segment_prefix"] + "example"
+        c = self.add(uranium_producer_capture(), fid, "300", "USD",
+                     label="INVENTED services business")
+        self.refuses(c, fid, "USD_m", "recorded USD", "AC85(4)")
+
+    def test_no_output_in_four_quarters_refuses_naming_AC85(self):
+        c = self.output(uranium_producer_capture(), [0, 0, 0, 0])
+        self.refuses(c, "AC85(4)", "production_quarter_q2_fy2026")
+
+    def test_one_producing_quarter_passes(self):
+        self.passes(self.output(uranium_producer_capture(), [0, 0, 0, 10]))
+
+    def test_a_half_year_reporter_with_a_year_of_zeros_refuses(self):
+        c = self.output(uranium_producer_capture(), [0, 0, 0, 0])
+        for prefix in ("production_quarter_", "realized_price_quarter_"):
+            c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(prefix)]
+            for period in ("h2_fy2024", "h1_fy2025", "h2_fy2025", "h1_fy2026"):
+                output = "50" if period in ("h2_fy2024", "h1_fy2025") else "0"
+                self.add(c, prefix + period, output if prefix == "production_quarter_" else "72",
+                         "lb" if prefix == "production_quarter_" else "USD per lb")
+        self.facts(c)["production_ttm"]["derived"] = None
+        self.facts(c)[gate._LATEST_REPORT_ID]["value"] = "H1 FY2026"
+        out = self.refuses(c, "AC85(4)", "h2_fy2025", "h1_fy2026")
+        self.assertEqual(len(out["missing"]), 1, out["message"])
+
+    def test_the_contract_book_per_year_passes(self): self.passes()
+    def test_the_contract_book_as_an_average_passes(self): self.passes(self.book("average_prefix"))
+    def test_the_contract_book_as_a_total_passes(self): self.passes(self.book("total_prefix"))
+    def test_the_contract_book_not_published_passes(self): self.passes(self.book("not_published_id"))
+
+    def test_no_contract_book_shape_refuses(self):
+        c = uranium_producer_capture()
+        self.drop(c, self.producer_rule()["contract_book"]["per_year_prefix"] + "2027")
+        self.refuses(c, "AC87(2)", "published volumes")
+
+    def test_not_published_beside_a_volume_refuses(self):
+        book = self.producer_rule()["contract_book"]
+        c = self.add(uranium_producer_capture(), book["not_published_id"],
+                     "INVENTED not published", book["statement_unit"])
+        self.refuses(c, "AC87(2)", "two readings")
+
+    def test_a_contract_book_fact_of_no_shape_refuses(self):
+        book = self.producer_rule()["contract_book"]
+        for suffix in ("unknown", "2028_2027"):
+            c = self.add(uranium_producer_capture(), book["total_prefix"] + suffix)
+            self.refuses(c, "AC87(2)", "no admitted shape")
+
+    def test_a_published_share_is_read_as_recorded(self):
+        c = self.add(uranium_producer_capture(),
+                     self.producer_rule()["contract_book"]["share_prefix"] + "2027_2031",
+                     "30", "percent")
+        self.passes(c)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        fid = self.producer_rule()["contract_book"]["share_prefix"] + "2027_2031"
+        self.assertIn("uranium:contract_book_share", roles[fid])
+        self.assertEqual(self.facts(c)[fid]["value"], "30")
+
+    def test_no_pricing_words_and_no_gap_refuses(self):
+        c = uranium_producer_capture(); book = self.producer_rule()["contract_book"]
+        self.drop(c, book["pricing_id"]); self.refuses(c, book["pricing_id"], "AC87(2)")
+        c["gaps"].append(dict(fact_class=book["pricing_id"], reason_kind="other",
+            reason="INVENTED: the company does not publish how its contract prices are set",
+            weakened_test="contract pricing is unknown"))
+        self.passes(c)
+
+    def test_the_price_received_beside_spot_and_term_passes(self): self.passes()
+
+    def test_no_term_average_refuses_naming_AC87(self):
+        c = uranium_producer_capture(); fid = self.producer_rule()["price_received_beside"]["term"]
+        self.drop(c, fid); self.refuses(c, fid, "AC87(2)")
+
+    def test_averages_two_days_apart_refuse(self):
+        c = uranium_producer_capture()
+        self.facts(c)[self.producer_rule()["price_received_beside"]["term"]]["as_of"] = "2026-10-09"
+        self.refuses(c, "AC87(2)", "2 days apart", "2026-10-09", "2026-10-11")
+
+    def test_averages_a_day_apart_pass(self):
+        c = uranium_producer_capture()
+        self.facts(c)[self.producer_rule()["price_received_beside"]["term"]]["as_of"] = "2026-10-10"
+        self.passes(c)
+
+    def test_no_mine_country_refuses_naming_AC87(self):
+        c = uranium_producer_capture()
+        self.drop(c, self.producer_rule()["mine_country_prefix"] + "example")
+        self.refuses(c, self.producer_rule()["mine_country_prefix"], "AC87(2)")
+
+    def test_reserves_older_than_fifteen_months_refuse(self):
+        # CONTROL of the pre-existing reserve-age rule.
+        c = uranium_producer_capture()
+        self.facts(c)["reserves_pp_attributable"]["as_of"] = "2025-01-01"
+        self.refuses(c, "AC53(R12)", "456 days")
+
+    def test_the_shared_market_facts_are_required(self):
+        c = uranium_producer_capture()
+        roles = sufficiency._holder_product_roles({"capture": c}, self.open_floors(),
+                                                  self.producer_rule()["producer_roles"])
+        for fid, tags in roles.items():
+            if all(spec["binds"] == "optional" for spec in tags.values()): continue
+            with self.subTest(fact=fid):
+                missing = copy.deepcopy(c); self.drop(missing, fid)
+                self.refuses(missing, fid)
+
+    def test_an_outside_copper_peer_with_its_reason_passes(self):
+        self.passes(self.outside("copper"))
+
+    def test_an_outside_gold_peer_is_checked_in_ounces(self):
+        c = self.outside("gold"); self.passes(c)
+        peer = frame_of(c)["peers"][0]["ticker"].lower()
+        self.facts(c)["peer_reserves_pp_attributable__" + peer]["unit"] = "lb"
+        self.refuses(c, "oz", "recorded in lb")
+
+    def test_an_outside_silver_peer_refuses(self):
+        self.refuses(self.outside("silver"), "AC87(3)", "admits only")
+
+    def test_a_peer_without_its_product_refuses(self):
+        c = uranium_producer_capture(); peer = frame_of(c)["peers"][0]
+        fid = "peer_%s__%s" % (self.producer_rule()["peer_product_metric"], peer["ticker"].lower())
+        self.drop(c, fid); peer["metrics"].remove(fid)
+        self.refuses(c, fid, "AC87(3)")
+
+    def test_a_uranium_peer_in_ounces_refuses(self):
+        # CONTROL of the existing peer quantity-unit rule.
+        c = uranium_producer_capture(); peer = frame_of(c)["peers"][0]["ticker"].lower()
+        self.facts(c)["peer_reserves_pp_attributable__" + peer]["unit"] = "oz"
+        self.refuses(c, "AC52(R6)", "recorded in oz")
+
+    def test_vanadium_and_rare_earths_are_shown_apart_and_never_summed(self):
+        c = uranium_producer_capture(); before = producer_readings(c)
+        add_producer_by_product(c, "vanadium", "lb")
+        add_producer_by_product(c, "rare_earths", "tonnes")
+        self.passes(c); self.assertEqual(producer_readings(c), before)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        self.assertIn("by_product_reserve", roles["reserves_vanadium"])
+        self.assertIn("by_product_reserve", roles["reserves_rare_earths"])
+
+    def test_every_uranium_fact_is_in_the_role_set(self):
+        c = uranium_producer_capture(); rule = self.producer_rule()
+        self.add(c, rule["bought_prefix"] + "q")
+        self.add(c, rule["segment_prefix"] + "example", unit="USD_m", label="INVENTED business")
+        self.add(c, rule["contract_book"]["share_prefix"] + "2027_2031", unit="percent")
+        conversion = self.rule()["tonnes_to_pounds"]
+        fid = rule["tonnes_prefix"] + "reserves"
+        self.add(c, fid, "10", conversion["from_unit"])
+        self.facts(c)["reserves_pp_attributable"].update(value="25998", derived=dict(
+            operation="multiply", operands=[dict(fact_id=fid, label="invented tonnes", value="10"),
+                dict(label="published factor", value=conversion["factor"])]))
+        self.passes(c)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        expected = {"bought", "segment", "contract_book", "contract_book_share",
+                    "contract_book_words", "price_received_spot", "price_received_term",
+                    "mine_country", "tonnes", "peer_product"}
+        self.assertEqual({role.split(":", 1)[1] for tags in roles.values()
+                          for role in tags if role.startswith("uranium:")}, expected)
+        self.assertIn("term_month_end", roles[self.fid("term_month_end")])
+        self.assertIn("reference_price_fact", roles[self.fid("term_month_end")])
+        for tagged in sufficiency._holder_product_roles({"capture": c}, self.open_floors(),
+                                                      rule["producer_roles"]):
+            self.assertIn(tagged, roles)
+
+    def test_the_rule_is_read_from_the_floors(self):
+        c = self.outside("silver")
+        floors = self.open_floors(); self.producer_rule(floors)["outside_peer_products"].append("silver")
+        self.passes(c, floors)
+        self.refuses(c, "AC87(3)")
+
+    def test_every_added_role_checks_its_own_properties(self):
+        c = uranium_producer_capture(); rule = self.producer_rule()
+        self.add(c, rule["bought_prefix"] + "q")
+        self.add(c, rule["segment_prefix"] + "example", unit="USD_m", label="INVENTED business")
+        self.add(c, rule["contract_book"]["share_prefix"] + "2027_2031", unit="percent")
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        text = {"uranium:mine_country", "uranium:peer_product", "uranium:contract_book_words"}
+        for fid, tags in roles.items():
+            own = {tag for tag in tags if tag.startswith("uranium:")}
+            if not own: continue
+            for field, value in (("unit", "count"), ("value", "" if own & text else "unknown"),
+                                 ("as_of", "2020-01-01")):
+                with self.subTest(fact=fid, field=field):
+                    changed = copy.deepcopy(c); self.facts(changed)[fid][field] = value
+                    self.refuses(changed, fid, "owner ruling")
+        for fid in (rule["bought_prefix"] + "q",
+                    rule["contract_book"]["per_year_prefix"] + "2027",
+                    *[rule["price_received_beside"][key] for key in ("spot", "term")]):
+            changed = copy.deepcopy(c); self.facts(changed)[fid]["value"] = "-1"
+            self.refuses(changed, fid, "zero")
+
+    def test_a_calculated_contract_share_refuses(self):
+        rule = self.producer_rule()
+        fid = rule["contract_book"]["share_prefix"] + "2027_2031"
+        c = self.add(uranium_producer_capture(), fid, "30", "percent",
+                     derived=dict(operation="add", operands=[
+                         dict(label="invented input", value="10"),
+                         dict(label="invented input", value="20")]))
+        self.refuses(c, fid, "AC87(2)", "published share")
+
+    def test_original_tonnes_from_shared_guidance_are_tagged_and_fresh(self):
+        c = uranium_producer_capture()
+        prefix = self.rule()["roles"]["guidance"]["prefix"]
+        fid = next(f["id"] for f in c["tier1"] if f["id"].startswith(prefix))
+        self.facts(c)[fid]["unit"] = "tU"
+        operand = self.producer_rule()["tonnes_prefix"] + "guidance"
+        self.add(c, operand, "5", "tU")
+        self.facts(c)[fid]["derived"] = dict(operation="add", operands=[
+            dict(fact_id=operand, label="invented tonnes", value="5"),
+            dict(fact_id=operand, label="invented tonnes", value="5")])
+        self.passes(c)
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), self.open_floors())
+        self.assertIn("uranium:tonnes", roles[operand])
+        self.facts(c)[operand]["as_of"] = "2020-01-01"
+        self.refuses(c, operand, "AC85(1)")
+
+
+def other_producer_capture(product, subtype="miner"):
+    """Existing commodities, invented figures; no new producer semantics."""
+    c = producer_capture(subtype)
+    old = PRODUCER_KIND[subtype]
+    c = json.loads(json.dumps(c).replace(old["product"], product))
+    unit, price = PRODUCER_PRODUCTS[product]
+    for fact in c["tier1"]:
+        if fact["unit"] == old["unit"]:
+            fact["unit"] = "boe" if subtype == "oil_and_gas_producer" else unit
+        if fact["unit"] == old["price_unit"]: fact["unit"] = price
+    return c
+
+
+def add_producer_by_product(c, product, unit):
+    """AC56: all the by-product evidence shown apart, in invented figures."""
+    producer_block(c).setdefault("by_products", []).append(product)
+    day = c["captured_at"][:10]
+    for fid, value, own_unit, limit in (
+            ("reserves_" + product, "20", unit, 500),
+            ("production_" + product, "2", unit, 500),
+            ("reserve_price_" + product, "30", "USD per " + unit, 500),
+            ("reference_price_" + product, "32", "USD per " + unit, 3)):
+        grower_fact(c, fid, value, own_unit, day, rule=limit)
+    return c
+
+
+class TestTheOtherProducersUnchanged(UraniumProducerTest):
+    def test_a_copper_producer_with_uranium_beside_stays_a_copper_producer(self):
+        c = add_producer_by_product(other_producer_capture("copper"), "uranium", "lb")
+        floors = producer_rule_floors()
+        self.assertEqual(sufficiency_of(freeze.build_pack(c), floors)["result"], "pass")
+        entries = sufficiency._merged_floors(floors, c["subject"], c)
+        uranium_floors = floors["archetype_floors"][PRODUCER].get("product_floors", {}).get("uranium", [])
+        self.assertFalse(any(entry in uranium_floors
+                             for entry in entries))
+        roles = sufficiency.producer_role_set(freeze.build_pack(c), floors)
+        self.assertFalse(any(role.startswith("uranium:") for tags in roles.values() for role in tags))
+
+    def test_a_copper_producers_uranium_in_tonnes_now_refuses_by_unit(self):
+        c = add_producer_by_product(other_producer_capture("copper"), "uranium", "tonnes")
+        out = sufficiency_of(freeze.build_pack(c), producer_rule_floors())
+        self.assertEqual(out["result"], "refuse")
+        self.assertIn("tonnes", out["message"]); self.assertIn("lb", out["message"])
+
+    def test_each_listed_product_passes_as_before(self):
+        # CONTROL: the five existing products, all three producer sub-types.
+        for subtype in PRODUCER_SUBTYPES:
+            for product in ("crude_oil", "natural_gas", "gold", "silver", "copper"):
+                c = other_producer_capture(product, subtype)
+                self.assertEqual(gate_check(c)["result"], "accepted")
+                self.assertEqual(sufficiency_of(freeze.build_pack(c), producer_rule_floors())["result"], "pass")
+
+    def test_no_other_producer_has_a_uranium_role(self):
+        # CONTROL: every existing producer stays outside the new admission test.
+        for subtype in PRODUCER_SUBTYPES:
+            c = producer_capture(subtype)
+            roles = sufficiency.producer_role_set(freeze.build_pack(c), producer_rule_floors())
+            self.assertFalse(any(role.startswith("uranium:") for tags in roles.values() for role in tags))
+
+    def test_the_merged_floors_of_every_other_subject_are_unchanged(self):
+        # CONTROL: removing only the new product floors cannot move another subject.
+        floors = copy.deepcopy(FLOORS)
+        product_floors = floors["archetype_floors"][PRODUCER].get("product_floors")
+        if product_floors is not None: product_floors["uranium"] = []
+        for c in (framed(), grower_capture(), uranium_capture(), integrated_major_capture(),
+                  *(producer_capture(subtype) for subtype in PRODUCER_SUBTYPES)):
+            self.assertEqual(sufficiency._merged_floors(FLOORS, c["subject"], c),
+                             sufficiency._merged_floors(floors, c["subject"], c))
+
+    def test_every_uranium_commodity_result_is_unchanged_by_the_split(self):
+        # CONTROL: both registered vehicles keep their role expansion and refusals.
+        expected = {"sput": "7969dd97023832b3a5917d54a3a858449511f2c86ebf1b7c9900b2b96e45391b",
+                    "yca": "0f1406d8ec54b50ccd76e3a0967673dc72e35f58212b9f0ca9a099f291542e5d"}
+        for vehicle in self.row()["physical_holders"]:
+            c = uranium_capture(vehicle)
+            pack = freeze.build_pack(c)
+            self.assertEqual(sufficiency_of(pack)["result"], "pass")
+            roles = sufficiency.holder_product_role_set(pack, FLOORS)
+            self.assertEqual(roles, {fid: set(tags) for fid, tags
+                                    in sufficiency._holder_product_roles(pack, FLOORS).items()})
+            variants = []
+            for fid in sorted(roles):
+                if fid not in self.facts(c): continue
+                for field, value in (("drop", None), ("unit", "count"),
+                                     ("source", "INVENTED OTHER"),
+                                     ("as_of", "2020-01-01"), ("value", "unknown")):
+                    changed = copy.deepcopy(c)
+                    if field == "drop": self.drop(changed, fid)
+                    else: self.facts(changed)[fid][field] = value
+                    variants.append([fid, field, self.outcome(changed, FLOORS)])
+            digest = hashlib.sha256(json.dumps(variants, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":")).encode()).hexdigest()
+            self.assertEqual(digest, expected[vehicle])
+
+
+class TestTheUraniumProducerRunsOnRecord(unittest.TestCase):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS, (JPM_RUN, WULF_RUN)),
+                         "live run records are not published in the public copy")
+    def test_every_record_regates_and_rechecks_as_before(self):
+        before = copy.deepcopy(FLOORS)
+        before["archetype_measures"]["resource_products"].pop("uranium")
+        before["archetype_measures"].pop("uranium_producer_rule")
+        before["archetype_measures"]["resource_rule"].pop("block_families_by_product")
+        before["archetype_measures"]["resource_rule"].pop("block_families_by_product_why")
+        before["archetype_floors"][PRODUCER].pop("product_floors")
+        checked = 0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path = os.path.join(LIVE_RUNS, run_id, "evidence", "capture.json")
+            if os.path.exists(path):
+                c = canonical.read_json(path)
+                self.assertEqual(gate.validate_capture(copy.deepcopy(c), SCHEMA, FLOORS),
+                                 gate.validate_capture(copy.deepcopy(c), SCHEMA, before), run_id)
+            path = os.path.join(LIVE_RUNS, run_id, "pack", "pack.json")
+            if not os.path.exists(path): continue
+            pack = canonical.read_json(path)
+            try:
+                old = sufficiency.check(copy.deepcopy(pack), before)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught:
+                    sufficiency.check(copy.deepcopy(pack), FLOORS)
+                self.assertEqual(str(caught.exception), str(exc), run_id)
+                continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack), FLOORS), old, run_id)
+            checked += 1
+        self.assertGreater(checked, 0)
+
+
+class TestUraniumMeasuresData(unittest.TestCase):
+    # Invented measures use one hundred against eighty: a fifth discount.
+    def row(self):
+        return FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+
+    def test_every_new_constant_carries_its_why(self):
+        rule = self.row()["rule"]
+        for name in ("ladder", "opening", "measures"):
+            self.assertIn(name, rule["why"])
+            block = rule[name]
+            for key in block:
+                if not key.endswith("_why"):
+                    self.assertTrue(block[key + "_why"])
+        for case in rule["ladder"]["downside_cases"].values():
+            for key in ("name_words", "label", "missing_refusal", "zero_refusal"):
+                self.assertTrue(case[key + "_why"])
+
+    def test_the_three_downside_cases_in_their_order(self):
+        self.assertEqual(list(self.row()["rule"]["ladder"]["downside_cases"]),
+                         ["supply_response", "holders_selling", "power_companies_delaying"])
+
+    def test_the_two_past_falls(self):
+        self.assertEqual(set(self.row()["rule"]["opening"]["past_falls"]),
+                         {"peak_2007", "fukushima_2011"})
+
+    def test_the_dominance_line_is_more_than_half(self):
+        self.assertEqual(Decimal(self.row()["rule"]["measures"]["dominance_percent"]), 50)
+
+    def test_the_holder_registry_and_template_are_unchanged(self):
+        # Control: the base registry and capture template hashes.
+        import hashlib
+        self.assertEqual(hashlib.sha256(json.dumps(self.row()["physical_holders"], sort_keys=True).encode()).hexdigest(),
+                         "c325c4124532ad870300f313765aa19f126fb4cf05575078903e7883e7a6475a")
+        self.assertTrue(self.row()["sitting_open"])
+        self.assertEqual(gate.load_capture_schema()["properties"]["capture_version"]["const"], "1.17.0")
+
+
+class TestTheDiscountHistoryHelper(unittest.TestCase):
+    # Invented annual pairs use one hundred and eighty: a fifth discount.
+    def history(self, price="80", today="20"):
+        return sufficiency.discount_history(
+            {"numerator": Decimal(today), "denominator": Decimal(100), "percent": Decimal(today)},
+            [("fy2025", {"id": "nav", "value": "100"}, {"id": "price", "value": price})], 5)
+
+    def test_holding_readings_unchanged_on_every_fixture(self):
+        # Control: the saved step-zero JSON hashes; no external file needed.
+        import hashlib
+        captures = [load_fixture(n) for n in PASS_FIXTURES + ("holding-pass.json",)]
+        captures += [holding_capture(), holding_history(holding_capture()), holding_page_capture(), holding_page_capture(big=True)]
+        expected = ["74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"] * 9 + [
+            "03d7a75996fe9d51d4f2330e632ddde518639d7f71d21a18d746d729cecafbce",
+            "ff5c2c6724e7068bea593282229eec0c996cf99899336908c7b3dc3bd4076284",
+            "ff5c2c6724e7068bea593282229eec0c996cf99899336908c7b3dc3bd4076284",
+            "04ab26131e3f0c84052b56f000977e4df6aca34d59c386e829020158014354eb"]
+        for c, digest in zip(captures, expected):
+            r = sufficiency.holding_readings({"capture": c}, FLOORS)
+            self.assertEqual(hashlib.sha256(json.dumps(r, default=str, sort_keys=True).encode()).hexdigest(), digest)
+
+    def test_unreadable_year_ends_keep_the_base_errors_and_brief_bytes(self):
+        # Fix round one: two invented unreadable annual prices, base order.
+        import hashlib
+        from council.engine import briefs
+        c = holding_history(holding_capture())
+        for suffix in ("fy2025", "fy2024"):
+            fact_in(c, "price_hist_" + suffix)["value"] = "unreadable"
+        pack = freeze.build_pack(c)
+        self.assertEqual(gate.validate_capture(c, SCHEMA, FLOORS)["result"], "accepted")
+        self.assertEqual(sufficiency.check(pack, holding_floors())["result"], "refuse")
+        expected = ["architect ruling HA8: a numeric reading, recorded as 'unreadable'"] * 2 + [
+            "missing or unreadable 'price_hist_fy2025'", "ratio needs both halves and a denominator above zero",
+            "missing or unreadable 'price_hist_fy2024'", "ratio needs both halves and a denominator above zero"]
+        with self.subTest(read="errors"):
+            self.assertEqual(sufficiency.holding_readings(pack, FLOORS)["errors"], expected)
+        sha = canonical.sha256_bytes(canonical.canonical_bytes(pack))
+        for name, text, digest in (
+                ("brief", brief.render(pack, sha), "10578db481e8507e5c4bf5721846f601bef277ca38cb7dc3b22d563e3524ede0"),
+                ("document", brief.render_full(pack, sha), "32137d8156c6555f656215224f2d6dbfc6664cbfdadde0d8b0a34f281570173a"),
+                ("casefile", briefs.render_casefile(pack, {"result": "refuse"}, c["question_verbatim"], c["subject"]),
+                 "04188bdf50ec66d69d62a08d727756d1ba880550279b2069699da5e8ac755948")):
+            with self.subTest(read=name):
+                self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), digest)
+
+    def test_wider_inside_narrower(self):
+        for today, word in (("21", "wider"), ("20", "inside"), ("19", "narrower")):
+            self.assertEqual(self.history(today=today)["range_word"], word)
+        nav = "1" + "0" * 80
+        r = sufficiency.discount_history({"numerator": Decimal(2), "denominator": Decimal(nav), "percent": Decimal(0)},
+            [("fy2025", {"id": "nav", "value": nav}, {"id": "price", "value": "9" * 80})], 5)
+        self.assertEqual(r["history"][0]["discount"]["numerator"], 1)
+        self.assertEqual(r["range_word"], "wider")
+
+    def test_a_premium_reads_negative(self):
+        self.assertEqual(self.history(price="110")["history"][0]["discount"]["percent"], -10)
+
+    def test_the_history_is_newest_first(self):
+        c = holding_history(holding_capture())
+        r = sufficiency.holding_readings({"capture": c}, FLOORS)
+        self.assertEqual([row["year"] for row in r["history"]], ["fy2025", "fy2024", "fy2023", "fy2022", "fy2021"])
+        self.assertEqual(self.history()["history"][0]["year"], "fy2025")
+
+
+class TestUraniumReadings(unittest.TestCase):
+    # Invented pounds rise from ten to twenty: a doubling, with exact quotients.
+    def setUp(self):
+        self.c = uranium_capture()
+        self.row = FLOORS["asset_classes"]["commodity"]["products"]["uranium"]
+        self.rule = self.row["rule"]
+        self.keys = list(self.row["physical_holders"])
+
+    def fid(self, role, **context):
+        spec = self.rule["roles"][role]
+        return (spec.get("id") or spec["id_pattern"]).format(**context)
+
+    def set(self, role, value, **context):
+        fact_in(self.c, self.fid(role, **context))["value"] = value
+
+    def read(self, c=None):
+        return sufficiency.uranium_readings({"capture": c or self.c}, FLOORS)
+
+    def test_a_non_uranium_subject_reads_none(self):
+        # Control: the absent API on base also has no reading for these subjects.
+        reader = getattr(sufficiency, "uranium_readings", lambda *args: None)
+        for c in [load_fixture(n) for n in ("copper-pass.json", "gold-pass.json", "aapl-pass.json")] + [coin_capture(), protocol_capture(), producer_capture()]:
+            self.assertIsNone(reader({"capture": c}, FLOORS))
+        c = uranium_capture()
+        c["captured_at"] = "2026-10-10T06:00Z"
+        self.assertIsNone(reader({"capture": c}, FLOORS))
+
+    def test_the_spot_term_gap_from_the_same_month_end(self):
+        self.set("spot_month_end", "80")
+        self.set("term_month_end", "100")
+        r = self.read()["spot_term"]
+        self.assertEqual((r["gap"], r["gap_percent_of_spot"], r["as_of"]), (20, 25, "2026-09-30"))
+        self.assertEqual(r["sign"], self.rule["measures"]["gap_sign_words"]["term_above"])
+
+    def test_term_below_spot_signs_the_gap(self):
+        self.set("spot_month_end", "100")
+        self.set("term_month_end", "80")
+        r = self.read()["spot_term"]
+        self.assertEqual((r["gap"], r["gap_percent_of_spot"]), (-20, -20))
+        self.assertEqual(r["sign"], self.rule["measures"]["gap_sign_words"]["term_below"])
+
+    def test_the_discount_today_and_five_year_ends(self):
+        self.set("nav", "100", h=self.keys[0])
+        self.set("holder_price", "80", h=self.keys[0])
+        r = self.read()["holder"]
+        self.assertEqual(r["discount_today"]["percent"], 20)
+        self.assertEqual(len(r["history"]), 5)
+        self.assertEqual(r["range_word"], "wider")
+
+    def test_a_younger_listing_shows_what_it_has(self):
+        self.c["tier1"] = [f for f in self.c["tier1"] if not f["id"].endswith(("fy2021", "fy2022"))]
+        r = self.read()
+        self.assertEqual(len(r["holder"]["history"]), 3)
+        self.assertIn(self.rule["roles"]["history_nav"]["prefix"], r["why"]["history"])
+
+    def test_each_holders_window_change(self):
+        for h in self.keys:
+            self.set("pounds_now", "20", h=h)
+        for h in self.read()["buying"]["holders"]:
+            self.assertEqual([w["change"] for w in h["windows"]], [10, 10, 10])
+            self.assertEqual([w["change_percent"] for w in h["windows"]], [100, 100, 100])
+
+    def gap(self):
+        fid = self.fid("pounds_start", h=self.keys[0], point=self.rule["pound_windows"][-1]["point"])
+        self.c["tier1"] = [f for f in self.c["tier1"] if f["id"] != fid]
+        absent_by_design(self.c, fid)
+        self.c["gaps"][-1]["reason"] = self.rule["no_start_words"]
+        return fid
+
+    def test_a_window_without_a_start_prints_the_gap(self):
+        self.gap()
+        self.assertEqual(self.read()["buying"]["holders"][0]["windows"][-1]["gap"], self.rule["no_start_words"])
+
+    def test_a_total_needs_every_holders_start(self):
+        fid = self.gap()
+        r = self.read()
+        self.assertIsNone(r["buying"]["totals"][-1]["change"])
+        self.assertIn(fid, r["why"][self.rule["pound_windows"][-1]["point"]])
+
+    def test_selling_reads_negative(self):
+        for h in self.keys:
+            self.set("pounds_now", "5", h=h)
+        r = self.read()
+        self.assertEqual(r["buying"]["totals"][-1]["change"], -10)
+        self.assertLess(r["supply_ratio"]["low_percent"], 0)
+
+    def test_one_holder_dominates(self):
+        self.set("pounds_now", "11", h=self.keys[0])
+        self.assertEqual(self.read()["buying"]["dominant"], self.keys[0])
+
+    def test_no_holder_dominates_at_exactly_half(self):
+        self.assertIsNone(self.read()["buying"]["dominant"])
+
+    def guidance(self, unit, low="1", high="2"):
+        for p in self.rule["largest_producers"]:
+            for end, value in zip(self.rule["roles"]["guidance"]["ends"], (low, high)):
+                fact_in(self.c, self.fid("guidance", p=p, yyyy=2026, end=end)).update(value=value, unit=unit)
+
+    def test_the_supply_ratio_is_a_range_over_both_ends(self):
+        self.guidance("million_lb")
+        for h in self.keys:
+            self.set("pounds_now", "1000010", h=h)
+        r = self.read()["supply_ratio"]
+        self.assertEqual((r["low_percent"], r["high_percent"]), (50, 100))
+        self.assertEqual(r["calculated_words"], self.rule["measures"]["calculated_words"])
+
+    def test_guidance_in_tonnes_is_scaled_by_the_ruled_factor(self):
+        conversion = self.rule["tonnes_to_pounds"]
+        self.guidance(conversion["from_unit"])
+        self.assertEqual(self.read()["supply_ratio"]["supply_low"], 2 * Decimal(conversion["factor"]))
+
+    def test_guidance_in_million_pounds_is_scaled(self):
+        self.guidance("million_lb")
+        self.assertEqual(self.read()["supply_ratio"]["supply_high"], 4 * Decimal(self.rule["unit_scales_lb"]["million_lb"]))
+
+    def test_a_pound_figure_in_a_unit_the_rule_refuses_reads_none(self):
+        # Fix round one: invented ten pounds must respect each role's units.
+        cases = [("pounds_now", "thousand_lb", dict(h=self.keys[0])),
+                 ("pounds_start", "thousand_lb", dict(h=self.keys[0], point=self.rule["pound_windows"][0]["point"])),
+                 ("guidance", "lb", dict(p=next(iter(self.rule["largest_producers"])), yyyy=2026,
+                                        end=self.rule["roles"]["guidance"]["ends"][0])),
+                 ("history", "lb", {}), ("window", "lb", {})]
+        for role, unit, context in cases:
+            with self.subTest(role=role):
+                c = uranium_capture()
+                fid = self.fid(role, **context)
+                fact_in(c, fid)["unit"] = unit
+                pack = freeze.build_pack(c)
+                refused = sufficiency.check(pack, FLOORS)
+                self.assertEqual(refused["result"], "refuse")
+                self.assertIn(fid, refused["message"])
+                r = self.read(c)
+                if role == "pounds_now":
+                    self.assertIsNone(r["holder"]["pounds_now"])
+                    self.assertIsNone(r["buying"]["holders"][0]["now"])
+                elif role == "pounds_start":
+                    self.assertIsNone(r["buying"]["holders"][0]["windows"][0]["start"])
+                elif role == "guidance":
+                    self.assertIsNone(r["supply_ratio"])
+                else:
+                    self.assertIsNone(r["swings"]["history_days" if role == "history" else "window_days"])
+                self.assertIn(fid, str(r["why"]))
+
+    def test_no_twelve_month_total_reads_no_ratio(self):
+        fid = self.gap()
+        r = self.read()
+        self.assertIsNone(r["supply_ratio"])
+        self.assertIn(fid, r["why"]["supply_ratio"])
+
+    def test_the_costs_are_carried_not_divided(self):
+        self.assertEqual(self.read()["holder"]["costs"], 10)
+        self.assertNotIn("costs_to_nav", self.read()["holder"])
+
+    def test_yellow_cake_names_the_trusts_series(self):
+        r = self.read(uranium_capture(self.keys[-1]))
+        self.assertEqual(r["swings"]["series_holder"], self.row["physical_holders"][self.keys[-1]]["swings_series_holder"])
+
+    def test_the_producer_carries_its_prices(self):
+        c = uranium_producer_capture()
+        resource = sufficiency.resource_readings({"capture": c}, FLOORS)
+        r = self.read(c)["producer"]
+        self.assertEqual(r["today_term"], resource["today_price"])
+        self.assertEqual(r["reserve_price"], resource["reserve_price"])
+        self.assertEqual((r["received"], r["received_spot_average"], r["received_term_average"]), (72, 80, 80))
+
+    def test_the_producer_flag_is_resource_readings_own(self):
+        c = uranium_producer_capture()
+        with unittest.mock.patch.object(sufficiency, "resource_readings", wraps=sufficiency.resource_readings) as reader:
+            r = self.read(c)
+        reader.assert_called_once()
+        self.assertEqual(r["producer"]["below_reserve_price"], sufficiency.resource_readings({"capture": c}, FLOORS)["today_below_reserve_price"])
+
+    def book(self, shape):
+        c = uranium_producer_capture()
+        book = FLOORS["archetype_measures"]["uranium_producer_rule"]["contract_book"]
+        c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(book["per_year_prefix"])]
+        fid = book["not_published_id"] if shape == "not_published" else book[shape + "_prefix"] + "2027_2031"
+        grower_fact(c, fid, "INVENTED not published" if shape == "not_published" else "40",
+                    unit=book["statement_unit"] if shape == "not_published" else "percent" if shape == "share" else "lb", as_of="2026-10-11")
+        return c, fid
+
+    def test_a_published_share_is_carried_as_published(self):
+        c, fid = self.book("share")
+        r = self.read(c)["producer"]["contract_book"]
+        self.assertEqual((r["shape"], r["share_fact_id"]), ("share", fid))
+
+    def test_a_volume_shape_without_a_share_is_named(self):
+        for shape in ("average", "total"):
+            c, fid = self.book(shape)
+            self.assertEqual(self.read(c)["producer"]["contract_book"]["fact_ids"], [fid])
+            self.assertEqual(self.read(c)["producer"]["contract_book"]["shape"], shape)
+
+    def test_not_published_is_carried(self):
+        c, fid = self.book("not_published")
+        self.assertEqual(self.read(c)["producer"]["contract_book"], {"shape": "not_published", "fact_ids": [fid], "share_fact_id": None})
+
+    def test_an_unreadable_input_names_its_id(self):
+        self.set("spot_month_end", "unreadable")
+        r = self.read()
+        self.assertIsNone(r["spot_term"])
+        self.assertIn(self.fid("spot_month_end"), str(r["why"]))
+        c = uranium_producer_capture()
+        fid = producer_block(c)["reserve_price_facts"][0]
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+        r = self.read(c)
+        self.assertIsNone(r["producer"]["reserve_price"])
+        self.assertIn(fid, str(r["why"]))
+
+    def test_the_readings_never_write_into_the_pack(self):
+        pack = freeze.build_pack(self.c)
+        before = canonical.canonical_bytes(pack)
+        sufficiency.uranium_readings(pack, FLOORS)
+        self.assertEqual(canonical.canonical_bytes(pack), before)
+
+    def test_every_fact_is_read_through_the_role_set(self):
+        for c, name in ((self.c, "holder_product_role_set"), (uranium_producer_capture(), "producer_role_set")):
+            with unittest.mock.patch.object(sufficiency, name, return_value={}) as reader:
+                r = self.read(c)
+            reader.assert_called_once()
+            self.assertIsNone(r["spot_term"])
+            self.assertTrue(all(h["now"] is None for h in r["buying"]["holders"]))
+            if r["producer"]:
+                self.assertIsNone(r["producer"]["received"])
+                self.assertIsNone(r["producer"]["reserve_price"])
+                self.assertIsNone(r["producer"]["value_per_pound"])
+
+    def test_sufficiency_never_calls_the_readings(self):
+        # Control: sufficiency is unchanged even when a reading would raise.
+        with unittest.mock.patch.object(sufficiency, "uranium_readings", side_effect=AssertionError, create=True) as reader:
+            sufficiency.check(freeze.build_pack(self.c), FLOORS)
+        reader.assert_not_called()
+
+
+class TestTheSprottSeries(unittest.TestCase):
+    # Invented closes alternate around thirty: no market observations.
+    label = "Net Asset Value"
+
+    def page(self, label=None, pairs=None):
+        return "{ name: '%s', color: '#ffc600', lineWidth: 2, marker: { radius: 2 }, data: [%s] }" % (
+            label or self.label, pairs or "[Date.UTC(2021,6,19),31.07],[Date.UTC(2021,6,20),31.09]")
+
+    def read(self, text=None, last_date=None):
+        from council.evidence import series
+        return series.bars_from_sprott(text or self.page(), self.label, last_date)
+
+    def refuses(self, text):
+        from council.evidence import series
+        with self.assertRaises(series.Refusal):
+            self.read(text)
+
+    def test_the_labelled_series_is_read(self):
+        self.assertEqual(self.read(), [{"date": "2021-07-19", "close": "31.07"}, {"date": "2021-07-20", "close": "31.09"}])
+
+    def test_the_month_counts_from_zero(self):
+        self.assertEqual(self.read(self.page(pairs="[Date.UTC(2021,0,1),30.00]"))[0]["date"], "2021-01-01")
+
+    def test_a_label_found_twice_refuses(self):
+        self.refuses(self.page() + self.page())
+
+    def test_a_missing_label_refuses(self):
+        self.refuses(self.page(label="other"))
+
+    def test_order_on_the_page_does_not_choose(self):
+        other = self.page(label="Premium/Discount to Net Asset Value", pairs="[Date.UTC(2021,0,1),2.00]")
+        self.assertEqual(self.read(other + self.page()), self.read(self.page() + other))
+
+    def test_falling_dates_refuse(self):
+        self.refuses(self.page(pairs="[Date.UTC(2021,6,20),31.09],[Date.UTC(2021,6,19),31.07]"))
+
+    def test_a_value_not_a_decimal_refuses(self):
+        for value in ("null", "'31.07'", "NaN", "-1.00"):
+            self.refuses(self.page(pairs="[Date.UTC(2021,6,19),%s]" % value))
+
+    def test_last_date_drops_later_bars(self):
+        self.assertEqual(len(self.read(last_date="2021-07-19")), 1)
+
+    def bars(self):
+        return [{"date": (date(2021, 1, 1) + timedelta(days=i)).isoformat(), "close": str(30 + i % 3)} for i in range(400)]
+
+    def test_the_swings_line_uses_the_tape_arithmetic(self):
+        from council.evidence import series, tape
+        from decimal import localcontext
+        bars = self.bars()
+        with localcontext() as ctx:
+            ctx.prec = tape.WORKING_PRECISION
+            expected = tape._realized_volatility(tape._Series({"ticker": "", "bars": bars}, tape.series_year_bars({"price_series": {"calendar": "NYSE"}}, FLOORS)), len(bars) - 1)
+            percent = Decimal(expected[1]) * 100
+        line = series.swings_line(bars, 1826, "NYSE", FLOORS)
+        self.assertIn(str(percent) + " percent annualised", line)
+        self.assertIn(expected[3], line)
+
+    def test_the_whole_history_when_shorter_than_five_years(self):
+        from council.evidence import series
+        line = series.swings_line(self.bars(), 1826, "NYSE", FLOORS)
+        self.assertIn("swings_history_days 399; volatility_window_days 399", line)
+        self.assertIn("400 bars", line)
+
+    def test_the_existing_readers_are_unchanged(self):
+        # Control: the existing reply reader keeps its exact number strings.
+        from council.evidence import series
+        text = '{"time":["2021-01-01"],"close":[30.00],"volume":[100]}'
+        self.assertEqual(series.bars_from_reply(text), [{"date": "2021-01-01", "close": "30.00", "volume": "100"}])
+
+    def test_the_saved_page_command_writes_and_prints_the_swings(self):
+        from council.evidence import series
+        import contextlib, io
+        pairs = ",".join("[Date.UTC(%s,%s,%s),%s]" % (day.year, day.month - 1, day.day, b["close"])
+                         for b in self.bars() for day in [date.fromisoformat(b["date"])])
+        with tempfile.TemporaryDirectory() as folder:
+            page, output = os.path.join(folder, "saved.html"), os.path.join(folder, "series.json")
+            with open(page, "w") as handle:
+                handle.write(self.page(pairs=pairs))
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = series.main(["--sprott", page, "--label", self.label, "--swings-days", "1826",
+                    "--ticker", "INVENTED", "--calendar", "XTSE", "--as-of", "2022-02-04", "--source", "INVENTED", "--out", output])
+            self.assertEqual(code, 0, stream.getvalue())
+            self.assertEqual(canonical.read_json(output)["bars"], self.bars())
+            self.assertIn(series.swings_line(self.bars(), 1826, "XTSE", FLOORS), stream.getvalue())
+
+
+URANIUM_PAGE_CONTROLS = {
+  "commodity": {
+    "head": "e2c5ea5539b83e1b19613c931d701b36425a90d9bfb82f2e0be6cc453f1d8669",
+    "one": "dea35335e1a9d4783adde7fb938642a745ae5f64f009ae8b6a5dc125d9b1924a",
+    "full": "b0e727b0dfd5f5f8d4f7bcbd10819fec8a3a81ed8aeed649567984dba847b096",
+    "case": "8d7f5e048ff2c65a119bf0627d97b09be79006ebe61e9cf524e506686cb6bfc3"
+  },
+  "fund": {
+    "head": "89e4033580f07dbb2598eae12c1d588ac7401aa21b2fdebe39a955623c8a6900",
+    "one": "aa6d6129b03fa81273c10ba36ee202177f9ba3962c3d64423bac59c2b1f340b1",
+    "full": "ba66248c00b5b8ec028de0599b2f85a55c5d6891f07a499ee27300049109aeb6",
+    "case": "dd8436ece360013dce203874df19669ee3a63e03e1eb122a4b38d22a4c89a5b9"
+  },
+  "crude_oil": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "5b54dbdfadb66c100e58565dcc205c75e5fc4e83c88010ace48c665a9bee8285",
+    "full": "3245031f10182af6a34c8280e9c1acefa4964977633a915c585d5a89f16b040d",
+    "case": "93d04db1c641cb4f4cb59eb044bd67b21e10deec6b1c1917a98143c383ed36f0"
+  },
+  "natural_gas": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "ab1e098d69e978d92130a87f742b1790e143ead371c9dfd1e54ba888fe4559b9",
+    "full": "b6c1ebf6e69ff02cc4ca2164d167bea3ce086e6587246990f8dd4da9b529c9ba",
+    "case": "75671f9246a2dedd6f83f44c9b036344fcee2f693f2938f0110b5e563ce12ff1"
+  },
+  "gold": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "c6392b61777b3d15e9237c65f0d2cecfda1e188c797ba431367267e90803f38a",
+    "full": "f6f240ac96c28703fcc309b23ca5f16cc4122759efde5489bed4116b1921dd85",
+    "case": "5224879f8cd576d4c54c6eae236830973c5d5fbf09af028dfe0f9cb3383354be"
+  },
+  "silver": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "02a22586d91928c9c3dd425d4bed767052f968d7a71344240b43460b10dc32bf",
+    "full": "305966140616b9dbf0bf87371b2f30e9947f8cf8012c7e81b032592dcb32994f",
+    "case": "c13d469a69f5cb5f25029c5542165f29cd2f29b9f553250540c90652e7f42409"
+  },
+  "copper": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "a733f395131e6347f844c2522df7ead19bbe3d709facd8653c9e950005eff6d0",
+    "full": "f92a633dec58fae2251c2f25d98f3a14dfbaf979d0ddf5007c8cfd1066758642",
+    "case": "9c1c7e1d4b0435a9c6a6aeeeb01ace66684aede0fa225cd044e2930210979b5b"
+  },
+  "copper_with_extra": {
+    "head": "9bc7363a40e2db3830be3e98d96857d726411fdea844a4aef325d820d54af283",
+    "one": "a733f395131e6347f844c2522df7ead19bbe3d709facd8653c9e950005eff6d0",
+    "full": "f8b605d200564fef481ef9b6eff81d9aaaf71a7b220836fe44d87d3764fe49ee",
+    "case": "ec8cfcc200e6b4c7a45c63a798d0cdf0af7c0494ed24e117c00a71cdb5e06354"
+  }
+}
+
+
+class UraniumPageTest(unittest.TestCase):
+    # Invented ten over ten is one; the doubling below has exact quotients.
+    def setUp(self):
+        self.floors = copy.deepcopy(FLOORS)
+        self.row = self.floors["asset_classes"]["commodity"]["products"]["uranium"]
+        self.row["sitting_open"] = True
+        self.rule = self.row["rule"]
+        self.pr = self.floors["archetype_measures"]["uranium_producer_rule"]
+        self.words = self.row.get("page_words", {})
+        self.keys = list(self.row["physical_holders"])
+        self.captures = {h: uranium_capture(vehicle=h) for h in self.keys}
+        self.captures["producer"] = uranium_producer_capture()
+        self.packs = {key: freeze.build_pack(c) for key, c in self.captures.items()}
+        self.patch = unittest.mock.patch.object(brief, "_FLOORS", self.floors)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def read(self, key=None, capture=None):
+        return brief.uranium_summary(freeze.build_pack(capture) if capture else self.packs[key or self.keys[0]])
+
+    def table(self, summary, key):
+        heads = self.words.get("heads", {}) | self.pr["page_words"].get("heads", {})
+        lead = heads.get(key, brief.PRODUCER_LEADS[0] if key == "reserves" else key)
+        return next(t for name, t in summary["tables"] if name == lead)
+
+    def text(self, table):
+        return "\n".join(brief.table_lines(table, []))
+
+    def fid(self, role, **context):
+        spec = self.rule["roles"][role]
+        return (spec.get("id") or spec["id_pattern"]).format(daily=self.rule["daily_value_holder"], **context)
+
+    def change(self, c, role, value, **context):
+        fact_in(c, self.fid(role, **context))["value"] = value
+
+    def doubled(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        for h in self.keys:
+            self.change(c, "pounds_now", "20", h=h)
+        return c
+
+    def gap_window(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        identifier = self.fid("pounds_start", h=self.keys[0], point=self.rule["pound_windows"][-1]["point"])
+        c["tier1"] = [f for f in c["tier1"] if f["id"] != identifier]
+        c["gaps"].append(dict(fact_class=identifier, reason=self.rule["no_start_words"], reason_kind="not_found", weakened_test="INVENTED gap"))
+        return c
+
+    def old_digest(self, c, key, output="full"):
+        p = freeze.build_pack(c)
+        text = ("\n".join(brief._head_lines(p, "0" * 64)) if output == "head" else
+                brief.render(p, "0" * 64) if output == "one" else brief.render_full(p, "0" * 64))
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), URANIUM_PAGE_CONTROLS[key][output])
+
+
+class TestTheUraniumPageLines(UraniumPageTest):
+    """AC88, AC91: gap names and the lifted reason use the ruled words."""
+    def gap_line(self, c):
+        return next(line for line in brief.render(freeze.build_pack(c), "0" * 64).splitlines()
+                    if line.startswith("- Every gap on this record, named"))
+
+    def test_the_three_absent_items_have_words(self):
+        for h in self.keys:
+            with self.subTest(holder=h):
+                line = self.gap_line(self.captures[h])
+                for gap in self.captures[h]["gaps"]:
+                    fid = gap["fact_class"]
+                    self.assertNotIn(fid, line)
+                    self.assertIn(self.words["absent_item_words"]["items"][fid], line)
+
+    def test_every_admitted_gap_has_words(self):
+        for h in self.captures:
+            with self.subTest(holder=h):
+                c = copy.deepcopy(self.captures[h])
+                names = self.pr["producer_roles"] if h == "producer" else None
+                anchors = [] if names is not None else self.floors["asset_classes"]["commodity"]["anchors"] + self.row["anchors"]
+                ids = {fid for a in anchors if a["level"] == "conditional"
+                       for fid in ([a["id"]] if "id" in a else
+                                   [a["prefix"]] if "prefix" in a else a["prefixes"])
+                       if fid not in self.row["class_anchors_lifted"]}
+                ids.update(fid for fid, roles in sufficiency._holder_product_roles({"capture": c}, self.floors, names).items()
+                           if set(roles) & {"pounds_start", "guidance"})
+                words = brief.uranium_gap_words(c)
+                for fid in sorted(ids):
+                    self.assertTrue(words.get(fid), fid)
+                c["gaps"] = [dict(fact_class=fid, reason="INVENTED gap", reason_kind="absent_by_design",
+                                  weakened_test="INVENTED test") for fid in sorted(ids)]
+                line = self.gap_line(c)
+                for fid in sorted(ids):
+                    self.assertNotIn(fid, line)
+                    self.assertIn(brief._safe(words[fid]), line)
+
+    def test_the_producers_market_gaps_have_words(self):
+        c = copy.deepcopy(self.captures["producer"])
+        tagged = sufficiency._holder_product_roles({"capture": c}, self.floors, self.pr["producer_roles"])
+        guidance, g = next((i, roles["guidance"]) for i, roles in tagged.items()
+                          if "guidance" in roles and roles["guidance"]["yyyy"] == int(c["captured_at"][:4]) + 1)
+        start, s = next((i, roles["pounds_start"]) for i, roles in tagged.items() if "pounds_start" in roles)
+        producer = self.rule["largest_producers"][g["p"]]["names"][0]
+        templates = self.words["absent_item_words"]["roles"]
+        expected = {guidance: templates["guidance"].format(producer=producer, year=g["yyyy"], end=g["end"]),
+                    start: templates["pounds_start"].format(holder=self.row["physical_holders"][s["h"]]["names"][0],
+                                                          window=s["window"]["words"])}
+        c["tier1"] = [f for f in c["tier1"] if f["id"] not in expected]
+        for fid, reason in ((guidance, producer + ": " + self.rule["next_year_gap_words"]),
+                            (start, self.rule["no_start_words"])):
+            c["gaps"].append(dict(fact_class=fid, reason=reason, reason_kind="absent_by_design",
+                                  weakened_test="INVENTED market gap"))
+        line = self.gap_line(c)
+        for fid, words in expected.items():
+            self.assertNotIn(fid, line)
+            self.assertIn(brief._safe(words), line)
+        for gap in self.captures["producer"]["gaps"]:
+            self.assertIn(gap["fact_class"], line)
+
+    def test_a_future_holder_product_keeps_the_stock_gap_line(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        c["subject"]["product"] = "invented_product"
+        expected = "- Every gap on this record, named - declared missing: " + ", ".join(
+            brief._safe(g["fact_class"]) for g in c["gaps"]) + "."
+        for missing in ("absent_item_words", "page_words"):
+            with self.subTest(missing=missing):
+                row = copy.deepcopy(self.row)
+                (row["page_words"] if missing == "absent_item_words" else row).pop(missing)
+                self.floors["asset_classes"]["commodity"]["products"][c["subject"]["product"]] = row
+                self.assertEqual(brief.uranium_gap_words(c), {})
+                self.assertIn(expected, brief._gaps_lines(c))
+
+    def test_the_lifted_names_and_reason_print_once(self):
+        for h in self.keys:
+            line = next(line for line in self.read(h)["lines"]
+                        if line.startswith("- " + self.words["one_page_leads"]["lifted"] + ": "))
+            for name in self.words["lifted_names"].values():
+                self.assertEqual(line.count(name), 1)
+            template = self.words["lifted_line_words"]
+            self.assertEqual(line.count(template.split("%s", 1)[1]), 1)
+            for reason in self.row["class_anchors_lifted"].values():
+                self.assertNotIn(reason, line)
+            self.assertIn(brief._safe(line, plain_amp=True), brief.render(self.packs[h], "0" * 64))
+
+    def test_next_years_market_gap_has_words_on_both_ways(self):
+        for key, original in self.captures.items():
+            with self.subTest(way=key):
+                c = copy.deepcopy(original)
+                names = self.pr["producer_roles"] if key == "producer" else None
+                tagged = sufficiency._holder_product_roles({"capture": c}, self.floors, names)
+                for fid, roles in tagged.items():
+                    spec = roles.get("guidance")
+                    if not spec or spec["yyyy"] != int(c["captured_at"][:4]) + 1:
+                        continue
+                    c["tier1"] = [f for f in c["tier1"] if f["id"] != fid]
+                    reason = self.rule["largest_producers"][spec["p"]]["names"][0] + ": " + self.rule["next_year_gap_words"]
+                    c["gaps"].append(dict(fact_class=fid, reason=reason, reason_kind="absent_by_design",
+                                          weakened_test="INVENTED guidance"))
+                text = self.text(self.table(self.read(capture=c), "market"))
+                for gap in c["gaps"]:
+                    fid = gap["fact_class"]
+                    if fid.startswith(self.rule["roles"]["guidance"]["prefix"]):
+                        self.assertNotIn(fid, text)
+                        self.assertIn(brief._safe(brief.uranium_gap_words(c, names)[fid], plain_amp=True), text)
+                        self.assertIn(gap["reason"], text)
+
+    def test_an_extra_gap_keeps_its_id(self):
+        # Control: an invented gap beyond the ruled enumeration keeps its bytes.
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        c["gaps"].append(dict(fact_class="invented_extra_gap", reason="INVENTED gap",
+                              reason_kind="not_found", weakened_test="INVENTED test"))
+        self.assertIn("invented_extra_gap", self.gap_line(c))
+
+    def test_a_copper_page_keeps_its_bytes(self):
+        # Control: the digest was measured on the base.
+        self.old_digest(load_fixture("copper-pass.json"), "commodity", "one")
+
+    def test_the_producer_page_keeps_its_bytes(self):
+        # Control: no next-year gap was declared in this base pack.
+        text = brief.render(self.packs["producer"], "0" * 64)
+        self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), "183d31a7ec19bd12c6fe6be4a229a7d4bb099d59a43cbbd931270bde3fe10f5f")
+
+
+class TestTheUraniumHead(UraniumPageTest):
+    def test_the_head_names_uranium_and_its_holder(self):
+        for h in self.keys:
+            text = "\n".join(brief._head_lines(self.packs[h], "0" * 64))
+            holder = self.row["physical_holders"][h]
+            self.assertIn(self.row["brief_words"] % (holder["names"][0], holder["vehicle_ticker"]), text)
+
+    def test_a_copper_head_is_unchanged(self):
+        # Control: the base digest is pinned, with no new summary call required.
+        self.old_digest(load_fixture("copper-pass.json"), "commodity", "head")
+
+
+class TestTheUraniumSummary(UraniumPageTest):
+    def test_every_figure_comes_from_the_one_reading(self):
+        pack = self.packs["producer"]
+        reading = sufficiency.uranium_readings(pack, self.floors)
+        reading["spot_term"].update(spot=Decimal(80), term=Decimal(100), gap=Decimal(20), gap_percent_of_spot=Decimal(25), sign=self.rule["measures"]["gap_sign_words"]["term_above"])
+        with unittest.mock.patch.object(sufficiency, "uranium_readings", return_value=reading) as market, \
+             unittest.mock.patch.object(brief, "producer_readings", wraps=brief.producer_readings) as resource, \
+             unittest.mock.patch.object(sufficiency, "producer_role_set", wraps=sufficiency.producer_role_set) as roles:
+            summary = self.read("producer")
+            for helper in (market, resource, roles): helper.assert_called_once()
+        self.assertIn("$100.00 a pound", dict(summary["front"])["prices"])
+
+    def test_an_unreadable_reading_prints_no_figure(self):
+        with unittest.mock.patch.object(sufficiency, "uranium_readings", return_value=None):
+            summary = self.read()
+        self.assertEqual(summary["figures"], [])
+        self.assertIn(self.words["readings_refusal_words"], summary["lines"])
+
+    def test_every_printed_figure_is_in_figures(self):
+        cfg = trace.config(self.floors)
+        summary = self.read(capture=self.doubled())
+        bases = trace.facts_bases(summary["figures"], cfg)
+        text = "\n".join(summary["lines"] + [self.text(t) for _, t in summary["tables"]])
+        self.assertFalse(trace.untraced(text, bases, cfg))
+
+    def test_a_price_prints_in_dollars_a_pound_with_two_decimals(self):
+        self.assertIn("$120.00 a pound", dict(self.read()["front"])["prices"])
+
+    def test_pounds_print_in_the_house_scale_from_each_recorded_unit(self):
+        for unit, scale in self.rule["unit_scales_lb"].items():
+            c = copy.deepcopy(self.captures[self.keys[0]])
+            fact_in(c, self.fid("pounds_now", h=self.keys[0])).update(unit=unit, value=str(Decimal(2000000) / Decimal(scale)))
+            self.assertIn("2.00M pounds", self.text(self.table(self.read(capture=c), "prices")))
+
+    def test_a_sterling_net_asset_value_stays_in_sterling(self):
+        h = next(h for h in self.keys if self.row["physical_holders"][h]["currency"] != self.row["physical_holders"][self.keys[0]]["currency"])
+        text = self.text(self.table(self.read(h), "vehicle"))
+        self.assertIn("£10.00", text)
+        self.assertNotIn("$10.00", brief.cell_text(self.table(self.read(h), "vehicle")["rows"][0][1]))
+
+    def test_no_run_of_twenty_digits_reaches_a_page(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        self.change(c, "nav", "123456789012345678901234567890", h=self.keys[0])
+        summary = self.read(capture=c)
+        self.assertNotRegex("\n".join(summary["lines"] + [self.text(t) for _, t in summary["tables"]]), r"\d{20}")
+
+
+class TestTheUraniumEvidenceTables(UraniumPageTest):
+    def test_the_daily_price_its_operands_and_cross_check(self):
+        summary = self.read()
+        table = self.table(summary, "prices")
+        ids = {i for group in table["row_facts"] for i in group}
+        expected = [self.fid("spot_proxy"), self.fid("spot_check"), *[s.format(daily=self.rule["daily_value_holder"]) for s in self.rule["roles"]["spot_proxy"]["operands"]]]
+        self.assertTrue(set(expected) <= ids)
+        self.assertIn(self.words["cross_check_words"] % self.rule["cross_check_tolerance_percent"], self.text(table))
+
+    def test_spot_and_term_share_one_month_end_with_the_gap(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        self.change(c, "spot_month_end", "80"); self.change(c, "term_month_end", "100")
+        text = self.text(self.table(self.read(capture=c), "prices"))
+        for words in ("$80.00 a pound", "$100.00 a pound", "$20.00 a pound", "25.0%", "30 Sep 2026"):
+            self.assertIn(words, text)
+
+    def test_every_holders_pounds_and_three_changes(self):
+        table = self.table(self.read(capture=self.doubled()), "holders")
+        self.assertEqual(len(table["rows"]), len(self.keys))
+        for cells in table["rows"]:
+            self.assertEqual([brief.cell_text(c) for c in cells[3:]], ["10 pounds, 100.0% (calculated)"] * len(self.rule["pound_windows"]))
+
+    def test_a_window_without_a_start_prints_where_the_history_starts(self):
+        summary = self.read(capture=self.gap_window())
+        self.assertIn(self.words["window_gap_words"] % "12 Jul 2026", self.text(self.table(summary, "holders")))
+        self.assertIn("12 Jul 2026", dict(summary["front"])["holders_buying"])
+
+    def test_one_holder_dominates_is_said(self):
+        c = self.doubled(); self.change(c, "pounds_now", "10", h=self.keys[1])
+        text = self.text(self.table(self.read(capture=c), "holders"))
+        self.assertIn(self.words["dominant_words"] % (self.row["physical_holders"][self.keys[0]]["names"][0], self.rule["measures"]["dominance_percent"]), text)
+
+    def test_the_supply_ratio_is_a_range_marked_calculated(self):
+        c = self.doubled()
+        for f in c["tier1"]:
+            if f["id"].startswith(self.rule["roles"]["guidance"]["prefix"]):
+                f["value"] = "20" if f["id"].endswith("_high") else "10"
+        text = dict(self.read(capture=c)["front"])["holders_buying"]
+        self.assertIn("0.00005% to 0.0001%", text)
+        self.assertIn(self.rule["measures"]["calculated_words"], text)
+        self.assertIn(self.rule["measures"]["supply_words"], text)
+
+    def test_the_vehicles_figures_and_year_ends(self):
+        for h in self.keys:
+            summary = self.read(h)
+            self.assertEqual(len(self.table(summary, "vehicle")["rows"]), 5)
+            history = self.table(summary, "year_ends")
+            self.assertEqual(len(history["rows"]), 5)
+            self.assertIn(self.words["years_words"]["all"], self.text(history))
+
+    def test_a_younger_listing_prints_its_gap(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        for role in ("history_nav", "history_price"):
+            c["tier1"] = [f for f in c["tier1"] if f["id"] != self.rule["roles"][role]["prefix"] + "fy2021"]
+        c["gaps"].append(dict(fact_class=self.rule["roles"]["history_nav"]["prefix"], reason="INVENTED younger listing", reason_kind="not_found", weakened_test="INVENTED history"))
+        self.assertIn("INVENTED younger listing", self.text(self.table(self.read(capture=c), "year_ends")))
+
+    def test_next_years_guidance_prints_not_yet_published(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        prefix = self.rule["roles"]["guidance"]["prefix"]
+        removed = [f["id"] for f in c["tier1"] if f["id"].startswith(prefix) and "2027" in f["id"]]
+        c["tier1"] = [f for f in c["tier1"] if f["id"] not in removed]
+        c["gaps"] += [dict(fact_class=i, reason="INVENTED future gap", reason_kind="not_found", weakened_test="INVENTED guidance") for i in removed]
+        text = self.text(self.table(self.read(capture=c), "market"))
+        for item in (self.rule["next_year_gap_words"], "INVENTED future gap"): self.assertIn(item, text)
+
+    def test_the_global_needs_figure_names_both(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        grower_fact(c, self.fid("uncontracted_global"), "20", unit=self.rule["uncontracted_units"][0])
+        fact_in(c, self.fid("uncontracted_global"))["source"] = "INVENTED Cameco quoting UxC"
+        text = self.text(self.table(self.read(capture=c), "market"))
+        self.assertIn("Cameco quoting UxC", text)
+        self.assertIn("a subscription publisher", text)
+
+    def test_background_facts_are_labelled(self):
+        c = copy.deepcopy(self.captures[self.keys[0]])
+        prefixes = [a["prefix"] for a in self.row["anchors"] if a.get("prefix", "").startswith("background_")]
+        for prefix in prefixes: grower_fact(c, prefix + "example", "INVENTED background", unit="name")
+        text = self.text(self.table(self.read(capture=c), "background"))
+        self.assertEqual(text.count(self.words["background_words"]), len(prefixes))
+        self.assertIn(self.words["unverified_words"], text)
+
+    def test_each_lifted_item_prints_its_reason(self):
+        text = self.text(self.table(self.read(), "lifted"))
+        for item, reason in self.row["class_anchors_lifted"].items():
+            self.assertIn(brief._safe(reason, plain_amp=True), text)
+            self.assertIn(self.words["lifted_names"][item], text)
+
+    def test_the_swings_series_note_follows_the_data(self):
+        for h in self.keys:
+            summary = self.read(h)
+            series = self.row["physical_holders"][h]["swings_series_holder"]
+            self.assertEqual("swings_series" in dict(summary["front"]), series != h)
+
+    def test_the_short_history_day_count(self):
+        text = self.text(self.table(self.read(), "swings"))
+        self.assertIn(self.words["short_history_words"] % "900", text)
+
+    def test_the_block_is_cut_last_on_the_one_page(self):
+        for pack in self.packs.values():
+            text = brief.render(pack, "0" * 64)
+            self.assertLessEqual(len(text.splitlines()), brief.PAGE_LINES)
+            for lead in ("kind", "prices", "buying"):
+                self.assertIn("- " + self.words["one_page_leads"][lead] + ": ", text)
+                self.assertIn("- " + self.words["one_page_leads"][lead] + ": ", brief.SHAPE_PREFIXES)
+
+    def test_a_copper_full_document_keeps_its_bytes(self):
+        # Control: base bytes, not a comparison of two current renders.
+        self.old_digest(load_fixture("copper-pass.json"), "commodity")
+
+    def test_a_fund_of_miners_keeps_its_bytes(self):
+        # Control: a fund does not enter either uranium page branch.
+        c = load_fixture("etf-pass.json"); c["subject"]["name"] = "INVENTED fund of uranium miners"
+        self.old_digest(c, "fund")
+
+
+class TestTheUraniumProducerPages(UraniumPageTest):
+    def test_the_reserves_carry_term_and_spot_beside(self):
+        table = self.table(self.read("producer"), "reserves")
+        self.assertEqual(table["head"][-2:], [self.words["reserves_term_head"], self.words["reserves_spot_head"]])
+        self.assertEqual([brief.cell_text(c) for c in table["rows"][0][-2:]], ["$120.00 a pound"] * 2)
+
+    def test_a_by_product_row_has_no_spot_cell(self):
+        c = add_producer_by_product(copy.deepcopy(self.captures["producer"]), "silver", "oz")
+        table = self.table(self.read(capture=c), "reserves")
+        extras = [row for row in table["rows"] if brief.BY_PRODUCT_WORDS.strip() in brief.cell_text(row[0])]
+        self.assertTrue(extras)
+        self.assertTrue(all(brief.cell_text(row[-1]) == "" for row in extras))
+
+    def test_bought_pounds_beside_pounds_mined(self):
+        c = copy.deepcopy(self.captures["producer"])
+        grower_fact(c, self.pr["bought_prefix"] + "q", "20", unit=self.row["unit"])
+        table = self.table(self.read(capture=c), "bought")
+        self.assertEqual(table["row_facts"][0], [self.pr["bought_prefix"] + "q", self.pr["bought_companion_prefix"] + "q"])
+        self.assertIn("20 pounds", self.text(table))
+
+    def test_the_business_not_a_mine_and_its_sentence(self):
+        c = copy.deepcopy(self.captures["producer"])
+        grower_fact(c, self.pr["segment_prefix"] + "example", "20", unit="USD_m")
+        fact_in(c, self.pr["segment_prefix"] + "example")["label"] = "INVENTED business"
+        text = self.text(self.table(self.read(capture=c), "segment"))
+        self.assertIn(self.pr["page_words"]["segment_not_valued_sentence"].format(segment="INVENTED business", value="$20.0M"), text)
+
+    def test_the_contract_book_in_each_shape(self):
+        for shape in ("per_year", "average", "total", "not_published"):
+            c = copy.deepcopy(self.captures["producer"])
+            book = self.pr["contract_book"]
+            c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(book["per_year_prefix"])]
+            identifier = book["not_published_id"] if shape == "not_published" else book[shape + "_prefix"] + ("2027" if shape == "per_year" else "2027_2031")
+            grower_fact(c, identifier, "INVENTED not published" if shape == "not_published" else "20", unit=book["statement_unit"] if shape == "not_published" else self.row["unit"])
+            text = self.text(self.table(self.read(capture=c), "contract_book"))
+            self.assertIn("INVENTED not published" if shape == "not_published" else "20 pounds", text)
+
+    def test_the_published_share_is_printed_as_recorded(self):
+        c = copy.deepcopy(self.captures["producer"])
+        grower_fact(c, self.pr["contract_book"]["share_prefix"] + "2027_2031", "20", unit="percent")
+        self.assertIn("20.0% of 2027 to 2031", dict(self.read(capture=c)["front"])["contract_book"])
+
+    def test_the_price_received_beside_spot_and_term(self):
+        text = self.text(self.table(self.read("producer"), "price_received"))
+        for phrase in ("$72.00 a pound", "$80.00 a pound", "11 Oct 2026"): self.assertIn(phrase, text)
+
+    def test_each_mine_with_its_country(self):
+        c = copy.deepcopy(self.captures["producer"])
+        grower_fact(c, self.pr["mine_country_prefix"] + "second", "INVENTED elsewhere", unit="name")
+        fact_in(c, self.pr["mine_country_prefix"] + "second")["label"] = "INVENTED mine"
+        text = self.text(self.table(self.read(capture=c), "mines"))
+        for phrase in ("INVENTED mine", "INVENTED elsewhere", "INVENTED country"): self.assertIn(phrase, text)
+
+    def test_the_tonnes_beside_the_pounds(self):
+        c = copy.deepcopy(self.captures["producer"])
+        conversion = self.rule["tonnes_to_pounds"]
+        original = self.pr["tonnes_prefix"] + "reserves"
+        grower_fact(c, original, "10", unit=conversion["from_unit"])
+        fact_in(c, "reserves_pp_attributable").update(value="25998", derived=dict(operation="multiply", operands=[dict(fact_id=original, label="invented tonnes", value="10"), dict(label="published factor", value=conversion["factor"])]))
+        text = self.text(self.table(self.read(capture=c), "tonnes"))
+        for phrase in ("26.0K pounds", "10 tonnes of uranium", "2,599.80"): self.assertIn(phrase, text)
+
+    def test_an_outside_peer_is_not_comparable_in_one_unit(self):
+        c = copy.deepcopy(self.captures["producer"])
+        peer = frame_of(c)["peers"][0]
+        fact_in(c, "peer_" + self.pr["peer_product_metric"] + "__" + peer["ticker"].lower())["value"] = self.pr["outside_peer_products"][0]
+        text = self.text(self.table(self.read(capture=c), "peers"))
+        self.assertIn(self.words["not_comparable_words"], text)
+        self.assertIn(brief._safe(peer["comparable_because"], plain_amp=True), text)
+
+    def test_the_cash_multiple_is_the_yardsticks_own_cell(self):
+        cell = brief._words("INVENTED shared cash cell")
+        with unittest.mock.patch.object(brief, "producer_cash_multiple", return_value=cell) as cash:
+            summary = self.read("producer")
+            cash.assert_called_once()
+            p = self.packs["producer"]
+            yardstick = brief.producer_yardstick_rows(p, brief.producer_subject_frame(p["capture"]), brief.producer_readings(p))
+        self.assertIn(cell["text"], self.text(yardstick))
+        self.assertIn(cell["text"], dict(summary["front"])["yardstick"])
+        self.assertIn("$14,100,000.00 a pound", dict(summary["front"])["yardstick"])
+
+    def test_the_producer_one_page_fits_the_bound(self):
+        self.assertLessEqual(len(brief.render(self.packs["producer"], "0" * 64).splitlines()), brief.PAGE_LINES)
+        self.assertIn(self.words["one_page_leads"]["contract"], brief.render(self.packs["producer"], "0" * 64))
+
+    def test_a_copper_producer_keeps_its_bytes(self):
+        # Control: every listed product apart from the new one.
+        for product in self.floors["archetype_measures"]["resource_products"]:
+            if product != self.pr["product"]: self.old_digest(other_producer_capture(product), product)
+
+    def test_a_copper_producer_with_uranium_beside_keeps_its_bytes(self):
+        # Control: a by-product does not select the new page.
+        self.old_digest(add_producer_by_product(other_producer_capture("copper"), self.pr["product"], self.row["unit"]), "copper_with_extra")
+
+
+class TestUraniumFixRoundOne(UraniumPageTest):
+    # Invented ten is the same whole count in every evidence reader.
+    def test_reactor_counts_print_on_the_approval_page_and_case_file(self):
+        from council.engine import briefs
+        from council.report import evidence_page, render_report
+        for key, pack in self.packs.items():
+            with self.subTest(way=key):
+                table = self.table(self.read(key), "market")
+                values = [brief.cell_text(row[1]) for row in table["rows"]]
+                self.assertNotIn(self.words["figure_not_available_words"], values)
+                approval = evidence_page.render_page(brief.render_full(pack, "0" * 64))
+                casefile = briefs.render_casefile(pack, {}, "INVENTED question", pack["capture"]["subject"])
+                for role in ("reactors_operating_count", "reactors_construction_count"):
+                    fact = fact_in(pack["capture"], self.fid(role))
+                    expected = render_report.format_protocol_number(fact["value"], "number",
+                        words=self.words["figure_not_available_words"])
+                    self.assertEqual(expected, fact["value"])
+                    label = brief._words_of_id(fact["id"])
+                    self.assertIn(label + "</td><td>" + expected + "</td>", approval)
+                    self.assertIn("| " + label + " | " + expected + " |", casefile)
+
+    def test_the_front_price_line_is_only_the_ruled_sentence(self):
+        for key in self.packs:
+            for spot, term, sign in (("80", "100", "term_above"), ("100", "80", "term_below"), ("100", "100", "level")):
+                with self.subTest(way=key, sign=sign):
+                    capture = copy.deepcopy(self.captures[key])
+                    self.change(capture, "spot_month_end", spot)
+                    self.change(capture, "term_month_end", term)
+                    pair = sufficiency.uranium_readings(freeze.build_pack(capture), self.floors)["spot_term"]
+                    source = self.words["daily_source_words"] % self.row["physical_holders"][self.rule["daily_value_holder"]]["names"][0]
+                    expected = self.words["prices_words"] % ("$120.00 a pound", "11 Oct 2026", source,
+                        "$" + spot + ".00 a pound", "$" + term + ".00 a pound", "30 Sep 2026",
+                        self.words["month_end_source_words"], pair["sign"], "$20.00 a pound", "25.0%" if sign == "term_above" else "20.0%")
+                    if sign == "level":
+                        expected = expected.rsplit(";", 1)[0] + "; " + pair["sign"] + "."
+                    self.assertEqual(dict(self.read(capture=capture)["front"])["prices"], expected)
+
+    def test_missing_window_totals_and_contract_shares_use_the_plain_words(self):
+        with self.subTest(line="contract"):
+            producer = self.read("producer")
+            shape = self.pr["page_words"]["contract_book_words"]["per_year"]
+            expected = self.words["contract_words"]["shape"] % (shape, self.rule["measures"]["not_published_share_words"])
+            self.assertTrue(dict(producer["front"])["contract_book"].startswith(expected))
+            self.assertNotIn(self.pr["contract_book"]["share_prefix"], brief.render(self.packs["producer"], "0" * 64))
+        with self.subTest(line="buying"):
+            gap = self.gap_window()
+            summary = self.read(capture=gap)
+            table = self.table(summary, "holders")
+            window = self.rule["pound_windows"][-1]
+            total = self.words["labels"]["total"] + " - " + window["words"] + ": " + self.rule["measures"]["no_total_words"]
+            self.assertIn(total, [brief.cell_text(row[0]) for row in table["below"]])
+            missing = self.fid("pounds_start", h=self.keys[0], point=window["point"])
+            self.assertNotIn(missing, self.text(table))
+            buying = next(line for line in brief.render(freeze.build_pack(gap), "0" * 64).splitlines()
+                if line.startswith("- " + self.words["one_page_leads"]["buying"] + ": "))
+            self.assertNotIn(missing, buying)
+
+
+class TestUraniumEscapedOnce(UraniumPageTest):
+    def test_a_capture_string_is_escaped_once(self):
+        from council.report import evidence_page
+        c = copy.deepcopy(self.captures["producer"])
+        raw = "INVENTED <b> & * words"
+        fact_in(c, self.pr["mine_country_prefix"] + "example")["label"] = raw
+        fact_in(c, self.fid("spot_proxy"))["source"] = raw
+        book = self.pr["contract_book"]
+        c["tier1"] = [f for f in c["tier1"] if not f["id"].startswith(book["per_year_prefix"])]
+        grower_fact(c, book["not_published_id"], raw, unit=book["statement_unit"])
+        pack = freeze.build_pack(c)
+        for text in (brief.render(pack, "0" * 64), brief.render_full(pack, "0" * 64)):
+            self.assertIn(brief._safe(raw, plain_amp=True), text)
+            self.assertNotIn("&amp;lt;b", text)
+        html = evidence_page.render_page(brief.render_full(pack, "0" * 64))
+        self.assertIn("&lt;b&gt; &amp; * words", html)
+        self.assertNotIn("&amp;lt;b", html)
+
+
+class TestTreasuryPreferredYearEnds(TreasuryTest):
+    def test_dated_preferred_amounts_set_each_year_end_basis(self):
+        c = treasury_preferred_history_capture()
+        r = self.readings(c=c)
+        self.assertEqual([h["discount"]["percent"] for h in r["history"]], [decimal.Decimal("-31.0")]*2)
+        self.assertEqual([h["discount"]["denominator"] for h in r["history"]], [290000000]*2)
+        self.assertEqual(gate_check(c)["result"], "accepted")
+        self.passes(c)
+        tagged = sufficiency.treasury_role_set(freeze.build_pack(c), FLOORS)
+        self.assertTrue(all(any(t[0] == "history_preferred" for t in tagged[f["id"]]) for f in c["tier1"] if "_at_fy" in f["id"]))
+    def test_a_missing_year_end_preferred_amount_is_a_dated_gap(self):
+        for amounts, count in (({}, 0), ({"fy2025": {"p1": "50000000"}}, 1)):
+            r = self.readings(c=treasury_preferred_history_capture(amounts))
+            self.assertEqual(len(r["history"]), count)
+            missing = [p for p in r["periods"] if p["annual"] and p["period"] not in amounts]
+            for p in missing:
+                words = self.rule()["preferred_history"]["gap_words"].format(date=p["date"])
+                self.assertIsNone(p["value"]); self.assertIsNone(p["premium"])
+                self.assertEqual(p["why"], words); self.assertIn(words, r["history_gaps"])
+    def test_a_none_outstanding_line_deducts_nothing(self):
+        r = self.readings(c=treasury_preferred_history_capture({"fy2025": {"p1": "50000000"}, "fy2024": {"p1": "0"}}))
+        self.assertEqual([h["discount"]["percent"] for h in r["history"]], [decimal.Decimal("-31.0"), decimal.Decimal("-11.7")])
+    def test_a_past_preferred_amount_must_have_its_own_date(self):
+        c = treasury_preferred_history_capture()
+        fid = next(f["id"] for f in c["tier1"] if "_at_fy2024" in f["id"])
+        self.facts(c)[fid]["as_of"] = "2024-12-30"
+        r = self.readings(c=c); self.assertEqual(len(r["history"]), 1)
+        self.assertIn("2024-12-31", str(r["history_gaps"]))
+        self.refuses(c, fid)
+    def test_preferred_history_uses_only_the_in_force_choices(self):
+        c = treasury_preferred_history_capture()
+        pack = freeze.build_pack(c)
+        choice = {p["key"]: dict(as_debt=True, why="INVENTED") for p in self.block(c)["preferreds"]}
+        self.assertEqual(sufficiency.treasury_readings(pack, FLOORS, choice)["history"], [])
+        for period in ("fy2024", "fy2025"):
+            pattern = self.rule()["roles"]["history_preferred"]["pattern"]
+            treasury_fact(c, pattern.format(k="p2", p=period), "10000000", self.facts(c)["treasury_cash"]["unit"], day=period[2:]+"-12-31")
+        r = sufficiency.treasury_readings(freeze.build_pack(c), FLOORS, choice)
+        self.assertEqual([h["discount"]["denominator"] for h in r["history"]], [280000000]*2)
+    def test_history_when_no_preferred_is_debt_keeps_its_bytes(self):
+        # Control: the existing true-debt history path ignores the new data.
+        c = treasury_preferred_history_capture(); pack = freeze.build_pack(c)
+        choice = {p["key"]: dict(as_debt=False, why="INVENTED") for p in self.block(c)["preferreds"]}
+        before = copy.deepcopy(FLOORS); rule = before["archetype_measures"]["holding_rule"]["treasury"]
+        rule.pop("preferred_history", None); rule["roles"].pop("history_preferred", None)
+        self.assertEqual(sufficiency.treasury_readings(pack, FLOORS, choice), sufficiency.treasury_readings(pack, before, choice))
+
+
+class TestTreasuryRoundFivePages(TreasuryPageTest):
+    # The invented annual rows count two; their usable premiums depend on the basis.
+    def test_one_count_bracket_agrees_on_the_case_file_and_page(self):
+        from council.engine import treasury_chair as T
+        for shape in ("a", "b", "c"):
+            c=treasury_page_capture(shape); force=self.force(c,changed=shape=="a"); pack=freeze.build_pack(c)
+            r=sufficiency.treasury_readings(pack,self.floors,force["preferred_treatment"])
+            expected="(%s year-ends recorded, %s with a premium struck on the chosen basis)" % (sum(p["annual"] for p in r["periods"]),len(r["history"]))
+            premium=dict(brief.treasury_summary(pack,force)["front"])["premium"]
+            case="\n".join(T.casefile_lines(r,force,self.rule["casefile_words"]))
+            for text in (premium,case): self.assertEqual(text.count(expected),1)
+            self.assertNotIn("(calculated)",premium)
+            self.assertNotIn("recorded year-ends.",case)
+
+    def test_months_and_fund_parts_preserve_their_meanings(self):
+        for shape in ("a", "b", "c"):
+            summary=self.read(shape,changed=shape=="a"); front=dict(summary["front"])
+            self.assertIn("months of charges cash covers, interest alone"+(": " if shape=="b" else " "),front["charges"])
+            self.assertIn("counting every preferred dividend ",front["charges"])
+            self.assertNotIn("Months of fixed charges",front["charges"])
+            if shape!="c":
+                self.assertIn("the fund trades at ",front["fund"])
+                self.assertIn(" to its own net asset value on ",front["fund"])
+                self.assertIn(" to its coins on ",front["fund"])
+        self.assertIn("interest alone: none",dict(self.read("b")["front"])["charges"])
+
+
+class TestTreasuryRoundSixCasefile(TreasuryPageTest):
+    def test_the_premium_stays_printed_without_the_dead_copy_block(self):
+        from council.engine import treasury_chair as T
+        c=treasury_page_capture("a"); force=self.force(c,changed=True)
+        r=sufficiency.treasury_readings(freeze.build_pack(c),self.floors,force["preferred_treatment"])
+        text="\n".join(T.casefile_lines(r,force,self.rule["casefile_words"]))
+        self.assertNotIn("the case prices the machine worked at the exact premium, to copy into the ladder",text)
+        self.assertIn(str(T.falls_premium(r))+"%",text)
+        self.assertIn("the machine replaces premium and price_outcome",self.rule["ladder_rules"]["ladder_instruction"])
+
+
+
+
+
+
+def preferred_capture(issuer="worked", subject=None, **overrides):
+    """AC92(3): invented issuer and preferred, never a fixture file."""
+    from datetime import timedelta
+    c = treasury_ladder_capture({"five":"a", "single":"b", "worked":"worked"}[issuer])
+    company = dict(c["subject"]); company.update(name="Preferred Example " + issuer + " Inc.", ticker={"five":"PXA","single":"PXB","worked":"PXW"}[issuer])
+    old = next(iter(c["business_frame"])); frame = c["business_frame"].pop(old); block = frame["treasury"]
+    key = subject or {"five":"p3","single":"p1","worked":"p2"}[issuer]
+    ticker = company["ticker"]+"P"; suffix = "__"+company["ticker"].lower()
+    ids = {f["id"] for tier in ("tier1","tier2") for f in c[tier]} | {g["fact_class"] for g in c["gaps"]}
+    def move(v):
+        if isinstance(v,str): return v+suffix if v in ids else v
+        if isinstance(v,list): return [move(x) for x in v]
+        if isinstance(v,dict): return {k:move(x) for k,x in v.items()}
+        return v
+    c = move(c); frame = move(frame); c["business_frame"] = {company["ticker"]:frame}
+    c["subject"] = dict(kind="preferred",asset_class="equity",name="INVENTED preferred",ticker=ticker,listing=company["listing"],currency=company["currency"],issuer={k:company[k] for k in ("name","ticker","listing","currency")})
+    today = date.fromisoformat(c["captured_at"][:10]); listed = today-timedelta(days=500 if issuer=="single" else 1000)
+    for n,row in enumerate(frame["treasury"]["preferreds"]):
+        peers = frame["treasury"]["preferreds"]; middle = issuer=="five" and row["key"] in ("p2","p3")
+        row.update(ticker=ticker if row["key"]==key else company["ticker"]+"P"+str(n+1),ranks_ahead_of=[p["key"] for p in peers[n+1:] if not (middle and p["key"] in ("p2","p3"))],ranks_alongside=[p["key"] for p in peers if middle and p["key"] in ("p2","p3") and p is not row],ranking_words="INVENTED filing ranking sentence",redemption_words="INVENTED the company may redeem at the stated amount" if row["key"]==key else row["redemption_words"],converts_into_common=False,dividend_frequency="monthly" if issuer=="single" or issuer=="five" and row["key"]=="p1" else "quarterly",dividend_record=[],cumulative=not (issuer=="five" and row["key"]=="p4"))
+        start=max(today-timedelta(days=730),listed); step=30 if row["dividend_frequency"]=="monthly" else 90
+        row["dividend_record"]=[dict(date=(start+timedelta(days=d)).isoformat(),status="deferred" if issuer=="single" and d==step else "paid") for d in range(step,(today-start).days+1,step)]
+    for fid,value,unit in [("price_last",80,"USD_per_share"),("preferred_par",100,"USD_per_share"),("preferred_listed_on",listed.isoformat(),"iso_date"),("preferred_redemption_date","2028-12-31","iso_date"),("realized_volatility_5y",40,"percent_per_year"),("risk_free_rate_3m",4,"percent_per_year"),("swings_history_days",(today-listed).days,"days"),("volatility_window_days",(today-listed).days,"days")]: treasury_fact(c,fid,value,unit)
+    c["tier1"]=[f for f in c["tier1"] if not f["id"].startswith(("spot_fund_","swings_history_days__","volatility_window_days__","realized_volatility_5y__"))]
+    c["tier1"]=[f for f in c["tier1"] if not (f["id"] == "risk_free_rate_3m"+suffix)]
+    c["tier1"]=[f for f in c["tier1"] if not f["id"].startswith("coin_") or not f["id"].endswith(suffix) or not "__" in f["id"][:-len(suffix)]]
+    for f in c["tier1"]:
+        if f["id"]=="price_last": f["freshness_rule_days"]=3
+    frame["treasury"].update(overrides)
+    return c
+
+
+class PreferredTest(unittest.TestCase):
+    def setUp(self):
+        self.c=preferred_capture(); self.rule=FLOORS["archetype_measures"]["holding_rule"]["treasury"].get("listed_preferred",{})
+    def block(self): return next(iter(self.c["business_frame"].values()))["treasury"]
+    def entry(self): return next(r for r in self.block()["preferreds"] if r["ticker"]==self.c["subject"]["ticker"])
+    def outcome(self): return sufficiency_of(freeze.build_pack(self.c))
+    def reading(self): return sufficiency.preferred_readings(freeze.build_pack(self.c),FLOORS)
+    def refuses(self,key): self.assertIn(self.rule[key+"_refusal"]["why"],str(self.outcome()["missing"]))
+    def value(self,fid,value): next(f for f in self.c["tier1"] if f["id"]==fid)["value"]=str(value)
+
+
+class TestPreferredData(PreferredTest):
+    def test_the_rule_carries_its_constants(self):
+        self.assertEqual(set(self.rule["dividend_cases"]),set(self.rule["statuses"])-{self.rule["statuses"][0]}|{"paid_in_full"}); self.assertEqual(self.rule["cover_falls"],["30","50","70"])
+    def test_every_rule_constant_carries_its_why(self):
+        self.assertTrue(self.rule)
+        for key in self.rule:
+            if key not in ("note","why","roles") and not key.endswith(("_why","_refusal")): self.assertIn(key+"_why",self.rule)
+    def test_the_class_floors_carry_their_whys(self):
+        for row in FLOORS["classes"]["preferred"]["floors"]: self.assertTrue(row["why"])
+    def test_the_lifts_are_named_by_key(self): self.assertEqual({r["key"] for r in self.rule["issuer_view"]["lifted"]},{"fund","swings","coin_layer"})
+    def test_the_door_is_open_since_c_merged(self): self.assertTrue(self.rule["sitting_open"])  # The architect's merge-time edit after TREASURY(c), 2026-10-13 (AC92(3)).
+    def test_no_other_class_or_rule_changed(self):
+        # Control: passes on base by design; old results ignore the new data.
+        p=freeze.build_pack(treasury_ladder_capture()); f=copy.deepcopy(FLOORS); f["classes"].pop("preferred",None); self.assertEqual(sufficiency_of(p,FLOORS),sufficiency_of(p,f))
+
+
+class TestPreferredContract(PreferredTest):
+    def test_every_fixture_validates_at_the_new_version(self): TestTreasuryContract.test_every_fixture_validates_at_the_new_version(self)
+    @unittest.skipUnless(live_records_present(LIVE_RUNS,(JPM_RUN,WULF_RUN)),"live run records are absent")
+    def test_the_runs_on_record_migrate_with_no_new_field(self): TestTreasuryContract.test_the_runs_on_record_migrate_with_no_treasury_field(self)
+    def test_an_issuer_on_another_kind_fails_the_gate(self): self.c["subject"]["kind"]="single_stock"; self.assertIn("issuer belongs",str(gate_check(self.c)))
+    def test_a_preferred_without_an_issuer_fails_the_gate(self): self.c["subject"].pop("issuer"); self.assertIn("requires its issuer",str(gate_check(self.c)))
+    def test_an_unknown_status_fails_the_schema(self): self.entry()["dividend_record"][0]["status"]="unknown"; self.assertIn("status",str(gate_check(self.c)))
+    def test_a_ranking_key_not_in_the_block_fails_the_gate(self): self.entry()["ranks_ahead_of"]=["unknown"]; self.assertIn("invalid ranking key",str(gate_check(self.c)))
+
+
+class TestPreferredIssuer(PreferredTest):
+    def test_each_issuer_passes(self):
+        for shape in ("worked","five","single"):
+            self.c=preferred_capture(shape); self.assertEqual(gate_check(self.c)["result"],"accepted",gate_check(self.c)); self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_every_issuer_refusal_is_carried_with_its_lead(self):
+        # The issuer evaluator's complete result is copied, not reinterpreted.
+        for f in [f for f in self.c["tier1"] if f["id"].startswith("treasury_")]:
+            original=f["value"]; f["value"]="unreadable"; view=sufficiency.issuer_pack(freeze.build_pack(self.c),FLOORS); result=sufficiency.check(view,FLOORS,lifted=tuple(r["key"] for r in self.rule["issuer_view"]["lifted"])); actual=str(self.outcome()["missing"])
+            for r in result["missing"]: self.assertIn(self.rule["issuer_lead"]%self.c["subject"]["issuer"]["name"]+r["what"],actual)
+            f["value"]=original
+        saved=copy.deepcopy(self.c); rule=FLOORS["archetype_measures"]["holding_rule"]["treasury"]; coin=self.block()["coins"][0]["coin"]; suffix="__pxw"
+        def own(fid): return next(f for f in self.c["tier1"] if f["id"]==fid+suffix)
+        cases={"under_half":lambda:own("treasury_total_assets").update(value="9000000000"),
+            "count_stale":lambda:own("treasury_coins_"+coin).update(as_of="2026-08-01"),
+            "dashboard":lambda:own("treasury_coins_"+coin).update(source=rule["undated_count_words"][0]),
+            "coin_price":lambda:own("coin_price_"+coin).update(source="INVENTED wrong source"),
+            "history_price":lambda:own("treasury_hist_coin_price_"+coin+"_fy2024").update(source="INVENTED wrong source"),
+            "terms":lambda:own("treasury_preferred_p1_amount").update(value="unreadable"),
+            "bridge":lambda:own("holdco_net_debt").update(derived=None),
+            "market_value":lambda:own("market_cap").update(derived=None),
+            "shares_date":lambda:own("shares_in_issue").update(as_of="2026-08-01"),
+            "history":lambda:own("treasury_hist_coins_"+coin+"_fy2024").update(value="unreadable"),
+            "raise":lambda:own("treasury_raise_r1_proceeds").update(value="unreadable"),
+            "coin_sale":lambda:self.block()["coin_sales"].append(dict(key="missing",words="INVENTED sale")),
+            "peers":lambda:self.c.update(gaps=[g for g in self.c["gaps"] if g["fact_class"]!="peer_"+suffix]),
+            "stray":lambda:treasury_fact(self.c,"treasury_unknown"+suffix,1,"USD"),
+            "not_admitted":lambda:(self.block().update(other_coins=dict(words="INVENTED other coins")),treasury_fact(self.c,"treasury_other_coins"+suffix,1000000000,"USD"))}
+        for key in rule:
+            if not key.endswith("_refusal") or key[:-len("_refusal")] not in cases: continue
+            self.c=copy.deepcopy(saved); cases[key[:-len("_refusal")]]()
+            view=sufficiency.issuer_pack(freeze.build_pack(self.c),FLOORS); expected=sufficiency.check(view,FLOORS,lifted=tuple(r["key"] for r in self.rule["issuer_view"]["lifted"]))
+            self.assertTrue(expected["missing"],key)
+            for row in expected["missing"]: self.assertIn(self.rule["issuer_lead"]%self.c["subject"]["issuer"]["name"]+row["what"],str(self.outcome()["missing"]))
+        self.c=saved
+    def test_the_issuer_view_is_the_treasury_pack(self):
+        next(f for f in self.c["tier1"] if f["id"]=="price_last__pxw")["source"]="INVENTED quote__pxw"; self.entry()["ranking_words"]="INVENTED filing words__pxw"
+        view=sufficiency.issuer_pack(freeze.build_pack(self.c),FLOORS); self.assertEqual(view["capture"]["subject"]["kind"],"single_stock"); self.assertNotIn("preferred_par",{f["id"] for f in view["capture"]["tier1"]}); self.assertEqual(gate_check(view["capture"])["result"],"accepted")
+        self.assertEqual(next(f for f in view["capture"]["tier1"] if f["id"]=="price_last")["source"],"INVENTED quote__pxw"); self.assertEqual(view["capture"]["business_frame"]["PXW"]["treasury"]["preferreds"][1]["ranking_words"],"INVENTED filing words__pxw")
+    def test_the_fund_is_not_required(self): self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_the_common_swings_and_coin_layer_are_not_required(self): self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_an_issuer_without_the_treasury_block_refuses(self): next(iter(self.c["business_frame"].values())).pop("treasury"); self.refuses("other_issuer")
+    def test_no_opening_is_read(self):
+        # Control: passes on base by design.
+        from council.engine import host
+        with tempfile.TemporaryDirectory() as folder:
+            with open(os.path.join(folder,"opening.json"),"w") as handle: handle.write("{}")
+            with self.assertRaisesRegex(host.HostError,"opening.json belongs"): host._read_opening(folder,self.c["captured_at"],self.c["subject"],FLOORS,capture=self.c)
+    def test_the_treasury_results_are_unchanged(self): TestPreferredData.test_no_other_class_or_rule_changed(self)
+
+
+class TestPreferredTerms(PreferredTest):
+    def test_unknown_currency_refuses(self):
+        self.c["subject"]["currency"]=None; self.refuses("currency")
+    def test_cash_uses_the_existing_freshness_rule(self):
+        next(f for f in self.c["tier1"] if f["id"]=="risk_free_rate_3m").update(as_of="2026-10-01",freshness_rule_days=15); self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_the_cash_anchor_is_the_subjects_own(self):
+        self.c["tier1"]=[f for f in self.c["tier1"] if f["id"]!="risk_free_rate_3m"]; self.assertEqual(self.outcome()["result"],"refuse")
+    def test_a_ticker_naming_no_entry_refuses(self): self.c["subject"]["ticker"]="UNKNOWN"; self.refuses("not_in_table")
+    def test_a_ticker_naming_two_refuses(self): self.block()["preferreds"][0]["ticker"]=self.c["subject"]["ticker"]; self.refuses("not_in_table")
+    def test_a_convertible_preferred_refuses_by_name(self): self.entry()["converts_into_common"]=True; self.refuses("convertible")
+    def test_an_unrecorded_pair_refuses_naming_it(self): self.block()["preferreds"][0]["ranks_ahead_of"]=[]; self.refuses("ranking"); self.assertIn("p1, p2",str(self.outcome()["missing"]))
+    def test_a_one_sided_alongside_refuses(self): self.entry()["ranks_alongside"]=["p1"]; self.refuses("ranking")
+    def test_each_ahead_of_the_other_refuses(self): self.entry()["ranks_ahead_of"]=["p1"]; self.refuses("ranking")
+    def test_listed_364_days_refuses(self): self.value("preferred_listed_on",(date.fromisoformat(self.c["captured_at"][:10])-timedelta(days=364)).isoformat()); self.refuses("young")
+    def test_listed_365_days_passes(self):
+        self.c=preferred_capture("single"); self.value("swings_history_days",365); self.value("volatility_window_days",365); self.value("preferred_listed_on",(date.fromisoformat(self.c["captured_at"][:10])-timedelta(days=365)).isoformat()); self.entry()["dividend_record"]=[p for p in self.entry()["dividend_record"] if p["date"]>=next(f["value"] for f in self.c["tier1"] if f["id"]=="preferred_listed_on")]; self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_a_missing_redemption_date_with_its_gap_passes(self): self.c["tier1"]=[f for f in self.c["tier1"] if f["id"]!="preferred_redemption_date"]; self.c["gaps"].append(dict(fact_class="preferred_redemption_date",reason_kind="absent_by_design",reason="INVENTED none",weakened_test="rating_vs_history_or_peers")); self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_a_price_in_another_currency_refuses(self): next(f for f in self.c["tier1"] if f["id"]=="price_last")["unit"]="EUR_per_share"; self.refuses("currency")
+    def test_a_price_older_than_its_limit_refuses(self): next(f for f in self.c["tier1"] if f["id"]=="price_last")["as_of"]="2026-10-01"; self.assertEqual(self.outcome()["result"],"refuse")
+    def test_a_capture_before_applies_from_refuses(self): self.c["captured_at"]="2026-10-08T12:00Z"; self.refuses("applies_from")
+
+
+class TestPreferredRecord(PreferredTest):
+    def test_a_complete_record_passes(self): self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_a_missing_payment_refuses(self): self.entry()["dividend_record"].pop(2); self.refuses("record")
+    def test_a_record_short_of_the_window_refuses(self): self.entry()["dividend_record"]=self.entry()["dividend_record"][2:]; self.refuses("record")
+    def test_a_record_since_listing_passes(self): self.c=preferred_capture("single"); self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_deferred_on_a_non_cumulative_refuses(self): self.entry()["cumulative"]=False; self.entry()["dividend_record"][0]["status"]="deferred"; self.refuses("record_word")
+    def test_missed_on_a_cumulative_passes(self): self.entry()["dividend_record"][0]["status"]="missed"; self.assertEqual(self.outcome()["result"],"pass",self.outcome())
+    def test_the_quarters_take_the_worst_status(self): self.c=preferred_capture("single"); self.assertIn("deferred",[r["status"] for r in self.reading()["record"]])
+
+
+class TestPreferredReadings(PreferredTest):
+    def test_the_worked_case_exactly(self):
+        r=self.reading(); self.assertEqual((r["dividend"],r["yield"]["numerator"],r["yield"]["denominator"],r["gap"]["numerator"]),(8,800,80,480)); self.assertEqual([(x["treasury"],x["cover"]["denominator"]) for x in r["cover"]],[(660000000,400000000),(480000000,400000000),(360000000,400000000),(240000000,400000000)])
+    def test_the_senior_share_has_the_smaller_denominator(self): self.c=preferred_capture(subject="p1"); self.assertEqual(self.reading()["cover"][0]["cover"]["denominator"],370000000)
+    def test_alongside_shares_share_the_denominator(self): self.block()["preferreds"][0]["ranks_ahead_of"]=[]; [r.update(ranks_alongside=[p["key"] for p in self.block()["preferreds"] if p is not r]) for r in self.block()["preferreds"]]; self.assertEqual(self.reading()["cover"][0]["cover"]["denominator"],400000000)
+    def test_the_euro_share_counts_converted(self): self.c=preferred_capture("five"); self.assertEqual(next(p["amount"] for p in self.reading()["issuer_readings"]["preferreds"] if p["key"]=="p5"),1000000)
+    def test_a_company_token_line_is_not_in_the_cover(self):
+        r=self.reading(); issuer=copy.deepcopy(r["issuer_readings"]); issuer["lines"].append(dict(count=1000000,counted=False)); r["issuer_readings"]=issuer; self.assertEqual(sufficiency.preferred_cover(r,50000)["treasury"],660000000)
+    def test_every_convertible_counts_at_face(self): self.assertEqual(self.reading()["claims_ahead"],370000000)
+    def test_the_falls_move_the_largest_coin_alone(self):
+        r=self.reading(); r["issuer_readings"]["coins"].append(dict(count=10,price=100,value=1000)); self.assertEqual(sufficiency.preferred_cover(r,25000)["treasury"],360001000)
+    def test_none_for_every_other_subject(self):
+        for c in (treasury_ladder_capture(),holding_capture(),coin_capture(),protocol_capture()): self.assertIsNone(sufficiency.preferred_readings(freeze.build_pack(c),FLOORS))
+    def test_the_pack_bytes_are_unchanged(self): p=freeze.build_pack(self.c); before=canonical.canonical_bytes(p); sufficiency.preferred_readings(p,FLOORS); self.assertEqual(canonical.canonical_bytes(p),before)
+
+
+class TestThePreferredRecordsUnchanged(TestTheTreasuryRecordsUnchanged):
+    @unittest.skipUnless(live_records_present(LIVE_RUNS,(JPM_RUN,WULF_RUN)),"live run records are absent")
+    def test_every_capture_and_pack_is_unchanged(self):
+        floors=copy.deepcopy(FLOORS); floors["archetype_measures"]["holding_rule"]["treasury"].pop("listed_preferred"); floors["classes"].pop("preferred")
+        for key in ("subject_kinds_not_confirmed","subject_kinds_why","subject_kinds_confirmed_by"): floors["atlas_handoff"]["confirmed"].pop(key)
+        gated=checked=frozen=0
+        for run_id in sorted(os.listdir(LIVE_RUNS)):
+            path=os.path.join(LIVE_RUNS,run_id,"evidence","capture.json")
+            if os.path.exists(path):
+                c=canonical.read_json(path)
+                for reading in (c,to_contract_1_17_0(copy.deepcopy(c),run_id)): self.assertEqual(gate.validate_capture(copy.deepcopy(reading),SCHEMA,FLOORS),gate.validate_capture(copy.deepcopy(reading),SCHEMA,floors))
+                gated+=1
+            path=os.path.join(LIVE_RUNS,run_id,"pack","pack.json")
+            if not os.path.exists(path): continue
+            pack=canonical.read_json(path)
+            with open(path,"rb") as handle: self.assertEqual(canonical.canonical_bytes(freeze.build_pack(pack["capture"])),handle.read())
+            frozen+=1
+            try: old=sufficiency.check(copy.deepcopy(pack),floors)
+            except ValueError as exc:
+                with self.assertRaises(ValueError) as caught: sufficiency.check(copy.deepcopy(pack),FLOORS)
+                self.assertEqual(str(caught.exception),str(exc)); continue
+            self.assertEqual(sufficiency.check(copy.deepcopy(pack),FLOORS),old); checked+=1
+        self.assertGreater(min(gated,checked,frozen),0)
+
+
+class TestPreferredFixRoundTwo(PreferredTest):
+    def test_true_debt_rule_is_read(self):
+        f=copy.deepcopy(FLOORS); f["archetype_measures"]["holding_rule"]["treasury"]["listed_preferred"]["true_debt_ranks_ahead"]=False
+        self.assertEqual(sufficiency.preferred_readings(freeze.build_pack(self.c),f)["claims_ahead"],Decimal("50000000"))
+    def test_every_why_is_distinct_and_plain(self):
+        def whys(v):
+            if isinstance(v,dict):
+                for k,x in v.items():
+                    if k=="why" or k.endswith("_why"): yield x
+                    else: yield from whys(x)
+            elif isinstance(v,list):
+                for x in v: yield from whys(x)
+        class_words=[row["why"] for row in FLOORS["classes"]["preferred"]["floors"]]; self.assertEqual(len(class_words),len(set(class_words)))
+        words=list(whys(self.rule)); self.assertEqual(len(words),len(set(words)))
+        for word in words: self.assertNotIn("Data:",word); self.assertNotIn("P-",word)
+    def test_each_unit_error_names_its_own_fact(self):
+        saved=copy.deepcopy(self.c)
+        for role in ("history_days","listed_on"):
+            with self.subTest(role=role):
+                self.c=copy.deepcopy(saved); fid=self.rule["roles"][role]["id"]; next(f for f in self.c["tier1"] if f["id"]==fid)["unit"]="USD"
+                missing=str(self.outcome()["missing"]); self.assertNotIn(self.rule["record_refusal"]["why"],missing); self.assertIn(self.rule["roles"][role]["what"],missing); self.assertIn("unit",missing)
+    def test_missing_listing_and_ticker_refuse(self):
+        saved=preferred_capture("single")
+        for field,value in (("ticker",None),("ticker",""),("listing",None),("listing","")):
+            with self.subTest(field=field,value=value):
+                self.c=copy.deepcopy(saved); self.c["subject"][field]=value
+                if field=="ticker": self.block()["preferreds"][0].pop("ticker")
+                self.assertNotEqual(gate.validate_capture(self.c,SCHEMA,FLOORS)["result"],"accepted")
+                self.assertIn("the preferred's listing and ticker are missing",str(self.outcome()["missing"]))
 
 
 if __name__ == "__main__":

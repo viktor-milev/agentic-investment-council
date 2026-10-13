@@ -24,33 +24,53 @@ It is not the live system and carries no history. See *What is deliberately abse
 
 ## What changed since the last snapshot
 
-This snapshot opens the council's coin rules to a second coin. Bitcoin was the only coin the
-council could rate; Zcash, a privacy coin, is now admitted beside it, and every coin follows one
-rule. In plain terms:
+This snapshot adds four new kinds of subject the council can rate, and a stop on the hand-off to
+the portfolio side. In plain terms:
 
-- **A coin names itself.** A coin keeps the existing Bitcoin kind of subject but names its coin
-  (`bitcoin` or `zcash`) in the subject. A registry in the evidence floors (`council/floors/floors.json`)
-  holds each admitted coin's names, units, price series and spot funds. Coins are admitted one at a
-  time, as data; a coin with no registry entry is refused, and no coin may borrow another coin's
-  units or evidence.
-- **Two sources, checked against each other.** Price and circulating supply are read from
-  CoinGecko and again, the same day, from Coin Metrics. The two must agree within one percent or
-  the sitting cannot proceed; a disagreement is never averaged away.
-- **New supply worked forward.** The issuance schedule (coins per block now and after the next
-  halving, the block interval, today's block height, the next halving's height) is recorded as
-  evidence, and the machine works out new supply over one, three and twelve months, set against
-  daily trading volume.
-- **A privacy coin's extra risk.** A privacy coin must show the regulated venues that list it
-  today, each with its licence in the United States, the European Union or the United Kingdom. Its
-  scenario ladder must include the case where regulated exchanges delist it.
-- **The pages name the coin.** Every evidence page and the report name the coin plainly. Where a
-  coin has a single listed spot fund, the flows are printed as that one fund's. Evidence that
-  exists only for Bitcoin is named as absent for another coin, not borrowed. The advisors are
-  given a fixed line on how to read a price move.
-- **A coin's daily price history.** A saved Coin Metrics reply is read into a daily series on the
-  coin's always-open calendar, where a year is 365 daily bars, not 252. A daily bar may now carry
-  no volume (capture contract 1.13.0; floors 1.23.0), and the series' last close is checked against
-  the recorded price. Every test fixture is re-versioned to match.
+- **Tokens whose protocol earns fees.** A second kind of crypto subject: a token whose network or
+  application earns fees and passes some of them to holders. Four tokens are admitted, as data in
+  the evidence floors; every other token waits for a ruling. Price and supply are read from
+  CoinGecko and the price cross-checked the same day against Coin Metrics. Users' fees, the
+  protocol's revenue and holders' fees over thirty and ninety days are read from DefiLlama, split by
+  the route they reach holders, and each split must add up exactly. The release schedule of locked
+  tokens is recorded for at least the next twelve months. The token is compared with others of its
+  family on market value against holders' fees, and with its own history. Each sitting names a past
+  *derate* — a recorded case of a token whose price fell as new supply came out — kept as reviewed
+  reference data in the floors. A claim of the form "this token reaches a given value by a date"
+  may be tested, and the chairman gives its probability. These sittings always stop for a person
+  to review the method before any advisor is paid; they never run unattended.
+- **Insurers that compound their float.** An insurer whose share portfolio and wholly owned
+  businesses outside insurance make up more than a third of its assets, or which reports those
+  businesses as its own segments, is rated as its own kind of financial institution: price to book
+  value against ten years of growth in book value per share. The underwriting result and the
+  investment gains are shown year by year, signed and never smoothed. The rule reads the evidence,
+  never a company's name.
+- **Uranium, sat through a physical holder.** Uranium is rated as one commodity through the listed
+  vehicle that holds the metal. The daily price is the holder's own uranium value over its pounds,
+  cross-checked against the New York futures settlement; month-end spot and term prices sit beside
+  it. The holder's own net asset value is used, never rebuilt by the council. The reactor fleet,
+  the two largest producers' output guidance and US power companies' uncontracted needs are
+  recorded; secondary supply and state stockpiles are background only. The scenario ladder runs
+  three years and must name three downside cases: a supply response, the holders turning sellers,
+  and power companies delaying contracts. Uranium producers are rated on the producer rules, their
+  reserves counted in pounds by one fixed published factor.
+- **Treasury companies and their listed preferred shares.** A company that raises money to buy
+  more of one coin, with its coins more than half of its assets, is a holding company of its own
+  sub-type, rated over twelve months: its coins at today's price, less its net debt, against its
+  market value. Every convertible bond, loan and preferred share is recorded; whether each
+  preferred share counts as debt is chosen, with a reason, before any evidence is gathered. The
+  history since the company began buying, every money raise and every coin sale of the last four
+  quarters are recorded. The coin's largest listed spot fund is shown beside it as the plain
+  alternative, never as a peer. For every coin scenario the ladder names a case where the premium
+  falls and one where it turns to a discount. A listed preferred share of such a company is a
+  subject of its own kind.
+- **The hand-off to the portfolio side can be withheld.** A verdict on a product the portfolio
+  side has not confirmed it can read is published and recorded, but its envelope is withheld: a
+  file stating the reason stands in its place, the read-back checks it, and the report says so.
+- **Pages and records.** For captures from 11 October 2026, yields and revenue shares print as
+  percentages and the chairman's worked-out figures trace to their written operands. Floors
+  1.47.0, capture contract 1.17.0, verdict contract 1.11.0, seat-answer contracts 1.8.0; every test
+  fixture re-versioned; RUNBOOK sections 1.0f to 1.0j.
 
 ---
 
@@ -123,6 +143,27 @@ its reserves and today's price still shown. The council takes reserves as report
 units (gas counted in cubic feet is never set against a price per million British thermal
 units), and shows by-product metals apart.
 
+**A token whose protocol earns fees** is rated on the fees that reach its holders: its market
+value against ninety days of holders' fees, beside tokens of the same family and its own history,
+with the next twelve months of new supply set against daily trading. A fee that is really newly
+created tokens paid to stakers is never counted as a fee. Every sitting names the past derate it is
+compared with, and stops for a person to review the method before any advisor is paid.
+
+**An insurer that compounds its float** — a large share portfolio or wholly owned businesses
+outside insurance beside its underwriting — is rated on price to book value against ten years of
+book value per share growth. The underwriting record and investment gains are shown year by year;
+operating return on equity is shown, never rated.
+
+**Uranium** is rated through the listed vehicle that holds the metal, on a three-year scenario
+ladder against cash. The holder's own published net asset value stands; the council never builds
+one. China's buying and global secondary supply are prose only, labelled unverified, never a
+council figure.
+
+**A company that holds a coin as its treasury** is rated on its coins at today's price, less its
+net debt, against its market value, over twelve months. Each preferred share's treatment is chosen
+before the evidence is gathered and shown with its reason; the largest listed spot fund for the
+coin is printed beside it as the plain alternative.
+
 ---
 
 ## Seating the council: defaults and how to override them
@@ -152,22 +193,23 @@ The seven suites, what each covers, and the command to run it:
 | Suite | Tests | Covers | Run |
 |---|---|---|---|
 | `test_foundations` | 40 | canonical bytes and hashing, the schema validator, the ruled evidence floors, the exchange calendars and currency units, the book-blind language rule scanned over every file, the deterministic mannered-prose measure | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_foundations` |
-| `test_evidence` | 1678 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the listings outside the US, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, growth, resource-producer and holding-company rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
-| `test_engine` | 690 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
+| `test_evidence` | 2544 | the provenance gate, the unit list and the one-line question check, the price history and the tape, the listings outside the US, the evidence challenge and re-audit, the byte-identical freeze, the one-page and full briefs and the approval page, the financial-institution, float-compounder, growth, resource-producer, uranium, protocol-token, holding-company and treasury-company rules, sufficiency pass and refusal paths per subject kind and per asset class | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_evidence` |
+| `test_engine` | 993 | the state machine end to end, seat retries, the blind seal, the seats' methods and required headings, the citation index, the chairman's mechanical checks and required fields, the archetype rating bar, the scenario-earned rating, the mannered-prose re-ask, the publisher's change appendix, the withheld hand-off | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_engine` |
 | `test_bridge` | 150 | the challenger command's exact flag surface, the tool-list probe and the tool-use record, every failure status, timeout tree-kill — against a fake launcher, so **no paid calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_bridge` |
-| `test_report` | 471 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, growth, resource-producer and holding-company pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
-| `test_e2e_rehearsal` | 7 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_e2e_rehearsal` |
+| `test_report` | 646 | the rendered page: the numbered sections, the price chart, the business tables, the plain explanations, folding, warnings, number formatting, self-containedness, the approval page, the financial-institution, float-compounder, growth, resource-producer, uranium, protocol-token, holding-company, treasury-company and preferred-share pages | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_report` |
+| `test_e2e_rehearsal` | 9 | invented captures driven through the **real** chain — gate → freeze → sufficiency → host → canned seats → canned challenge → publish → read-back → ledger → rendered report, with **zero model calls** | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_e2e_rehearsal` |
 | `test_ledger` | 61 | building a verdict row, back-filling rows from real verdicts, and scoring a row against the recorded outcome | `PYTHONIOENCODING=utf-8 python3 -m unittest council.tests.test_ledger` |
 
-3097 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
+4443 tests at this snapshot. **All seven suites are green standalone in this tree (exit code 0).**
 Where `python3` on your machine is older than 3.13, name the newer interpreter instead (for
 example `python3.13`).
 
-**Clean skips.** 137 tests skip here and only here, each with its reason printed, because they
-read material this copy does not publish. 135 read *live run records*: `test_evidence` skips 79
+**Clean skips.** 148 tests skip here and only here, each with its reason printed, because they
+read material this copy does not publish. 146 read *live run records*: `test_evidence` skips 88
 (the live-capture, migration and archetype-acceptance classes re-run the gate over real captures,
-and the approval-document and business-row classes render a real sitting's evidence), `test_report`
-skips 46 (the readability, look-and-feel, business-table and approval-page classes render a real
+the record-set classes check that every new rule leaves each real sitting's result unchanged, and
+the approval-document and business-row classes render a real sitting's evidence), `test_report`
+skips 48 (the readability, look-and-feel, business-table and approval-page classes render a real
 sitting, and every real sitting still renders), `test_engine` skips 9 (read-back of every published
 sitting, and checks that read one real sitting's case file and verdict), and `test_ledger` skips
 one (scoring rows built from real verdicts). The other two are in `test_foundations`: they check the
@@ -229,6 +271,9 @@ Because the run records are absent, a few documents point at paths that do not e
 `docs/ATLAS-ENVELOPE-CONTRACT.md` cites a live run as its worked example, and
 `docs/ANCHORLESS-SPEC.md` cites another as the failure it was written to fix. The citations are
 left verbatim rather than rewritten; read them as references to material that was not published.
+Likewise the evidence floors name, for each recorded derate case, the reference record it was read
+from under `docs/DERATE-RECORDS-2026-10-08/`; those records are not published, and the figures
+the council uses from them are carried in the floors themselves.
 
 ---
 

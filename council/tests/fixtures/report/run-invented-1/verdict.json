@@ -270,7 +270,7 @@
  "rating": "monitor",
  "run_id": "report-fixture-invented-1",
  "scenario_rating": null,
- "schema_version": "1.7.0",
+ "schema_version": "1.11.0",
  "sizing_inputs": [
   {
    "as_of": "2026-08-28",

@@ -14,6 +14,13 @@ measured.
 
 ## 0. Ask the one question, and write the answer down (owner ruling AC3)
 
+For uranium sat through a physical holder, also ask which past fall to
+compare with: the fall from the 2007 peak, or the fall after Fukushima in
+2011 (AC87(1)). Before gathering evidence, write `opening.json` in the
+evidence folder, exactly `{"past_fall": "peak_2007"}` or
+`{"past_fall": "fukushima_2011"}`, with `chosen_by` and `at` alongside.
+There is no default and no change at the pause. Unattended is allowed.
+
 **Before you open a single filing.** In standalone use, ask the user this and
 nothing else:
 
@@ -38,6 +45,18 @@ knowing what the evidence says.
 nobody: Atlas runs autonomously, and the seam
 (`docs/ATLAS-ENVELOPE-CONTRACT.md`) is where any future human step belongs —
 never the council.
+
+For a protocol token, write mode as `reviewed` without asking (AC81(3)).
+At the same moment write `opening.json` from the owner's words: the past
+derate case (the registry default unless he names another ruled case),
+and the claim in his framework's form, or `none`, with who chose and when.
+Its methodology pause is the approval pause; it never runs unattended.
+The named derate must have an established release pace in its reference
+record. A not-usable case (today UNI, no token's default) needs another case
+named by the owner at the opening or pause. The method declaration names
+the range method; record it at the pause in `opening_changes` for
+`range_method`, from `none`, with its why. Never name a range method where
+holders receive no share of fees.
 
 ## 1. Evidence (session work — the scripts never fetch anything)
 
@@ -244,7 +263,7 @@ The worked list and the custody-bank and card-lender cases are in
 **The sub-type, and a hybrid's other engine.** Set `archetype:
 financial_institution` and `fi_subtype` to one of `bank`, `insurer`,
 `reinsurer`, `traditional_asset_manager`, `alternative_asset_manager`,
-`financial_holding`; the ground goes in `archetype_because`. The sub-type is
+`financial_holding`, `float_compounder`; the ground goes in `archetype_because`. The sub-type is
 where the binding capital requirement sits; for a capital-light firm, the engine
 its own segment reporting shows as the largest. Declare the other engine in
 `fi_secondary_subtype` with the segment facts that carry its share in
@@ -260,7 +279,7 @@ insurer `equity_for_operating_roe` then `operating_earnings_ttm`; a reinsurer
 `equity_for_roe` then `net_income_ttm`; a traditional manager `aum_period_end`
 then `adjusted_net_income_ttm`; an alternative manager
 `fee_earning_aum_period_end` then `fre_ttm`; a holding its one denominator,
-`nav_total`. The peers carry the same metrics as `peer_<metric>__<ticker>`, or
+`nav_total`; a float compounder `book_value_mrq_end` alone. The peers carry the same metrics as `peer_<metric>__<ticker>`, or
 the `peer_` gap is declared. The numerator is the market value of ALL the common
 equity; where there is more than one participating class or exchangeable units,
 carry `participating_share_count`, and declare it absent by design otherwise.
@@ -621,6 +640,22 @@ ten-year real yield - are SUGGESTIONS, never a rule.
 Sources: `docs/ARCHETYPE-GAPS-BRIEF-2026-09-24.md` §2.2. Do not copy its tables
 here.
 
+**A uranium producer (owner rulings AC85-AC87).** Declare product `uranium` and
+record pounds of U3O8 in `lb` as plain pounds (433 million pounds is written
+433000000). Record each original tonnes figure as its own `uranium_tu_<id>`
+fact in `tU`, with its pound figure derived by `multiply` at 2599.8. The
+resource block's today's price is `uranium_term_month_end`. Carry the prices
+and market facts of §1.0h except the vehicle's own figures, the share price
+and swings: daily spot and its cross-check, same-month-end spot and term,
+every holder's pounds and window starts, reactors, the two producers'
+guidance and US needs. Record bought pounds beside output by suffix and a
+business the producer owns a share of by its carrying value. Record the contract book
+per year, as a published average or total, or as the sourced not-published
+fact, with pricing words where published. Record the quarter's average spot
+and term from the companies' published averages; where one publishes no term
+average, use the other's with both names in the source. Record the country
+of each mine and each peer's `peer_main_product__` fact.
+
 ### 1.0d A holding company that owns other businesses (owner rulings AC59-AC62, AC65)
 
 A listed company whose value is mostly investments in businesses it does not run
@@ -768,12 +803,19 @@ the volume tape figure is not available, with its reason (AC72(2)).
 Compute realized_volatility_5y from the same series file and record its
 declared arithmetic for the gate to recompute (AB13.2). A PriceUSD row
 dated D is the close at the end of D; the latest completed day may be
-the day before capture. The last close must agree with price_last within
-the ruled price tolerance and date span (AC72(1)).
+the day before capture. Whenever a series is attached, record
+price_close_series_day: CoinGecko's daily point at 00:00 UTC for the series'
+last day (its daily history), with as_of that day and a source naming
+CoinGecko, never an intraday sample - an intraday figure can sit more than
+one percent from the close and refuse an honest sitting. CoinGecko's public daily
+history gives a year of daily closes, free. The last close must agree with
+this same-day close within the ruled price tolerance (AC73(1)). The last
+bar and price_last dates keep the ruled freshness span (AC72(1)).
 The capture contract is 1.13.0; each daily bar's volume is optional.
 A coin may sit once sub-charge (b) merges, without a price chart (AC70(1)).
 The evidence pages and report name the coin prominently (AC70(2)).
-A privacy coin's ladder names a scenario with the word 'delisting' (AC68(2)).
+A privacy coin's ladder names a scenario with the word 'delisting' (AC68(2));
+its probability must be above zero (AC73(2)).
 A capture never carries a fact its coin's registry entry lifts (M8).
 For price_last: CoinGecko (the CoinGecko connector or its public coin page),
 the exact figure observed; cross-checked the same day against Coin Metrics
@@ -781,6 +823,429 @@ as price_last_cross_check (AC71(3)).
 For supply_circulating: CoinGecko's circulating supply (the CoinGecko connector
 or its public coin page), the exact figure observed; cross-checked the same day
 against Coin Metrics as supply_circulating_cross_check (AC71(3)).
+
+### 1.0f A fee-earning protocol token (owner rulings AC67, AC78-AC81)
+
+This is the second kind of crypto subject. Its `subject.kind` is
+`protocol_token`, its asset class is `crypto`, and `subject.product` names
+the token. Copy its product key and name from `asset_classes.crypto.protocols`
+in the floors. Only those four entries are admitted; every other token waits
+for an owner ruling. It reads its own anchors, never Bitcoin's network list.
+The derate records are reviewed reference data in the floors, reused
+without re-capture at a sitting. A protocol-token sitting may be convened
+from the merge of sub-charge (d2) (2026-10-09): the pages show the method
+declaration, the range, the supply, the comparison, the near-term table and
+the claim; the sitting is reviewed (never unattended), and its verdict is
+withheld from Atlas until Atlas confirms it reads the kind (floors
+`atlas_handoff`).
+
+At the opening, write `mode.json` as `reviewed` and `opening.json` beside it.
+Record `derate_case`, `derate_case_basis` (`default` or `owner`), `claim`,
+`chosen_by` and `at`, before gathering any evidence. Read the default derate
+case from the token's registry row; an owner's own choice must be a ruled
+case. The claim is the owner's words in the form "[TARGET] reaches $X market
+cap (or FDV, or price) by [horizon]", or `none`. For a claim object record
+`words`, `measure` (market_value, fully_diluted_value or price), `level` as
+the exact decimal string and `unit` as the rule's claim unit. Invent no claim.
+
+Gather price, circulating supply and trading volume from CoinGecko. Record
+price again from Coin Metrics on the same day where the registry says its
+free figure exists; all four admitted rows currently require it. Record
+supply again only where the row's `supply_cross_check` is true. Else record
+it once: the page will say "single source". Volume is never cross-checked:
+the services count different venues. Where `protocol_supply_beside` is true,
+record the protocol's own supply beside CoinGecko's, without replacing it.
+
+Record `turnover_30d_avg_daily`: sum thirty complete daily volume readings,
+then divide the sum by thirty, declaring both steps as the coin does.
+Keep the source and date on each observed figure and on the declared sum.
+From 2026-10-11 also record from CoinGecko's derivatives listing, the same day as the price, `open_interest` in dollars and `funding_rate` per eight hours or `futures_basis_annualised`; each is single source and a missing one refuses the sitting.
+Coin Metrics price and supply checks must be independent of CoinGecko.
+The one-percent check and the maximum day gap are data in the rule.
+
+From DefiLlama, record users' fees, protocol revenue and holders' fees for
+thirty and ninety complete days: `fees_users_30d`, `fees_users_90d`,
+`revenue_protocol_30d`, `revenue_protocol_90d`, `holders_fees_30d` and
+`holders_fees_90d`. Split holders' fees by route as DefiLlama's own method
+describes them, with `holders_fees_30d__<route>` and the ninety-day partner.
+Use the four route keys in the rule. Each window's routes must sum exactly
+to its total; zero holders' fees may carry no routes. Newly created staking
+rewards are emissions to stakers, never holders' fees. Buybacks into a fund
+the protocol can resell are separate `buyback_resellable_30d` and `_90d`
+facts, shown and never counted. Record Artemis users' fees beside these,
+where available, as `fees_users_30d_second` and `fees_users_90d_second`.
+Token Terminal is paid-only; there is no fee cross-check against it.
+Daily active addresses are background only, never evidence for a rating.
+
+Record `trading_history_days` from the first daily price in CoinGecko or
+Coin Metrics history. Record `volatility_window_days` as the lesser of the
+whole history and the rule's five-year day count. The observed swings keep
+the frozen id `realized_volatility_5y`. Under one year of history refuses;
+no other token's swings may stand in. The page later prints the day count.
+
+Write `supply_schedule`, covering at least twelve months after the capture.
+Use the protocol's documentation, release contracts and governance votes.
+Each tranche records date, end_date (only for linear releases), exact amount,
+token unit, receiving_group, cliff or linear, dated_by, source, rule_source
+and as_of. An aggregator's date stands only where the protocol's own document
+states the totals and vesting rule: name that document in `rule_source`.
+The page will label the tranche "dated by aggregator". Empty tranches need
+`no_tranches_because`; empty locked_holders need `no_locked_supply_because`.
+Record emissions per period, naming who receives them, including stakers and
+incentive programmes. Record trailing measured offsets only through the
+rule's two offset routes. Record each still-locked group's amount and source.
+Amounts stay the exact observed strings; never guess which group will sell.
+
+Refused sources for figures include project marketing, anonymous channels,
+paid promotion, unattributed aggregators, posts on X and research desks.
+Research desks may give views in consensus, never required figures. Claims
+found only in project materials stay [UNVERIFIED]. Default to 'I don't know'
+or [UNVERIFIED] over fabrication: an unsourced figure is a declared gap,
+never an estimate and never borrowed from another token.
+
+The methodology pause is the approval pause, before any advisor is paid.
+A redirect is recorded as `opening_changes` in `approval.json`, with each
+variable, its from and to values and why. Apply changes in order. Remake the
+brief for the owner to see again; never edit opening.json or re-freeze the
+evidence merely to change these choices. Protocol mode is always reviewed.
+
+
+For the measures (AC79, AC80(1)), record CoinGecko's total supply as
+`supply_total`: the figure its fully diluted value is struck on.
+For each comparable from the token's family record market value from
+CoinGecko and ninety-day holders' fees from DefiLlama, counted by the same
+routes as the token's (AC78(2)), dated within a day of its matching figure:
+`comparable_market_value__<slug>`, `comparable_holders_fees_90d__<slug>`.
+Private venues stay in prose only, unverified, nowhere in the facts.
+A listed exchange stands beside on its equity measures: market value,
+revenue and net income for the last four quarters, with ids
+`comparable_<metric>__<slug>`; it never enters the token's range.
+Record the token's own market value and ninety-day holders' fees on each
+recorded date as `hist_market_value__<member>` and
+`hist_holders_fees_90d__<member>`. At least four pairs serve this method.
+Where DefiLlama records business lines apart, record each line's fees as
+`line_holders_fees_90d__<line>`; the lines must add exactly to the total.
+Each line needs its own comparables:
+`comparable_<metric>__<line>__<slug>`.
+Growth and discount rates are never captured: they are optional opening
+variables `fee_growth_percent` and `discount_rate_percent`, both or neither,
+in percent per year. Declare or change them at the methodology pause with
+a recorded reason; the page will call them the council's judgment.
+Transaction volume, the price holders paid and daily active addresses may
+be background facts; no measure reads them.
+
+### 1.0g An insurer that compounds its float (owner ruling AC84)
+
+A float compounder underwrites insurance itself. Its share portfolio and
+wholly owned businesses outside insurance make up more than a third of its
+assets, or it reports those businesses as its own segments. Set
+`archetype: financial_institution`, `fi_subtype: float_compounder`; write
+the ground in `archetype_because`. The rule reads the capture, never a
+company's name. A plain insurer or reinsurer captured from October 11,
+2026 carries the same three classification facts so the rule bites both ways.
+
+Read `share_portfolio_assets`, `owned_business_assets` and `total_assets`
+from one balance sheet: the same day and the same unit. The share portfolio
+includes listed shares at fair value and stakes in associates at their
+balance-sheet value. The owned-business figure is the total assets of
+wholly owned businesses outside insurance and finance, from the segment
+note. An investment, banking or asset-management segment is not a business
+outside finance. The parts must not exceed total assets. Exactly a third
+does not qualify by the asset route.
+
+A company whose headline is a published net asset value and which owns
+insurers rather than underwriting itself is a holding, never this kind.
+Use the financial holding in §1.0a where banks, insurers and money managers
+make up more than half of what it owns, the investment holding in §1.0d
+otherwise. A compounder carries no `nav_bridge` or holding marker fact.
+
+The measure is `price_to_book_against_book_value_per_share_growth`.
+The subject and each peer carry market value and `book_value_mrq_end`,
+common shareholders' equity at the latest quarter end. Name that one
+denominator in `subject_denominator_facts` and `peer_denominator_metrics`.
+The ten-year growth is read beside the yardstick, never divided by.
+Operating return on equity is shown, never rated.
+
+Record `fiscal_year_end` as MM-DD. Read ten financial year-ends from the
+latest annual report's multi-year tables. The members end `fyYYYY`, the
+calendar year in which the financial year ends. Record all five parts:
+`bvps_hist_`, book value per share at that year-end as reported;
+`dps_hist_`, dividends per share paid during the year, zero where none;
+`price_hist_`, the closing share price on the financial year-end day;
+`underwriting_result_hist_`, the year's underwriting profit or loss;
+`investment_gains_hist_`, the share portfolio's realised and unrealised gains.
+
+Each member's `as_of` is the date of the report or price page it is read
+from, rather than the year-end the figure describes. A historical figure
+in this year's multi-year table is a current reading of a finished period;
+its freshness rule is at most the five-year ceiling. The underwriting
+result and gains are signed and as reported, never averaged or smoothed.
+Book value and closing price are above zero; dividends are zero or above.
+The financial years run without a hole, latest the last year ended before
+the capture or the one before it while the report is not yet filed.
+With more than ten, the latest ten are read. A younger record shows what
+it has, at least two year-ends, and declares `bvps_hist_` absent by design.
+Do not declare that younger-record gap beside ten or more year-ends.
+
+An adjusted book figure is recorded only as the company publishes it per
+share: `adjusted_book_published_value` for its own net asset value or
+adjusted book value; `adjusted_book_published_adjustment` for its own
+fair-value adjustment to book. Use its own words as `label` and its own
+report as `source`, with `derived: null`. Never work one out or divide a
+published total. Declare the `adjusted_book_published_` gap where it
+publishes neither. Record `operating_roe_` where published, its gap otherwise.
+
+For each business outside insurance and finance record `noninsurance_sales_`
+and `noninsurance_operating_profit_`, suffix `<segment>_fyYYYY`, at the
+record's latest financial year. Declare the sales-family gap absent by
+design where there is no such business. The council does not value the
+segments separately. Record the solvency ratio beside its requirement and
+the company's own target, the bottom of its published range, where it
+publishes one. Name that `solvency_target_` fact in `fi_capital.target_fact`,
+with the same suffix as a ratio in `fi_capital.ratio_facts`. Declare the
+target gap where none is published. A ratio below target never refuses.
+
+Choose peers from the compounders named in the rule data, at least one
+other compounder unless the `peer_` gap states why no peer set is honest.
+A plain insurer joins only with `plain_insurer_because`, at most twenty-five
+words. Keep the cash test answered by distributable capital; also answer
+book value per share compounding, the underwriting record, and the yardstick
+against its own history and peers from their recorded annual facts.
+
+Use one currency and scale within each group: classification assets;
+market value and book value; all per-share figures; the annual underwriting
+amounts and gains; the segment amounts. Any conversion is recorded at
+capture as arithmetic using a dated `fx_rate_` fact. The rule converts
+nothing. A figure that cannot be sourced is a declared gap, never an estimate.
+No float-compounder sitting until sub-charge (b) merges.
+
+Record a company's published fair-value adjustment per share as at the latest financial year-end the record closes on, so the pages can add it to that year-end's book value per share; the pages print every figure the rule reads, and work out only price to book, the growth of book value per share with dividends added back, and the count of underwriting-profit years, each marked calculated.
+
+### 1.0h Uranium, sat through a physical holder (owner rulings AC85-AC87)
+
+The cash anchor is the three-month Treasury bill. Every seat and the
+chairman price the ladder 36 months out and name a supply response,
+the holders turning sellers, and power companies delaying contracts,
+each its own downside scenario with a probability above zero (AC87(1)).
+Save the trust's public page once, then run `python3.13 -m
+council.evidence.series --sprott <saved-page> --label "Net Asset Value"
+--swings-days <days> --ticker U.U --calendar XTSE --as-of <date>
+--source <source> --out <series.json>`. Days is the lesser of the whole
+history and 1,826 days. Record `realized_volatility_5y` in `percent
+annualised`, `swings_history_days` and `volatility_window_days` from the
+printed swings line. For Yellow Cake too, name the trust as its source
+(AC88(2)). The uranium door is OPEN since 2026-10-12 ((d) merged); a uranium sitting runs on the owner's word, reviewed, the past fall named at the opening.
+
+Declare `kind: commodity`, `asset_class: commodity`, `product: uranium`,
+`name: Uranium`, `currency: USD`, and null ticker and listing. Name the
+physical holder in `vehicle`, exactly as the product registry spells its
+name, ticker, listing and currency. This is one commodity sitting through
+the instrument the council would buy (AC85(2)-(3)).
+
+The Sprott Physical Uranium Trust uses `U.U`, Toronto Stock Exchange, USD.
+Yellow Cake plc uses `YCA`, London Stock Exchange, GBP. Use the trust's
+US-dollar line: its net asset value and share price stand in one unit.
+The Canadian-dollar line is not an admitted vehicle. Convert neither the
+published net asset value nor the share price (AC65).
+
+The five contract facts are lifted with their reasons in the registry:
+`contract_venue`, `contract_month`, `carry_annualised`,
+`tradable_horizon_months`, `open_interest`. A physical holder has yearly
+costs and has no futures contract of its own (AC88(4)). Declare
+`cross_venue_price`, `cross_venue_gap`, and `exchange_inventory_` absent by
+design: one free composite, no exchange stocks. These remain template items.
+
+Record the trust's daily uranium value as `holder_uranium_value_sput` and
+its pounds as `holder_pounds_sput_now`, from its own daily page or keyless
+data, dated the same day. Divide the value by those pounds in the derived
+`uranium_spot_proxy`: operation `divide`, exactly those two fact operands,
+`rounded_places: 2`, rounded once half-up to the cent (AC88(1)). Record
+`price_last` in USD per lb equal to that proxy, with the trust named in
+both sources. This daily price serves both vehicles.
+
+Cross-check with `uranium_spot_cross_check`, the New York uranium futures
+settlement through the market-data connector. Use the nearest contract not
+yet expired and name its month and COMEX or CME in the source. Capture the
+same day's settlement; the rule allows at most one day apart and a two
+percent difference. Cameco's monthly spot is not this daily cross-check.
+
+Record `uranium_spot_month_end` and `uranium_term_month_end` from Cameco's
+uranium price page. Use the same month-end pair, both dated that month's
+last day, in USD per lb. Each counts for thirty-five days; the daily price
+counts for three. Keep spot and term separately sourced and dated (AC86).
+
+For the vehicle, record `holder_nav_per_share_<h>`, `holder_price_<h>`, and
+`holder_costs_<h>`: its own published net asset value per share, market
+share price, and last financial year's total costs. The price source may
+be the exchange or a named free quote source. The council never builds
+the net asset value. The trust publishes daily; Yellow Cake quarterly.
+Their NAV limits are three and one hundred thirty-five days respectively.
+Costs are reported in US dollars for both, with the published scale kept.
+
+Record five financial year-end pairs on `nav_published_hist_fy<yyyy>` and
+`price_hist_fy<yyyy>`, each dated its own year-end and in the vehicle's one
+per-share unit. Use the trust's own published daily series at 31 December;
+use Yellow Cake's 31 March results. A younger listing records what it has
+and declares the `nav_published_hist_` gap absent by design (AC61 H9).
+
+Record every registered holder's pounds now, not just the vehicle's.
+Also record `holder_pounds_<h>_m1`, `_m3`, `_m12`: the latest published
+pounds figure on or before each window's first day, from its own
+publication or recorded holder pages. The windows are thirty, ninety-one
+and three hundred sixty-five days; their start tolerances are seven,
+fourteen and thirty-one days. A start not recorded is a gap on that start's
+exact id, absent by design, with the words "no captured start" (AC86(4)).
+
+Record operating and construction reactor counts and capacities from
+the IAEA's PRIS reactor database, dated the day read: the four `reactors_`
+ids in the registry, in count or MW. Record Kazatomprom's and Cameco's
+guidance for the capture year and the next: both ends of the published
+range, or the single published figure as both ends. Keep its unit and
+basis: 100% basis, attributable, or our share. Never record a midpoint.
+This year's guidance is required. Until next year's is published, declare
+each missing end's exact id as a gap naming its producer and "not yet
+published" (AC88(3)); never substitute an estimate.
+
+Record `us_uncontracted_needs` from the Energy Information Administration's
+annual uranium marketing report. A global needs figure is optional and
+only as a named publisher quoted in a company's own report. A paid
+publisher's figure needs both the publisher and company in the source.
+Secondary supply, enrichment, Russian import restrictions, Euratom Supply
+Agency utility inventories and state stockpiling are background only.
+China's buying and global secondary supply are prose only, labelled
+unverified; never record either as a council figure (AC86(3)).
+
+Record `swings_history_days`, `volatility_window_days`, and
+`realized_volatility_5y` from the trust's daily net asset value per share.
+Yellow Cake also uses the trust's daily series (AC88(2)). Under one year
+refuses; under five years use the whole history, otherwise five years.
+The uranium ladder is three years, annualised (unit (c), merged).
+Default to 'I don't know' over fabrication.
+The uranium door is open: sub-charges (a)-(d) are merged (2026-10-12).
+
+### 1.0i A treasury company (owner rulings AC89, AC91-AC93)
+
+A treasury company raises money to buy more of a coin. Its coins at
+today's price must be more than half of its total assets. A company
+running another main business with coins beside it stays on its own
+archetype. A listed spot fund stays a fund; miners are ruled separately.
+A small attached business is shown by sales and operating profit as a
+segment, never valued separately by the council.
+
+Declare `investment_holding` and a `treasury` block. This is the
+single-coin treasury sub-type of the holding company. Use the coin's
+existing registry key, from monetary products or admitted protocols.
+An unadmitted coin above a tenth refuses; smaller coins belong in the
+labelled `other_coins` group at the company's own reported value.
+Outside assets stay as background, outside the yardstick.
+
+Record the coin count from the company's own filing or dated
+announcement. Its date is the count's own date, not the publication day.
+The count must be no more than thirty-five days old. A dashboard is
+never the count the sitting rests on. It may stand under
+`background_company_dashboard_`, labelled "company dashboard, undated".
+An outside check of published coin addresses is background only.
+Add shares and bonds issued after the count from company announcements.
+Record whether shares may be sold without announcing each sale.
+
+Today's coin price comes from CoinGecko alone, on the share price's
+day. Every past coin price comes from the registry's Coin Metrics daily
+series. Record the dates and sources separately; no second-source
+cross-check is required of today's treasury price.
+
+The bridge carries each coin count times its price, with method
+`coin_at_today_price`. Small other coins use `company_reported_value`
+and basis `other`. True debt is a sourced zero from the latest filing
+when there are no instruments, a sourced figure equal to the sole
+convertible or loan amount with its source words and date when there is
+one, or the derived sum of every convertible and loan amount when there
+are two or more.
+`holdco_net_debt` subtracts cash from true debt. `nav_total` adds every
+bridge component and subtracts that net debt, once each.
+`market_cap` multiplies the share price by shares in issue.
+Every amount uses one unit. Multiply a filing's thousands out through
+declared arithmetic; the council normalises no units for you.
+
+Record every convertible bond's amount, rate, maturity, conversion
+price and any date holders may demand cash back, from the filings.
+Record every other loan's amount, rate, maturity and the company terms:
+is it secured on coins, and may the lender sell them?
+Record every preferred's amount, dividend rate, whether missed
+dividends accumulate and any redemption right. Preferreds stay outside
+the bridge. A preferred published in euros is recorded as published,
+then converted once into the pack currency with a dated `fx_rate_`
+fact, no more than three days old; keep the native figure beside it.
+
+Record every financial year-end since treasury inception: coins,
+shares, cash and true debt from that year's annual report, the daily
+coin price that day and the share close that day or the last trading
+day before it. The capture names the first and latest treasury year-end.
+Record the company's `fiscal_year_end` month and day.
+For the last four quarter-ends available after the reporting lag,
+record coins and shares, or declare each missing fact absent by design
+with "not published" in its reason. Never record both a fact and its gap.
+
+Record every money raise in the last four quarters: what was sold,
+money received and, for common shares, shares sold, coins and shares
+before the raise and that day's series coin price. A programme reported
+weekly has one row per report, dated its last day. Record every coin
+sale with the company's own reason, whatever that reason is.
+Empty raise or sale lists require their own absent-by-design gaps.
+
+Coins staked, lent or pledged have separate lines with company terms;
+never add those lines again to the reported count. A company-issued
+token is a separate labelled line and does not enter the treasury.
+Company measures, including warrants, stay beside in company words;
+only convertible bonds enter today's diluted share count.
+
+Record the registry fund's NAV and price on the share price's day,
+both sourced to its ticker. Where none is named, declare `spot_fund_`
+absent by design: "no listed spot fund". Keep peers empty and declare
+the `peer_` gap. The fund is the plain alternative, never a peer.
+
+At the OPENING, before evidence, ask the owner for each preferred whether
+it ranks as debt for the yardstick and why. Look under the runs on record
+for the coin's latest sitting. Name it in `coin_sitting` only when its
+ladder was added up and it is under thirty-five days old at capture;
+otherwise write null. Write `opening.json`: `preferred_treatment` maps
+each preferred key to `as_debt` and `why`; also `coin_sitting`, `chosen_by`
+and `at`. No preferred choice has a default.
+In the CAPTURE, a cited sitting needs the gap `coin_<c>__`, absent by
+design, with its run id in the reason. Otherwise record the coin's own
+required evidence under `coin_<c>__`: every anchor of its own sitting,
+except its price (`coin_price_<c>`) and the cross-check pair. A protocol
+token needs neither its release schedule nor fee-route sums here.
+Measure the SHARE's swings with `series.py --swings-days` over its own
+daily closes, the lesser of its history and 1,826 days. Record
+`realized_volatility_5y`, `swings_history_days`, `volatility_window_days`
+and the three-month bill rate. Under a year of share history refuses.
+Take the share price and the spot fund's price and net asset value on
+one day the fund has published: different days refuse (ruling C5).
+At the PAUSE in reviewed mode the owner reads the approval page. A change
+goes in `approval.json` as `preferred_changes`: `preferred`, `from`, `to`,
+`why`. Re-render the full document before the go. Unattended mode keeps
+the opening choice. The ladder runs twelve months: each scenario is a
+cell, with the two premium cases for every coin scenario, and each price
+written from the case file's formula, zero where the common owns no coin.
+Default to 'I don't know' over fabrication.
+The treasury-company door is OPEN since 2026-10-13 ((a), (b1) and (b2) merged): a treasury sitting runs on the owner's word, reviewed; the preferred choice is made at the opening; the coin's latest sitting is cited when under 35 days old.
+
+### 1.0j A listed preferred share of a treasury company (owner ruling AC92(3))
+
+A listed preferred share of a treasury company is its own kind: `preferred`. Name the preferred as the
+subject and the company as its `issuer`. Capture the issuer exactly as §1.0i says, every fact under the
+issuer's member suffix — the same facts and refusals, except the spot fund, the common's swings and the
+coin's own layer. No opening is asked. In the issuer's preferred table give each preferred share its listed
+ticker where it has one, how it ranks against every other preferred share (`ranks_ahead_of`,
+`ranks_alongside`, by key) and the filing's own ranking sentence. For the subject also record whether it
+converts into the common share, how often its dividend is paid, and every scheduled dividend of the last
+eight quarters, or since listing, as paid, deferred (still owed, only where missed dividends accumulate) or
+missed. Record its price, its stated amount per share, its first listing day and its first redemption date,
+or declare that gap. Measure its own swings with `series.py --swings-days` over its own daily closes, the
+lesser of its history and 1,826 days, and record the three-month bill rate. Under a year listed, a
+convertible preferred, or a preferred priced in another currency than the issuer's figures refuses. Default
+to 'I don't know' over fabrication. The listed-preferred door is OPEN since 2026-10-13 (TREASURY(c) merged): a preferred sitting runs
+on the owner's word, reviewed.
 
 ### 1.1 Gather, then write the capture
 
@@ -1009,9 +1474,9 @@ rules that matter most in practice:
   — copy its arithmetic and its source sentences, but note that it was
   written to an older contract (`capture_version` 1.2.0) and carries neither
   the tags nor a business frame, because runs on record are never rewritten.
-  Your capture is 1.13.0 and needs both. The migrations are set out in
+  Your capture is 1.16.0 and needs both. The migrations are set out in
   `council/tests/test_evidence.py`, `to_contract_1_4_1` through
-  `to_contract_1_13_0`, and the same file prints
+  `to_contract_1_16_0`, and the same file prints
   exactly which frame rows the two single-name sittings on record would have
   needed.
 - **The four sizing facts, in the units the hand-off is pinned to (ruling
@@ -1627,6 +2092,11 @@ python -m council.bridge.codex_bridge challenge <run_dir>
 
 ## 4. Read-back and the report
 
+For a fee-earning protocol token the report's front card follows the chairman's one-line answer in the owner's order, and the opening, every change at the pause and the unverified items print in the appendix fold of the owner's question.
+For uranium the report's front card follows the chairman's one-line answer in the owner's order (AC87(4)), and the evidence pages print the two prices, the holders' figures and buying, the demand and supply facts, and each lifted template item with its reason.
+
+For a treasury company the report's front card follows the chairman's one-line answer in the owner's order (AC92(5)), the spot fund's line after the premium (AC93), and the evidence pages print the yardstick, every bond, loan and preferred share with its treatment, the history since it became a treasury company, the raises and the lines the company prints but the council does not count.
+
 ```
 python -m council.engine.readback <run_dir>
 python -m council.report.render_report <run_dir>
@@ -1634,7 +2104,10 @@ python -m council.report.render_report <run_dir>
 
 Read-back must print CLEAN and exit 0: the published verdict hashes to the
 recorded value, the run finished, and the Atlas envelope carries the same
-hashes. The report is one self-contained file at `<run_dir>/report.html`.
+hashes. A subject Atlas has not confirmed it reads (a product off the floors'
+`atlas_handoff` list, today Zcash) has no envelope: `atlas-handoff-withheld.json`
+stands in its place with the reason, read-back checks it, and the report prints
+"Not handed to Atlas" (owner ruling AC78(6)). The report is one self-contained file at `<run_dir>/report.html`.
 Rendering also writes the substitution log beside it, named after the report
 (`report.html.number-substitutions.json` beside `report.html`): every number the
 renderer respelt inside the council's prose (say, "47,636 thousand dollars"

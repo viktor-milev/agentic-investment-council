@@ -250,7 +250,7 @@
  "rating": "buy",
  "run_id": "report-fixture-invented-basket",
  "scenario_rating": null,
- "schema_version": "1.7.0",
+ "schema_version": "1.11.0",
  "sizing_inputs": [
   {
    "as_of": null,

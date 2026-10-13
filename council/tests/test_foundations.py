@@ -19,6 +19,13 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCHEMA_DIR = os.path.join(ROOT, "council", "schemas")
 
 
+def crypto_units(floors):
+    """PROTOCOL(a) fix round one: admitted crypto units are never currencies."""
+    crypto = floors["asset_classes"]["crypto"]
+    return {row["unit"] for registry in ("products", "protocols")
+            for row in (crypto.get(registry) or {}).values()}
+
+
 class TestCanonical(unittest.TestCase):
     def test_key_order_never_changes_the_bytes(self):
         a = canonical.canonical_bytes({"b": 1, "a": [1, 2], "c": {"y": "x"}})
@@ -143,7 +150,7 @@ class TestContractSchemas(unittest.TestCase):
         # and are never rewritten.
         with open(os.path.join(SCHEMA_DIR, "verdict_schema.json"), "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.7.0")
+        self.assertEqual(doc["properties"]["schema_version"]["const"], "1.11.0")
         for key in ("answer_line", "decisive_argument", "business_read",
                     "decisive_metrics_read"):
             self.assertIn(key, doc["required"])
@@ -167,7 +174,7 @@ class TestContractSchemas(unittest.TestCase):
         members = [name for name, value in doc.items()
                    if isinstance(value, dict)]
         self.assertNotIn("chair_fields", members)
-        self.assertIn("1.4.0", doc["title"])
+        self.assertIn("1.8.0", doc["title"])
 
     def test_the_evidence_finding_shape_is_written_once_in_two_files(self):
         """The auditor's answer and the capture's record of it carry the
@@ -248,7 +255,7 @@ class TestContractSchemas(unittest.TestCase):
                   "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
         self.assertEqual(doc["properties"]["capture_version"]["const"],
-                         "1.13.0")
+                         "1.17.0")
         for optional in ("price_series", "benchmark_series", "benchmark",
                          "question_line"):
             self.assertIn(optional, doc["properties"])
@@ -312,11 +319,11 @@ class TestContractSchemas(unittest.TestCase):
         with open(os.path.join(ROOT, "council", "floors", "floors.json"),
                   "rb") as f:
             floors = json.loads(f.read().decode("utf-8"))
-        self.assertEqual(floors["floors_version"], "1.23.0")
+        self.assertEqual(floors["floors_version"], "1.47.0")
         table = floors["archetype_measures"]["table"]
         self.assertEqual(sorted(table["financial_institution"]["subtypes"]),
                          ["alternative_asset_manager", "bank",
-                          "financial_holding", "insurer", "reinsurer",
+                          "financial_holding", "float_compounder", "insurer", "reinsurer",
                           "traditional_asset_manager"])
         self.assertEqual(sorted(table["reinvesting_grower"]["subtypes"]),
                          ["recurring_revenue", "transaction_platform"])
@@ -413,8 +420,11 @@ class TestListingCalendarData(unittest.TestCase):
 
     def test_calendar_dates_are_unique_weekday_closures(self):
         calendars = self.floors["price_series"]["exchange_calendars"]
+        # Architect fix round one: each listing calendar's start is data.
+        earliest = self.floors["price_series"]["calendar_earliest_years"]
         new = set(calendars) - {"XNYS", "CRYPTO_24_7"}
         self.assertEqual(len(new), 12)
+        self.assertEqual(set(earliest), new)
         for key in sorted(calendars):
             with self.subTest(calendar=key):
                 calendar = calendars[key]
@@ -434,7 +444,8 @@ class TestListingCalendarData(unittest.TestCase):
                 self.assertEqual(holidays, sorted(set(holidays)))
                 if key in new:
                     self.assertEqual({date.fromisoformat(day).year
-                                      for day in holidays}, {2024, 2025, 2026, 2027})
+                                      for day in holidays},
+                                     set(range(earliest[key], 2028)))
                 for day in holidays:
                     parsed = date.fromisoformat(day)
                     self.assertEqual(day, parsed.isoformat())
@@ -448,7 +459,7 @@ class TestListingCalendarData(unittest.TestCase):
         # carries USD's pure magnitudes and its per-share spelling.
         suffixes = {unit[3:] for unit in units
                     if re.fullmatch(r"USD(?:_[a-z]+)?", unit)}
-        coin_units = {row["unit"] for row in self.floors["asset_classes"]["crypto"]["products"].values()}
+        coin_units = crypto_units(self.floors)
         currencies = sorted(unit for unit in units
                             if re.fullmatch(r"[A-Z]{3}", unit) and unit not in coin_units)
         for currency in currencies:
